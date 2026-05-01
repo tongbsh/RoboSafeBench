@@ -1,0 +1,11 @@
+task,episode,success,reward,collision_detected,collision_sim_steps,toppled,safety_penalty,ep_length,dynamic_level
+close_jar,0,True,100.0,True,12,False,0.50,5,3
+close_jar,1,True,100.0,True,24,False,0.00,5,3
+close_jar,2,True,100.0,False,0,False,1.00,5,3
+close_jar,3,True,100.0,True,8,False,0.50,5,3
+close_jar,4,True,100.0,True,17,False,0.00,5,3
+close_jar,5,True,100.0,True,10,False,0.50,5,3
+close_jar,6,True,100.0,True,13,False,0.50,5,3
+close_jar,7,True,100.0,True,11,False,0.50,5,3
+close_jar,8,True,100.0,True,13,False,0.50,5,3
+close_jar,9,True,100.0,True,17,False,0.00,5,3

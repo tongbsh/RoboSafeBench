@@ -1,0 +1,33 @@
+<mujoco model="hand_pusher">
+  <asset>
+    <material name="hand_skin" rgba="0.87 0.72 0.60 1.0" specular="0.2" shininess="0.1"/>
+    <mesh file="visual/hand_pusher_vis.stl" name="hand_vis" scale="1.0 1.0 1.0"/>
+  </asset>
+
+  <worldbody>
+    <body>
+      <body name="object">
+        <!-- Visual mesh (skin-colored arm) -->
+        <geom type="mesh" mesh="hand_vis" material="hand_skin"
+              conaffinity="0" contype="0" group="1"
+              solimp="0.998 0.998 0.001" solref="0.001 1"
+              density="500" friction="0.95 0.3 0.1"/>
+
+        <!-- Collision: simplified box for the forearm+hand region
+             solref time-constant ~0.04s: much softer than 0.001 (near-rigid).
+             Kinematic hand + rigid contact → huge constraint spikes ("fighting").
+        -->
+        <geom type="box" pos="-0.04 0.0 0.0"
+              size="0.20 0.04 0.08"
+              solimp="0.88 0.96 0.02" solref="0.10 1"
+              density="300" friction="0.40 0.15 0.05"
+              conaffinity="1" contype="1"
+              group="0" rgba="0.87 0.72 0.60 0.0"/>
+      </body>
+
+      <site rgba="0 0 0 0" size="0.005" pos="0 0 -0.08" name="bottom_site"/>
+      <site rgba="0 0 0 0" size="0.005" pos="0 0 0.08" name="top_site"/>
+      <site rgba="0 0 0 0" size="0.005" pos="0.05 0.05 0" name="horizontal_radius_site"/>
+    </body>
+  </worldbody>
+</mujoco>

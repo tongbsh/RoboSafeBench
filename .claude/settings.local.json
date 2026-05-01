@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls -t /root/autodl-tmp/code/dynamic_safty_bench/openvla-oft/experiments/logs/EVAL-dynisafety-safelibero_spatial-levelI-openvla-*spatial0-level1.txt)",
+      "Bash(chmod +x /root/autodl-tmp/code/dynamic_safty_bench/scripts/eval_level3_all_suites.sh)",
+      "Bash(conda info:*)",
+      "Bash(pip list:*)",
+      "Read(//root/**)",
+      "Bash(/root/miniconda3/bin/python -c ':*)",
+      "Bash(xxd)",
+      "Bash(/root/autodl-tmp/conda/envs/openvla-oft/bin/python -c ':*)",
+      "Bash(ffprobe \"openvla-oft/rollouts/safelibero_goal_level3/2026_04_07/task0_put_the_bowl_on_the_plate/2026_04_07-02_44_37--dynisafety--episode=1--success=False--task=put_the_bowl_on_the_plate.mp4\")",
+      "Bash(python -c ':*)",
+      "Bash(python -c \"import pytorch3d; print\\('pytorch3d version:', pytorch3d.__version__\\)\")",
+      "Bash(ls /root/autodl-tmp/code/dynamic_safty_bench/RoboTwin/envs/*.py)",
+      "Bash(/root/autodl-tmp/code/dynamic_safty_bench/RoboTwin/policy/pi0/.venv/bin/python --version)",
+      "Bash(find \"/root/autodl-tmp/code/dynamic_safty_bench\" -name \"*.py\" -exec grep -l \"yaml_config\" {} \\\\;)",
+      "Bash(/root/miniconda3/envs/openvla/bin/python -c \"import robosuite; print\\('robosuite version:', robosuite.__version__\\); print\\('path:', robosuite.__file__\\)\")",
+      "Bash(/root/miniconda3/envs/openvla-oft/bin/python -c \"import robosuite; print\\('robosuite version:', robosuite.__version__\\); print\\('path:', robosuite.__file__\\)\")",
+      "Bash(grep -E \"policies/.*\\\\.py$\")",
+      "Bash(find /root/autodl-tmp/code/dynamic_safty_bench -type f -name \"*.py\" -exec grep -l \"load_policy\" {} \\\\;)",
+      "Bash(find /root/autodl-tmp/code/dynamic_safty_bench -type f -name \"*.py\" -exec grep -l \"class.*Policy\\\\|BasePolicy\\\\|Policy\" {} \\\\;)",
+      "Bash(ls -d /root/autodl-tmp/code/dynamic_safty_bench/*/simpler_env)",
+      "Bash(ls -d /root/autodl-tmp/code/*/simpler_env)",
+      "Bash(ls -d /root/autodl-tmp/code/dynamic_safty_bench/*/SimplerEnv-OpenVLA)",
+      "Bash(ln -sfn past_files_cache/SimplerEnv-OpenVLA SimplerEnv-OpenVLA)",
+      "Bash(bash -n /root/autodl-tmp/code/dynamic_safty_bench/dynamic_SimplerEnv/scripts/run_dynisafety.sh)",
+      "Bash(ls -d /root/autodl-tmp/code/dynamic_safty_bench/past_files_cache/SimplerEnv-OpenVLA/simpler_env/policies/*/)",
+      "Bash(python -c \"import json_numpy; import numpy as np; arr = np.array\\([1.0,2.0,3.0]\\); s = json_numpy.dumps\\(arr\\); print\\('dumps output:', s[:200]\\)\")",
+      "Bash(python -c ' *)"
+    ]
+  }
+}

@@ -1,0 +1,104 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.coverage
+htmlcov/
+
+# Virtual environments and local package installs
+.venv/
+venv/
+env/
+ENV/
+*.egg-info/
+build/
+dist/
+
+# Local environment files and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+credentials.json
+wandb_api_key*
+
+# IDE and notebook noise
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+.ipynb_checkpoints/
+
+# Logs and experiment trackers
+*.log
+logs/
+wandb/
+mlruns/
+runs/
+tensorboard/
+events.out.tfevents*
+
+# Generated benchmark outputs
+dynamic_RoboTwin/outputs*/
+dynamic_SimplerEnv/outputs*/
+dynisafety_libero/outputs*/
+**/outputs_false_force/
+**/videos/
+**/*.mp4
+**/*.avi
+**/*.mov
+**/*.webm
+**/*.gif
+
+# Model checkpoints and downloaded model artifacts
+download_checkpoints/
+/checkpoints/
+/pretrained/
+/weights/
+*.ckpt
+*.pt
+*.pth
+*.bin
+*.safetensors
+*.onnx
+*.engine
+
+# Hugging Face / model caches
+.cache/
+**/.cache/
+hf_cache/
+huggingface/
+
+# Local third-party mirrors and scratch caches.
+# Publish these separately, use submodules, or document download steps instead.
+vlaModelHome/
+past_files_cache/
+simulator_env/
+**/past_cache/
+
+# Dataset dumps and large archives
+/data/
+/datasets/
+download_datasets/
+/assets/
+dynamic_RoboTwin/RoboTwin/assets/
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z
+
+# Runtime artifacts
+tmp/
+temp/
+*.tmp
+*.pid
+*.seed
+core
