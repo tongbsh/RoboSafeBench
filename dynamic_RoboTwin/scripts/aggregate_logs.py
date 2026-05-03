@@ -15,6 +15,10 @@ By default (average-only) writes:
 With ``--per-task``, also writes ``summary_per_task_level.csv`` and per-level
 CSVs with one column per task plus ``mean``.
 
+Force metrics are normalized at aggregation time from the stored impulse metrics
+using a fixed report window (default: 0.05s). This keeps legacy sim-dt summaries
+comparable with current impact-window reporting.
+
 When the same ``(model, task_config, task, level)`` bucket appears multiple
 times, the newest summary file by mtime wins automatically.
 """
@@ -31,6 +35,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 
 FLOAT_RE = r"[-+]?(?:\d+(?:\.\d+)?|\.\d+)"
+DEFAULT_FORCE_REPORT_WINDOW_S = 0.05
 
 RE_LEVEL_DIR = re.compile(r"^level(\d+)$")
 RE_DYNAMIC_LEVEL = re.compile(r"^dynamic_level=(\d+)$")
@@ -75,6 +80,12 @@ TASK_METRICS: Tuple[str, ...] = (
     "PeakImpulse(Ns)",
 )
 OVERVIEW_METRICS: Tuple[str, ...] = TASK_METRICS
+
+
+def _force_from_impulse(impulse_ns: float, report_window_s: float) -> float:
+    """Convert contact impulse (N*s) to benchmark force (N)."""
+    window = max(float(report_window_s), 1e-9)
+    return float(impulse_ns) / window
 
 
 @dataclass
@@ -175,7 +186,12 @@ class Aggregate:
         }[name]
 
 
-def parse_summary_file(path: Path, outputs_root: Path) -> Optional[SummaryRecord]:
+def parse_summary_file(
+    path: Path,
+    outputs_root: Path,
+    *,
+    force_report_window_s: float = DEFAULT_FORCE_REPORT_WINDOW_S,
+) -> Optional[SummaryRecord]:
     """Parse one RoboTwin summary file."""
     try:
         rel_path = path.relative_to(outputs_root)
@@ -284,7 +300,6 @@ def parse_summary_file(path: Path, outputs_root: Path) -> Optional[SummaryRecord
             per_episode_count += 1
             success = match.group("success") == "True"
             collision_steps = int(match.group("collision_steps"))
-            max_force = float(match.group("max_force"))
             max_impulse = float(match.group("max_impulse"))
 
             if success:
@@ -292,8 +307,10 @@ def parse_summary_file(path: Path, outputs_root: Path) -> Optional[SummaryRecord
             per_episode_total_collision_steps += collision_steps
             if collision_steps > 0:
                 per_episode_collision_episodes += 1
-                per_episode_forces.append(max_force)
                 per_episode_impulses.append(max_impulse)
+                per_episode_forces.append(
+                    _force_from_impulse(max_impulse, force_report_window_s)
+                )
             if topple_match := RE_EPISODE_TOPPLE.search(line):
                 if topple_match.group("toppled") == "True":
                     per_episode_topple_episodes += 1
@@ -335,9 +352,7 @@ def parse_summary_file(path: Path, outputs_root: Path) -> Optional[SummaryRecord
                 header_successes,
                 header_collision_episodes,
                 header_total_collision_steps,
-                header_avg_max_force,
                 header_avg_max_impulse,
-                header_peak_force,
                 header_peak_impulse,
             )
         )
@@ -350,10 +365,10 @@ def parse_summary_file(path: Path, outputs_root: Path) -> Optional[SummaryRecord
         topple_episodes = header_topple_episodes or 0
         total_collision_steps = header_total_collision_steps or 0
         max_tilt_deg = header_max_tilt_deg or 0.0
-        avg_max_force = header_avg_max_force or 0.0
         avg_max_impulse = header_avg_max_impulse or 0.0
-        peak_force = header_peak_force or 0.0
         peak_impulse = header_peak_impulse or 0.0
+        avg_max_force = _force_from_impulse(avg_max_impulse, force_report_window_s)
+        peak_force = _force_from_impulse(peak_impulse, force_report_window_s)
 
     return SummaryRecord(
         path=path,
@@ -718,6 +733,15 @@ def main() -> None:
         action="store_true",
         help="Emit per-task columns and summary_per_task_level.csv; default is avg-only.",
     )
+    parser.add_argument(
+        "--force-report-window-s",
+        type=float,
+        default=DEFAULT_FORCE_REPORT_WINDOW_S,
+        help=(
+            "Normalize force metrics as impulse / this window in seconds "
+            f"(default: {DEFAULT_FORCE_REPORT_WINDOW_S})."
+        ),
+    )
     args = parser.parse_args()
 
     outputs_root = args.outputs_root.resolve()
@@ -731,7 +755,11 @@ def main() -> None:
 
     records: List[SummaryRecord] = []
     for file_path in files:
-        rec = parse_summary_file(file_path, outputs_root)
+        rec = parse_summary_file(
+            file_path,
+            outputs_root,
+            force_report_window_s=args.force_report_window_s,
+        )
         if rec is not None:
             records.append(rec)
     print(f"[info] parsed {len(records)}/{len(files)} summaries successfully")
