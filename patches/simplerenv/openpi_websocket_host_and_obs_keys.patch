@@ -1,0 +1,43 @@
+# pin: ccfe3809766839a2fcfb7a3d3c9abff585189188
+# path: third_party/SimplerEnv-OpenVLA
+# why: OpenPI WS client must connect to 127.0.0.1 (not 0.0.0.0); observation keys must match LiberoInputs.
+# apply: git apply -p1 (from third_party/SimplerEnv-OpenVLA) or scripts/install/apply_patches.sh
+
+diff --git a/simpler_env/policies/openpi/pi0_or_fast.py b/simpler_env/policies/openpi/pi0_or_fast.py
+index 98397f6..8f9e154 100644
+--- a/simpler_env/policies/openpi/pi0_or_fast.py
++++ b/simpler_env/policies/openpi/pi0_or_fast.py
+@@ -49,9 +49,9 @@ class OpenPiFastInference:
+ 
+         print(f"*** policy_setup: {policy_setup}, unnorm_key: {unnorm_key} ***")
+ 
+-        # TODO: add pi-fast loading ...
+-        host: str = "0.0.0.0"
+-        port: int = 8000
++        # WebSocket client must connect to a real host; 0.0.0.0 is bind-only, not a valid connect target.
++        host: str = os.environ.get("OPENPI_SERVER_HOST", "127.0.0.1")
++        port: int = int(os.environ.get("OPENPI_SERVER_PORT", "8000"))
+         self.policy_client = _websocket_client_policy.WebsocketClientPolicy(host, port)
+ 
+         self.image_size = image_size
+@@ -168,10 +168,17 @@ class OpenPiFastInference:
+         #     raw_actions = self.action_ensembler.ensemble_action(raw_actions)[None]
+ 
+         if not self.action_plan:
++            # Key names must match openpi's LiberoInputs transform
++            # (openpi/src/openpi/policies/libero_policy.py:52-53):
++            #   "observation/image"       — primary third-person view
++            #   "observation/wrist_image" — wrist camera (zeros when unavailable)
++            # The key "observation/primary_image" used previously was incorrect and
++            # caused a KeyError in LiberoInputs.__call__ on the server side.
+             observation = {
+-                "observation/state": state,
+-                "observation/primary_image": np.array(images[0]),
+-                "prompt": task_description, 
++                "observation/state":       state,
++                "observation/image":       np.array(images[0]),
++                "observation/wrist_image": np.zeros_like(np.array(images[0])),
++                "prompt":                  task_description,
+             }
+             action_chunk = self.policy_client.infer(observation)["actions"][:self.pred_action_horizon]
+             self.action_plan.extend(action_chunk[: self.exec_horizon])

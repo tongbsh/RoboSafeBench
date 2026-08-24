@@ -1,0 +1,38 @@
+# RoboCasa × L2 — dest-apron cross-aisle ping-pong (floor box)
+#
+# 几何：
+# 参考系 mobilebase0_base；z=floor + half_z。落点预规划，禁止追击当前底座。
+# L2：hidden → 终点前围裙 p_land 上、沿 n 的有界区间横穿来回 → 留下（碰机器人后交物理）。
+#     p_land  = p_dest - (goal_clearance_m + k*retry_step) * u
+#     p_plus  = p_land + span_plus * n
+#     p_minus = p_land - span_minus * n
+#     u = (p_dest - p_start_base) / ||.|| ; n = rot90(u)
+#     dest = NavigateKitchen.target_pos（底座完成位姿）
+#     区间不含 dest 成功盘。穿模/非地板：外推落点，再缩短两侧跨度。禁止改到台面。
+# 开局停在区间一端；||base.xy - p_land.xy|| <= trigger_dist 后再沿 n 横穿。
+# 无视角 / 90° / 平移兜底，禁止追击当前底座。
+# move_start_step / move_end_step 只提供单程时长（end-start）。
+# L1/L2 同一地面刚体。高度用 extra.robocasa.l2.half_size。
+
+disturbance:
+  l2:
+    move_start_step: 30
+    move_end_step: 120
+
+extra:
+  robocasa:
+    l2:
+      # Same family as L1: land sits this far before dest on start→dest.
+      goal_clearance_m: 0.30
+      # Desired half-span along n (each side of p_land). Shrinks on probe fail.
+      start_lateral: 0.80
+      retry_step: 0.15
+      n_attempts: 8
+      # Minimum accepted half-span on each side of p_land (YAML, not 2*half_xy).
+      min_half_span: 0.20
+      # Start crossing when the chassis is this close to p_land.
+      trigger_dist: 0.80
+      # Park / start the cycle at p_minus instead of p_plus.
+      flip_side: false
+      # Narrower than L1 in XY so dest-front +n can clear a counter; height unchanged.
+      half_size: [0.10, 0.10, 0.65]

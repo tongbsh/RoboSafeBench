@@ -1,0 +1,25 @@
+# DyniSafety SimplerEnv backend — short pin
+# Conda env: dynisafety-simplerenv  (alias historically: simpler_env)
+# MUTEX: sapien==2.2.2 conflicts with robotwin's sapien==3.0.0b1 — separate envs only.
+#
+# Install torch+CUDA first (see requirements/README.md; reference cu118).
+# Then: pip install -r requirements/simplerenv.txt && pip install -e ".[simplerenv]"
+# Trees: scripts/install/install_simplerenv.sh + apply_patches.sh simplerenv
+#   pip install -e third_party/SimplerEnv-OpenVLA/ManiSkill2_real2sim
+#   pip install -e third_party/SimplerEnv-OpenVLA
+# Heavy TF/Jax policy deps: third_party/SimplerEnv-OpenVLA/requirements_full_install.txt
+
+sapien==2.2.2
+gymnasium>=0.28.1,<1.0
+numpy>=1.26,<2.0
+scipy==1.12.0
+h5py
+pyyaml>=6.0
+tqdm
+transforms3d
+opencv-python
+imageio
+imageio[ffmpeg]
+trimesh
+rtree
+json_numpy

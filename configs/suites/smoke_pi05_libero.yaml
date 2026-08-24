@@ -1,0 +1,12 @@
+# Gate before adding pi05 to paper_main: 1 episode, L0 only.
+#   DYNI_SUITE=smoke_pi05_libero bash scripts/run/30_sweep.sh --dry-run
+#   DYNI_SUITE=smoke_pi05_libero DYNI_GPUS=0 bash scripts/run/30_sweep.sh
+name: smoke_pi05_libero
+episodes_per_task: 1
+seeds: [7]
+matrix:
+  - backend: libero
+    suites: [safelibero_spatial]
+    tasks: [0]
+    levels: [0]
+    models: [pi05]

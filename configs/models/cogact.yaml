@@ -1,0 +1,22 @@
+# DyniSafety model config (M4 frozen structure).
+name: cogact
+transport: local
+adapter: dynisafety.policies.adapters.cogact:CogACTAdapter
+action_space: delta_ee_7d
+chunk_size: 16
+observation:
+  images: [primary]
+  needs_state: false
+checkpoint:
+  default: "${env:COGACT_CKPT|${workspace}/external/checkpoints/cogact}"
+resources:
+  max_jobs_per_gpu: 2
+backends: [simplerenv]
+extra:
+  repo_root: "${env:SIMPLER_OPENVLA_ROOT|${workspace}/third_party/SimplerEnv-OpenVLA}"
+  policy_setup: widowx_bridge
+  action_scale: 1.0
+  action_model_type: DiT-L
+  cfg_scale: 1.5
+  needs_server: false
+  eval_env: simpler_env

@@ -1,0 +1,3 @@
+# Cross-backend Level-0 semantics: static baseline, no disturbance injection.
+disturbance:
+  level: 0

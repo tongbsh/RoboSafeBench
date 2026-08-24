@@ -1,0 +1,16 @@
+# DyniSafety LIBERO / MuJoCo evaluation environment.
+# name is authoritative (M10 Q1=A). Historical alias: openvla-oft
+name: dynisafety-libero
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+    # Path relative to this YAML file (conda resolves -r against the yml location).
+    - -r ../requirements/libero.txt
+# After create:
+#   conda activate dynisafety-libero
+#   pip install torch==2.4.1 --index-url https://download.pytorch.org/whl/cu124   # see requirements/README.md
+#   pip install -e ".[libero]"
+#   scripts/install/install_libero.sh && scripts/install/apply_patches.sh libero

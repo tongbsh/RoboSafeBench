@@ -1,0 +1,62 @@
+diff --git a/wan_va/wan_va_server.py b/wan_va/wan_va_server.py
+index 4c95ace..a9a4475 100644
+--- a/wan_va/wan_va_server.py
++++ b/wan_va/wan_va_server.py
+@@ -44,6 +44,9 @@ class VA_Server:
+         self.cache_name = 'pos'
+         self.job_config = job_config
+         self.save_root = job_config.save_root
++        # Client may set obs['save_visualization']; default True preserves
++        # offline generate() dumps. DyniSafety paper eval sends False.
++        self._save_visualization = True
+         self.dtype = job_config.param_dtype
+         self.device = torch.device(f"cuda:{job_config.local_rank}")
+         self.enable_offload = getattr(job_config, 'enable_offload', True)  # offload vae & text_encoder to save vram
+@@ -435,9 +438,13 @@ class VA_Server:
+                 dtype=self.dtype,
+             )
+ 
+-        self.exp_name = f"{prompt}_{time.strftime('%Y%m%d_%H%M%S')}" if prompt else "default"
+-        self.exp_save_root = os.path.join(self.save_root, 'real', self.exp_name)
+-        os.makedirs(self.exp_save_root, exist_ok=True)
++        if self._save_visualization:
++            self.exp_name = f"{prompt}_{time.strftime('%Y%m%d_%H%M%S')}" if prompt else "default"
++            self.exp_save_root = os.path.join(self.save_root, 'real', self.exp_name)
++            os.makedirs(self.exp_save_root, exist_ok=True)
++        else:
++            self.exp_name = None
++            self.exp_save_root = None
+         torch.cuda.empty_cache()
+ 
+     def _infer(self, obs, frame_st_id=0):
+@@ -562,8 +569,9 @@ class VA_Server:
+ 
+         actions[:, ~self.action_mask] *= 0
+ 
+-        save_async(latents, os.path.join(self.exp_save_root, f'latents_{frame_st_id}.pt'))
+-        save_async(actions, os.path.join(self.exp_save_root, f'actions_{frame_st_id}.pt'))
++        if self._save_visualization:
++            save_async(latents, os.path.join(self.exp_save_root, f'latents_{frame_st_id}.pt'))
++            save_async(actions, os.path.join(self.exp_save_root, f'actions_{frame_st_id}.pt'))
+ 
+         actions = self.postprocess_action(actions)
+         torch.cuda.empty_cache()
+@@ -572,7 +580,8 @@ class VA_Server:
+     def _compute_kv_cache(self, obs):
+         ### optional async save obs for debug
+         self.transformer.clear_pred_cache(self.cache_name)
+-        save_async(obs['obs'], os.path.join(self.exp_save_root, f'obs_data_{self.frame_st_id}.pt'))
++        if self._save_visualization:
++            save_async(obs['obs'], os.path.join(self.exp_save_root, f'obs_data_{self.frame_st_id}.pt'))
+         latent_model_input = self._encode_obs(obs)
+         if self.frame_st_id == 0:
+             latent_model_input = torch.cat(
+@@ -608,6 +617,8 @@ class VA_Server:
+         reset = obs.get('reset', False)
+         prompt = obs.get('prompt', None)
+         compute_kv_cache = obs.get('compute_kv_cache', False)
++        if 'save_visualization' in obs:
++            self._save_visualization = bool(obs['save_visualization'])
+ 
+         if reset:
+             logger.info(f"******************* Reset server ******************")

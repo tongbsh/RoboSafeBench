@@ -1,0 +1,38 @@
+# SimplerEnv × L2 — bridge authority (§0.4).
+# Critical: move_end_step=15 (not CLI 30 / dynamicSimplerEnv_eval 10).
+disturbance:
+  l2:
+    alpha: 0.5
+    move_start_step: 0
+    move_end_step: 15
+    settle_steps: 1
+    arc_height: 0.10
+    outside_table_dist: 0.10
+    # --l2-keep-kinematic ⇒ release_after_settle=false
+    release_after_settle: false
+    align_start_y_to_eef: true
+    # §0.4: not passed by bridge shell → former CLI defaults (now YAML-only).
+    mirror_start: true
+    start_dist_mult: 1.0
+    start_offset: [0.50, -0.10, 0.0]
+    enable_random_start: true
+    random_start_xy_range: 0.10
+    random_start_z_range: 0.02
+    random_start_max_attempts: 24
+
+# Lateral start slots + linear/trapezoid paths. Default off: L2 stays
+# today's outside-table jitter + arc. All keys are required; assemble
+# errors if this mapping is missing. SimplerEnv embedding only.
+extra:
+  simplerenv:
+    l2:
+      spawn_diversity:
+        enabled: false
+        lateral_width_m: 0.15
+        linear_z_clearance_m: 0.05
+        linear_max_start_z_m: 0.35
+        linear_tail_alpha: 0.15
+        linear_descent_alpha: 0.20
+        clearance_samples: 24
+        tail_exclude_waypoints: 3
+        forbidden_slots: []

@@ -1,0 +1,28 @@
+# DyniSafety model config (M4 frozen structure).
+name: fastwam
+transport: local
+adapter: dynisafety.policies.adapters.fastwam:FastWAMAdapter
+action_space: qpos_14d
+# Align with archive/adapter replan_steps=24 (backend open-loop length).
+chunk_size: 24
+observation:
+  images: [primary, left, right]
+  needs_state: true
+checkpoint:
+  default: "${env:FASTWAM_CKPT|${workspace}/external/checkpoints/fastwam/robotwin/robotwin_uncond_3cam_384.pt}"
+resources:
+  max_jobs_per_gpu: 1
+backends: [robotwin]
+extra:
+  repo_root: "${env:FASTWAM_ROOT|${workspace}/external/model_repos/FastWAM}"
+  dataset_stats_path: "${env:FASTWAM_STATS|${workspace}/external/checkpoints/fastwam/robotwin/robotwin_uncond_3cam_384_dataset_stats.json}"
+  # Explicit knobs (were setdefault in _robotwin_impl when policy_kwargs was {}).
+  policy_kwargs:
+    mixed_precision: bf16
+    replan_steps: 24
+    num_inference_steps: 10
+    text_cfg_scale: 1.0
+    negative_prompt: ""
+    tiled: false
+  needs_server: false
+  eval_env: internvla_a1

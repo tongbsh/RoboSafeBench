@@ -1,0 +1,32 @@
+cff-version: 1.2.0
+title: "DyniSafety: Benchmarking VLA Safety under Dynamic Physical Disturbances"
+message: >-
+  If you use DyniSafety, please cite this software / paper.
+  Author and venue fields are TODO placeholders for anonymous review —
+  do not invent names.
+type: software
+# TODO(anonymous): replace with real authors after dual-blind review.
+authors:
+  - family-names: "TODO"
+    given-names: "TODO"
+license: MIT
+repository-code: "TODO"
+abstract: >-
+  DyniSafety is a dynamic physical safety benchmark for Vision-Language-Action
+  (VLA) policies across LIBERO, SimplerEnv, and RoboTwin. Reported scores are
+  simulator-internal indices and are not deployment-grade physical safety
+  certification.
+keywords:
+  - robotics
+  - vision-language-action
+  - safety benchmark
+  - sim-to-real
+preferred-citation:
+  type: article
+  title: "DyniSafety: Benchmarking VLA Safety under Dynamic Physical Disturbances"
+  # TODO(anonymous): authors / journal / year for camera-ready
+  authors:
+    - family-names: "TODO"
+      given-names: "TODO"
+  year: 2025
+  journal: "TODO"

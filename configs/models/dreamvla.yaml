@@ -1,0 +1,30 @@
+# DyniSafety model config (M4 frozen structure).
+name: dreamvla
+transport: http
+adapter: dynisafety.policies.adapters.dreamvla:DreamVLAAdapter
+action_space: delta_ee_7d
+chunk_size: 8
+observation:
+  images: [primary]
+  needs_state: false
+server:
+  env: dreamvla
+  root: "${env:DREAMVLA_ROOT|${workspace}/external/model_repos/Dream-VLA}"
+  launch: server.py
+  default_port: 8030
+  health_path: /health
+  startup_timeout_s: 600
+checkpoint:
+  default: "${env:DREAMVLA_CKPT|Dream-org/Dream-VLA-7B}"
+resources:
+  max_jobs_per_gpu: 2
+backends: [simplerenv]
+extra:
+  act_timeout_s: 180
+  reset_path: /reset
+  act_path: /act
+  unnorm_key: bridge_orig
+  server_host: 127.0.0.1
+  needs_server: true
+  eval_env: simpler_env
+  serve_env: dreamvla

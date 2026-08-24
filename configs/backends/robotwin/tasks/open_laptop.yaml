@@ -1,0 +1,22 @@
+# main20 / task_id=16 — max_steps from _eval_step_limit.yml; primary_arm externalized for S3e registry (D3=B).
+# Laptop lid is a large flat AABB, not a disk; tall wineglasses land on the
+# cover and tip with ~0 N (landing_toppled, not official toppled).
+runtime:
+  max_steps: 700
+scene:
+  obstacle_avoid_margin: 0.08
+  obstacle_avoid_shape: aabb
+  l2_landing_push_m: 0.10
+disturbance:
+  obstacle:
+    target_mode: source_object
+    pool:
+      - 021_cup
+      - 080_pillbottle
+      - 114_bottle
+extra:
+  robotwin:
+    task_id: 16
+    instruction: open laptop
+    primary_arm: runtime
+    primary_arm_rule: laptop face_prod > 0 → left else right

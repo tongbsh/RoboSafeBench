@@ -1,0 +1,23 @@
+# DyniSafety RoboCasa backend — short pin (NumPy 2 compatible)
+# Conda env: dynisafety-robocasa  (Python 3.11)
+# MUTEX: numpy==2.2.5 (official RoboCasa pin). Do NOT install this file into
+# dynisafety-libero / dynisafety-simplerenv / dynisafety-robotwin
+# (those require numpy>=1.26,<2.0 from pyproject.toml).
+#
+# Do NOT: pip install -e .
+# Do:     pip install -e . --no-deps && pip install -r requirements/robocasa.txt
+#
+# Trees: scripts/install/install_robocasa.sh → pip install -e third_party/robosuite
+#        and pip install -e third_party/robocasa (official pins live in those setup.py).
+# Headless: export MUJOCO_GL=egl
+#
+# Do not write numpy<2 here.
+
+numpy==2.2.5
+mujoco==3.3.1
+pandas>=2.0
+pyyaml>=6.0
+matplotlib>=3.7
+pyarrow>=14.0
+pillow>=10.0
+pytest>=7.0

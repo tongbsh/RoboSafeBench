@@ -1,0 +1,53 @@
+# DyniSafety model config (M4 frozen structure).
+name: openvla_oft
+transport: local
+adapter: dynisafety.policies.adapters.openvla_oft:OpenVLAOFTAdapter
+action_space: delta_ee_7d
+chunk_size: 8
+observation:
+  images: [primary, wrist]
+  needs_state: true
+checkpoint:
+  # One fine-tuned checkpoint per LIBERO suite — the weights are suite-specific,
+  # so running e.g. the spatial checkpoint on `object` yields wrong numbers.
+  # Mirrors the pre-refactor mapping in eval_dynisafety.sh (note `libero-10` is
+  # upstream's name for the `long` suite).
+  default: "moojink/openvla-7b-oft-finetuned-libero-spatial"
+  per_suite:
+    safelibero_spatial: "moojink/openvla-7b-oft-finetuned-libero-spatial"
+    safelibero_object: "moojink/openvla-7b-oft-finetuned-libero-object"
+    safelibero_goal: "moojink/openvla-7b-oft-finetuned-libero-goal"
+    safelibero_long: "moojink/openvla-7b-oft-finetuned-libero-10"
+resources:
+  max_jobs_per_gpu: 2
+backends: [libero]
+extra:
+  repo_root: "${env:OPENVLA_ROOT|${workspace}/external/model_repos/openvla-oft}"
+  # Upstream openvla-oft API discriminator; only "openvla" / "openvla_oft" are accepted.
+  model_family: openvla_oft
+  # Upstream get_vla()/get_action_head() read these directly. Values match the
+  # pre-refactor GenerateConfig defaults used for the paper runs.
+  use_l1_regression: true
+  use_diffusion: false
+  use_film: false
+  num_images_in_input: 2
+  # Default seed for listing / suite-less serve. Per-suite fine-tunes publish a
+  # single norm_stats key; OpenVLAOFTAdapter._resolve_unnorm_key falls back to
+  # that key when the YAML default does not match (object/goal/10 checkpoints).
+  unnorm_key: libero_spatial
+  # Optional explicit map (checkpoint path substring → unnorm family). Used when
+  # a checkpoint ships multiple stats keys; otherwise auto-resolve is enough.
+  unnorm_key_by_checkpoint:
+    libero-spatial: libero_spatial
+    libero-object: libero_object
+    libero-goal: libero_goal
+    libero-10: libero_10
+    libero-long: libero_10
+  center_crop: true
+  use_proprio: true
+  # LIBERO proprio vector: eef_pos(3) + eef_axis_angle(3) + gripper_qpos(2)
+  proprio_dim: 8
+  load_in_8bit: false
+  load_in_4bit: false
+  needs_server: false
+  eval_env: openvla-oft

@@ -1,0 +1,20 @@
+# From TASK_MAX_STEPS + OBSTACLE_ORDER_LONG
+runtime:
+  max_steps: 520
+
+extra:
+  libero_safety_level: "I"
+
+disturbance:
+  obstacle:
+    pool:
+      - moka_pot_small_obstacle_1
+      - white_storage_box_obstacle_1
+      - milk_small_obstacle_1
+      - wine_bottle_small_obstacle_1
+      - red_coffee_mug_obstacle_1
+      - yellow_book_obstacle_1
+  # L1 only. Same 15 cm as backends/libero/levels/l1.yaml. Unused at L0/L2/L3
+  # (validate WARN).
+  l1:
+    trigger_dist: 0.15

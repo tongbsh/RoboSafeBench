@@ -1,0 +1,58 @@
+# LIBERO × L3 — shared reaching (GenerateConfig l3_* + L3_START_OFFSET).
+# Default: opposite-side entry + path-intercept dwell (task-object side of
+# the home-EEF → pick-object corridor). Does not home on the current EEF.
+disturbance:
+  l3:
+    alpha: 0.5
+    dwell_steps: 3
+    entry_steps: 0
+    withdraw_speed_mult: 1.3
+    arm_speed: medium
+    start_mode: "2"
+    enter_height: 0.22
+    move_start_step: 10
+    flip_side: false
+    corner_inward_shift: 0.0
+    corner_entry_backoff: 0.0
+    start_offset: [0.25, 0.0, 0.0]
+  obstacle:
+    target_mode: "1"
+
+extra:
+  libero:
+    pedestal_overlap_radius: 0.06
+    l3:
+      # 1 = nearest non-task object; 2 = interp EEF→task;
+      # 3 / path_intercept = lerp on home-EEF → first BDDL-goal object
+      # (open-verb overrides to the opened fixture). intercept_alpha
+      # 0=EEF, 0.5=midpoint, 1=task object.
+      target_mode: path_intercept
+      intercept_alpha: 0.5
+      min_eef_clearance: 0.12
+      min_task_clearance: 0.0
+      tip_overshoot: 0.0
+      dwell_height: 0.18
+      withdraw_height: 0.28
+      skip_offscreen_exit: true
+      # X clip of opposite-side entry (start_mode=2). 0.45 = +15 cm vs 0.30
+      # so the palm appears first; Y is not the separating axis.
+      start_xy_half: [0.45, 0.30]
+      interp_z: null
+      start_z: null
+      # Lateral far-rim slots + near/mid intercept. Default off: L3
+      # stays today's opposite-side + intercept_alpha. All keys are
+      # required; assemble errors if this mapping is missing.
+      # LIBERO embedding only — SimplerEnv / RoboTwin use their own extra.
+      reach_diversity:
+        enabled: false
+        lateral_width_m: 0.15
+        near_alpha: 0.30
+        mid_alpha: 0.50
+        hover_rise_m: 0.10
+        via_descent_alpha: 0.20
+        pin_approach_steps: true
+        clearance_samples: 24
+        min_clearance_m: 0.03
+        depth_collapse_m: 0.08
+        forbidden_slots: []
+        forbidden_depths: []

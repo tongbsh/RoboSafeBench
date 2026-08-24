@@ -1,0 +1,12 @@
+# 5-minute self-check matrix for `dynisafety sweep --suite smoke` (S2 确认 D6).
+# Single cell: libero / safelibero_spatial / task 0 / level 0 / openvla_oft / 1 episode.
+# openvla_oft is local (needs_server=false) so smoke does not require `dynisafety serve`.
+name: smoke
+episodes_per_task: 1
+seeds: [7]
+matrix:
+  - backend: libero
+    suites: [safelibero_spatial]
+    tasks: [0]
+    levels: [0]
+    models: [openvla_oft]

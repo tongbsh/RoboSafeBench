@@ -1,0 +1,31 @@
+# DyniSafety model config (M4 frozen structure).
+name: openpifast
+transport: websocket
+adapter: dynisafety.policies.adapters.openpifast:OpenPiFastAdapter
+action_space: delta_ee_7d
+chunk_size: 50
+observation:
+  images: [primary, wrist]
+  needs_state: true
+server:
+  env: openpi
+  root: "${env:OPENPI_ROOT|${workspace}/external/model_repos/openpi}"
+  launch: scripts/serve_policy.py
+  default_port: 8000
+  health_path: /health
+  startup_timeout_s: 600
+  # JAX defaults to ~75% GPU preallocation; disable so serve + eval can share.
+  process_env:
+    XLA_PYTHON_CLIENT_PREALLOCATE: "false"
+checkpoint:
+  default: "${env:OPENPIFAST_CKPT|${workspace}/external/checkpoints/openpi_cache/openpi-assets/checkpoints/pi0_fast}"
+resources:
+  max_jobs_per_gpu: 2
+backends: [simplerenv]
+extra:
+  ws_codec: openpi
+  openpi_client_src: "${env:OPENPI_CLIENT_SRC|${workspace}/external/model_repos/openpi/packages/openpi-client/src}"
+  server_host: 127.0.0.1
+  needs_server: true
+  eval_env: simpler_env
+  serve_env: openpi

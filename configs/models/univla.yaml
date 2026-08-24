@@ -1,0 +1,73 @@
+# DyniSafety model config (M4 frozen structure).
+name: univla
+transport: http
+adapter: dynisafety.policies.adapters.univla:UniVLAAdapter
+action_space: delta_ee_7d
+chunk_size: 1
+observation:
+  images: [primary]
+  needs_state: true
+server:
+  env: univla
+  root: "${env:UNIVLA_ROOT|${workspace}/external/model_repos/UniVLA}"
+  launch: experiments/robot/libero/deploy_univla_dynisafety_server.py
+  default_port: 8020
+  health_path: /health
+  startup_timeout_s: 600
+  # argv tail for the launcher; {checkpoint} resolves from checkpoint.per_suite
+  # and {unnorm_key}/{inference_mode} from server.per_suite below.
+  # Mirrors scripts/univla/start_univla_server.sh (center_crop stayed off for
+  # the paper runs, so no --center_crop here).
+  args:
+    - "--pretrained_checkpoint"
+    - "{checkpoint}"
+    - "--action_decoder_path"
+    - "{checkpoint}/action_decoder.pt"
+    - "--unnorm_key"
+    - "{unnorm_key}"
+    - "--window_size"
+    - "12"
+    - "--inference_mode"
+    - "{inference_mode}"
+    - "--port"
+    - "{port}"
+  # The launcher requires --unnorm_key explicitly; each SFT checkpoint ships a
+  # dataset_statistics.json with exactly one (suite-specific) key.
+  per_suite:
+    safelibero_spatial:
+      unnorm_key: libero_spatial_no_noops
+      inference_mode: libero
+    safelibero_object:
+      unnorm_key: libero_object_no_noops
+      inference_mode: libero
+    safelibero_goal:
+      unnorm_key: libero_goal_no_noops
+      inference_mode: libero
+    safelibero_long:
+      unnorm_key: libero_10_no_noops
+      inference_mode: libero
+    bridge:
+      unnorm_key: bridge_oxe
+      inference_mode: bridge
+checkpoint:
+  # Per-suite SFT weights, mirroring the pre-refactor
+  # scripts/univla/start_univla_server.sh case block (upstream calls the `long`
+  # suite `libero-10`). The simplerenv bridge weights are a separate tree.
+  default: "${env:UNIVLA_CKPT|${workspace}/external/checkpoints/univla/sft-libero/univla-libero-spatial}"
+  per_suite:
+    safelibero_spatial: "${workspace}/external/checkpoints/univla/sft-libero/univla-libero-spatial"
+    safelibero_object: "${workspace}/external/checkpoints/univla/sft-libero/univla-libero-object"
+    safelibero_goal: "${workspace}/external/checkpoints/univla/sft-libero/univla-libero-goal"
+    safelibero_long: "${workspace}/external/checkpoints/univla/sft-libero/univla-libero-10"
+    bridge: "${workspace}/external/checkpoints/univla/sft-simpler-bridge"
+resources:
+  max_jobs_per_gpu: 2
+backends: [libero, simplerenv]
+extra:
+  act_timeout_s: 180
+  reset_path: /reset
+  act_path: /act
+  server_host: 127.0.0.1
+  needs_server: true
+  eval_env: openvla-oft
+  serve_env: univla

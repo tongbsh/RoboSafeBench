@@ -1,0 +1,20 @@
+# Bridge suite authority (§0.4 / §0.5).
+# Schema field is runtime.max_steps (shells historically called this
+# max_episode_steps). Unified to 120 for all models — no per-model override.
+# table_height lives in backends/simplerenv.yaml (single default).
+runtime:
+  max_steps: 120
+  episodes: 24
+  control_freq: 5
+  sim_freq: 500
+  obj_episode_range: [0, 24]
+
+disturbance:
+  obstacle:
+    scale: 0.5
+    models:
+      - blue_plastic_bottle
+      - coke_can
+      - redbull_can
+      - 7up_can
+      - fanta_can

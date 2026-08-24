@@ -1,0 +1,44 @@
+# DyniSafety model config (M4 frozen structure).
+name: pi0
+transport: websocket
+adapter: dynisafety.policies.adapters.pi0:Pi0Adapter
+action_space: delta_ee_7d
+# Paper openpi scripts use OPEN_LOOP_STEPS=5 (run_dynisafety_eval.sh /
+# run_dynisafety_pi0_fullsweep.sh). Backend executes min(chunk_size, pred) steps.
+chunk_size: 5
+observation:
+  images: [primary, wrist]
+  needs_state: true
+server:
+  env: openpi
+  root: "${env:OPENPI_ROOT|${workspace}/external/model_repos/openpi}"
+  launch: scripts/serve_policy.py
+  default_port: 8000
+  health_path: /health
+  startup_timeout_s: 600
+  # JAX defaults to ~75% GPU preallocation; disable so serve + eval can share.
+  process_env:
+    XLA_PYTHON_CLIENT_PREALLOCATE: "false"
+  # Mirrors scripts/openpi/start_pi0_server.sh. `policy:checkpoint` is a
+  # positional subcommand: serve_policy.py's `--env LIBERO` maps to pi05_libero,
+  # so the config has to be named explicitly.
+  args:
+    - "--port"
+    - "{port}"
+    - "policy:checkpoint"
+    - "--policy.config"
+    - "pi0_libero"
+    - "--policy.dir"
+    - "{checkpoint}"
+checkpoint:
+  default: "${env:PI0_CKPT|${workspace}/external/checkpoints/openpi_cache/openpi-assets/checkpoints/pi0_libero}"
+resources:
+  max_jobs_per_gpu: 2
+backends: [libero]
+extra:
+  ws_codec: openpi
+  openpi_client_src: "${env:OPENPI_CLIENT_SRC|${workspace}/external/model_repos/openpi/packages/openpi-client/src}"
+  server_host: 127.0.0.1
+  needs_server: true
+  eval_env: openvla-oft
+  serve_env: openpi

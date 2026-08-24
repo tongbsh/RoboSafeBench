@@ -1,0 +1,5 @@
+# RoboCasa L3 uses a pedestrian proxy, not a table-top reaching hand mesh.
+# This file is the merge slot (configs/backends/{b}/hand.yaml). Window E implements
+# the floor pedestrian; geometry numbers live in extra.robocasa.l3 (levels/l3.yaml).
+# Do not treat this as Shared Reaching / table-top Sudden Drop / real human arm.
+{}

@@ -1,0 +1,79 @@
+# LIBERO AEGIS vision obstacle-source overlay (Prompt A3a/A3c).
+# Merge AFTER configs/backends/libero/aegis/enable.yaml:
+#   --config configs/backends/libero/aegis/enable.yaml \
+#   --config configs/backends/libero/aegis/vision.yaml
+# Does NOT set extra.libero.aegis.enabled (default remains off).
+# Does NOT belong in backends/libero.yaml.
+#
+# A3c: GroundingDINO-T SwinT-OGC. Missing files → missing_weights;
+# package/CUDA issues → backend_unavailable; then on_failure (default fallback_sim_gt).
+
+extra:
+  libero:
+    aegis:
+      obstacle_source: vision
+      vision:
+        # Official captions come from GLM prefer_list; map controller names to those strings.
+        text_prompt_mode: from_controller_name
+        prompt_map:
+          moka_pot_obstacle_1: blue moka pot
+          moka_pot_small_obstacle_1: blue moka pot
+          white_storage_box_obstacle_1: white storage box
+          wine_bottle_obstacle_1: black wine bottle
+          wine_bottle_small_obstacle_1: black wine bottle
+          milk_obstacle_1: red milk carton
+          milk_small_obstacle_1: red milk carton
+          red_coffee_mug_obstacle_1: red mug
+        # Official get_point_cloud uses agentview + backview (env_wrapper camera_names).
+        views: [agentview, backview]
+        on_failure: fallback_sim_gt
+        refresh: on_settle
+        grounding_dino_config: third_party/vlsa-aegis/GroundingDINO/GroundingDINO_SwinT_OGC.py
+        grounding_dino_checkpoint: third_party/vlsa-aegis/GroundingDINO/groundingdino_swint_ogc.pth
+        box_threshold: 0.35
+        text_threshold: 0.25
+        device: cuda
+        device_fallback: cpu
+        flip_rgb_for_dino: true
+        unproject_v_flip: true
+        keep_nearest_frac: 0.8
+        min_cloud_points: 4
+        cluster: dbscan
+        dbscan_eps: 0.0001
+        dbscan_min_points: 50
+        table_bounds:
+          default:
+            x_min: -0.3
+            x_max: 0.3
+            y_min: -0.3
+            y_max: 0.3
+            z_min: 0.92
+            z_max: 1.5
+          safelibero_spatial:
+            x_min: -0.3
+            x_max: 0.3
+            y_min: -0.3
+            y_max: 0.3
+            z_min: 0.92
+            z_max: 1.5
+          safelibero_goal:
+            x_min: -0.3
+            x_max: 0.3
+            y_min: -0.3
+            y_max: 0.3
+            z_min: 0.92
+            z_max: 1.5
+          safelibero_object:
+            x_min: -0.3
+            x_max: 0.3
+            y_min: -0.3
+            y_max: 0.3
+            z_min: 0.05
+            z_max: 0.5
+          safelibero_long:
+            x_min: -0.3
+            x_max: 0.3
+            y_min: -0.3
+            y_max: 0.3
+            z_min: 0.43
+            z_max: 0.8

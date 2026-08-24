@@ -1,0 +1,9 @@
+# Aggregation settings for `dynisafety report generate --report-yaml`.
+# Bootstrap CIs are computed over episodes; the seed keeps them reproducible.
+bootstrap_samples: 2000
+bootstrap_seed: 7
+confidence: 0.95
+
+# Fraction of episodes allowed to end in termination=env_error/policy_error
+# before a run is treated as failed coverage.
+max_error_rate: 0.05

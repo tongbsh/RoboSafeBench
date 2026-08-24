@@ -1,0 +1,9 @@
+# pin: ccfe3809766839a2fcfb7a3d3c9abff585189188
+# path: third_party/SimplerEnv-OpenVLA/ManiSkill2_real2sim
+# why: D5=A — DyniSafety pin ManiSkill2 at 91d154b; upstream ccfe380 records cd45dd2.
+# apply: NOT git-apply. Run:
+#   git -C third_party/SimplerEnv-OpenVLA/ManiSkill2_real2sim checkout 91d154bfd864577f8d2e80f3fc2f8b4d9df9ae5c
+# Expected upstream gitlink in SimplerEnv at ccfe380:
+#   cd45dd27dc6bb26d048cb6570cdab4e3f935cc37
+# Target:
+#   91d154bfd864577f8d2e80f3fc2f8b4d9df9ae5c

@@ -1,0 +1,15 @@
+# pin: ccfe3809766839a2fcfb7a3d3c9abff585189188
+# path: third_party/SimplerEnv-OpenVLA
+# why: HTTP VLA clients (xvla/spatialvla_server/memoryvla) need json_numpy at install time.
+# apply: git apply -p1 (from third_party/SimplerEnv-OpenVLA) or scripts/install/apply_patches.sh
+
+diff --git a/requirements_full_install.txt b/requirements_full_install.txt
+index 5437fa6..20b23ae 100644
+--- a/requirements_full_install.txt
++++ b/requirements_full_install.txt
+@@ -21,3 +21,5 @@ wandb
+ einops
+ transformers
+ scipy==1.12.0
++# HTTP VLA clients (xvla / spatialvla_server / memoryvla)
++json_numpy

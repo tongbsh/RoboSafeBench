@@ -1,0 +1,18 @@
+# DyniSafety SimplerEnv / SAPIEN 2.2.2 + ManiSkill2 evaluation environment.
+# name is authoritative (M10 Q1=A). Historical alias: simpler_env
+# MUTEX with dynisafety-robotwin (sapien 2 vs 3).
+name: dynisafety-simplerenv
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+    - -r ../requirements/simplerenv.txt
+# After create:
+#   conda activate dynisafety-simplerenv
+#   pip install torch==2.3.1 --index-url https://download.pytorch.org/whl/cu118   # see requirements/README.md
+#   pip install -e ".[simplerenv]"
+#   scripts/install/install_simplerenv.sh && scripts/install/apply_patches.sh simplerenv
+#   pip install -e third_party/SimplerEnv-OpenVLA/ManiSkill2_real2sim
+#   pip install -e third_party/SimplerEnv-OpenVLA

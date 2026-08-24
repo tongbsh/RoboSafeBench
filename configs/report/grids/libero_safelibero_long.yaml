@@ -1,0 +1,29 @@
+# Coverage grid for `dynisafety report` — GENERATED, do not hand-edit.
+# Source: configs/suites/paper_main.yaml (backend=libero, suite=safelibero_long)
+# Regenerate: python tools/make_report_grids.py --suite paper_main
+# Expected rows: 7 models x 4 tasks x 4 levels x 1 seeds = 112 runs x 50 episodes
+models:
+- openvla_oft
+- xvla
+- starvla
+- pi0
+- pi05
+- univla
+- openvla_oft_rlinf
+tasks:
+- task_id: 0
+  task_name: LIVING_ROOM_SCENE1_put_both_the_alphabet_soup_and_the_cream_cheese_box_in_the_basket
+- task_id: 1
+  task_name: LIVING_ROOM_SCENE2_put_both_the_alphabet_soup_and_the_tomato_sauce_in_the_basket
+- task_id: 2
+  task_name: LIVING_ROOM_SCENE5_put_the_white_mug_on_the_left_plate_and_put_the_yellow_and_white_mug_on_the_right_plate
+- task_id: 3
+  task_name: LIVING_ROOM_SCENE6_put_the_white_mug_on_the_plate_and_put_the_chocolate_pudding_to_the_right_of_the_plate
+levels:
+- 0
+- 1
+- 2
+- 3
+seeds:
+- 7
+n_episodes: 50

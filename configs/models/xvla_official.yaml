@@ -1,0 +1,68 @@
+# DyniSafety model config (M4 frozen structure).
+# Defaults are RoboTwin (domain_id=6). SimplerEnv Bridge overrides via
+# checkpoint.per_suite + per_backend (domain_id=0, eval_env, gripper).
+name: xvla_official
+transport: http
+adapter: dynisafety.policies.adapters.xvla:XVLAAdapter
+action_space: abs_ee_7d
+chunk_size: 30
+observation:
+  images: [primary, left, right]
+  needs_state: true
+server:
+  env: XVLA
+  root: "${env:XVLA_ROOT|${workspace}/external/model_repos/X-VLA}"
+  launch: deploy.py
+  default_port: 8010
+  # Same as xvla.yaml: upstream deploy app has POST /act only.
+  health_path: /openapi.json
+  startup_timeout_s: 600
+  # Same launcher as xvla.yaml; only the checkpoint differs.
+  args: ["--model_path", "{checkpoint}", "--port", "{port}"]
+checkpoint:
+  default: "${env:XVLA_OFFICIAL_CKPT|${workspace}/external/checkpoints/xVLA/X-VLA-RoboTwin2}"
+  per_suite:
+    main20: "${workspace}/external/checkpoints/xVLA/X-VLA-RoboTwin2"
+    bridge: "${workspace}/external/checkpoints/xVLA/xvla-simpler-widowx"
+resources:
+  max_jobs_per_gpu: 2
+backends: [robotwin, simplerenv]
+extra:
+  variant: official
+  # RoboTwin archive: XVLA_DOMAIN_ID=6, gripper_threshold=0.7
+  domain_id: 6
+  denoising_steps: 10
+  gripper_threshold: 0.7
+  act_timeout_s: 60
+  reset_path: /reset
+  act_path: /act
+  server_host: 127.0.0.1
+  needs_server: true
+  eval_env: internvla_a1
+  serve_env: XVLA
+per_backend:
+  robotwin:
+    # Official RoboTwin X-VLA client: dual-arm absolute EE (16-D) via take_action(ee).
+    action_space: abs_ee_16d
+    extra:
+      domain_id: 6
+      gripper_threshold: 0.7
+      eval_env: internvla_a1
+  simplerenv:
+    # Bridge: single third-person cam + delta EE (archived simpler_delta client).
+    action_space: delta_ee_7d
+    observation:
+      images: [primary]
+      needs_state: true
+    # Bridge start_xvla_server.sh: xvla-simpler-widowx; domain_id=0; eval in simpler_env.
+    # Per-task gripper thresholds match upstream X-VLA WidowX clients
+    # (evaluation/simpler/WidowX/client_{carrot,blocks,spoon,eggplant}.py).
+    extra:
+      domain_id: 0
+      gripper_threshold: 0.95
+      gripper_threshold_by_task:
+        bridge_carrot: 0.95
+        bridge_stack: 0.91
+        bridge_spoon: 0.7
+        bridge_eggplant: 0.8
+      eval_env: simpler_env

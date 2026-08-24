@@ -1,0 +1,48 @@
+# Xiaomi-Robotics-1 on RoboCasa NavigateKitchen (RoboCasa365 checkpoint).
+# Server: conda mibot + deploy/server.py (length-prefixed pickle TCP).
+# Client: dynisafety-robocasa loads AutoProcessor and talks via XiaomiCodec.
+name: xiaomi
+transport: websocket
+adapter: dynisafety.policies.adapters.xiaomi:XiaomiAdapter
+action_space: hybrid_mobile_12d
+chunk_size: 1
+observation:
+  images: [left, right, wrist]
+  needs_state: true
+server:
+  env: mibot
+  root: "${env:XIAOMI_ROOT|${workspace}/external/model_repos/Xiaomi-Robotics-1}"
+  launch: deploy/server.py
+  default_port: 10086
+  health_path: /health
+  startup_timeout_s: 600
+  args:
+    - "--model"
+    - "{checkpoint}"
+    - "--host"
+    - "127.0.0.1"
+    - "--port"
+    - "{port}"
+checkpoint:
+  default: "${env:XIAOMI_CKPT|${workspace}/external/checkpoints/xiaomi_robocasa365}"
+resources:
+  max_jobs_per_gpu: 1
+backends: [robocasa]
+extra:
+  ws_codec: xiaomi
+  server_host: 127.0.0.1
+  needs_server: true
+  eval_env: dynisafety-robocasa
+  serve_env: mibot
+  robot_type: robocasa365
+  state_pad_dim: 60
+  obs_history: 4
+  obs_interval: 2
+  replan_steps: 16
+  crop_ratio: 0.95
+  policy_cameras:
+    left: robot0_agentview_left
+    right: robot0_agentview_right
+    wrist: robot0_eye_in_hand
+  policy_camera_width: 256
+  policy_camera_height: 256

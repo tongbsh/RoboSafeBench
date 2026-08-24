@@ -1,0 +1,16 @@
+# Debug slice: π₀.₅ × LIBERO safelibero_spatial × task0 × L0–L3.
+# Same scheduler path as paper_main (serve_env=openpi / eval_env=openvla-oft).
+# Uses local pi05_libero checkpoint (see configs/models/pi05.yaml).
+#
+#   bash scripts/debug/libero/run_pi05_libero_spatial.sh
+#   bash scripts/debug/libero/run_pi05_libero_spatial.sh 1 --dry-run
+#   DYNI_SUITE=debug_pi05_libero_spatial bash scripts/run/30_sweep.sh --dry-run
+name: debug_pi05_libero_spatial
+episodes_per_task: 10
+seeds: [7]
+matrix:
+  - backend: libero
+    suites: [safelibero_spatial]
+    tasks: [0]
+    levels: [0, 1, 2, 3]
+    models: [pi05]

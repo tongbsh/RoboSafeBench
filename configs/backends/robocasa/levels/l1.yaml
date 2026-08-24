@@ -1,0 +1,29 @@
+# RoboCasa × L1 — Frontal Sudden Appear
+# 禁止写 Sliding / Shared Reaching / 台面 Sudden Drop
+#
+# 几何：
+# 参考系 mobilebase0_base；z=floor + half_z。落点预规划，禁止追击当前底座。
+# L1：hidden → 一次出现在 start→dest 线段上、任务完成点之前的空地板 → 物理。
+#     p_spawn = p_dest - (goal_clearance_m + k*retry_step) * u
+#     u = (p_dest - p_start) / ||p_dest - p_start||
+#     dest = NavigateKitchen.target_pos（底座完成位姿，不是 fixture 中心）
+#     出现点=终点。留下。穿模/非地板则沿路径向起点外推 n_attempts。
+# L1 箱子高度单独用 extra.robocasa.l1.half_size（顶面约到 Panda EEF）。
+# L2 仍用 disturbance.obstacle.half_size。禁止 closest_visible / 任务物体。
+# 落点失败：extra.spawn_failed，禁止改到台面。
+#
+# 触发（对齐 LIBERO：执行器到预规划落点的水平距离）：
+# ||base.xy - p_spawn.xy|| <= trigger_dist 时出现。不用 speed / progress。
+
+extra:
+  robocasa:
+    l1:
+      # First candidate sits this far before dest on the start→dest segment.
+      # 0.60 m is still in the aisle; dest itself is the 0.20 m success disk.
+      goal_clearance_m: 0.60
+      # Appear when the chassis is this close (XY) to the planned spawn.
+      trigger_dist: 0.80
+      retry_step: 0.15
+      n_attempts: 8
+      # Tall floor box: top ≈ 1.30 m (PandaOmron EEF ≈ 1.29 m). Not a hover.
+      half_size: [0.12, 0.12, 0.65]

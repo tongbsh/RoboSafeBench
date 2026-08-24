@@ -1,0 +1,20 @@
+# DyniSafety RoboCasa / MuJoCo 3.3.1 + robosuite git-master evaluation environment.
+# name is authoritative. Python 3.11 matches upstream RoboCasa.
+# MUTEX: numpy==2.2.5 — never combine with dynisafety-libero / simplerenv / robotwin
+# (those envs follow pyproject.toml numpy>=1.26,<2.0).
+name: dynisafety-robocasa
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+    # Path relative to this YAML file (conda resolves -r against the yml location).
+    - -r ../requirements/robocasa.txt
+# After create:
+#   conda activate dynisafety-robocasa
+#   export MUJOCO_GL=egl
+#   scripts/install/install_backend.sh robocasa
+# DyniSafety pip step is: pip install -e . --no-deps && pip install -r requirements/robocasa.txt
+# Do NOT: pip install -e .   (would pull numpy<2 from pyproject.toml)
+# Do NOT install into dynisafety-libero / simplerenv / robotwin.

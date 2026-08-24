@@ -1,0 +1,12 @@
+# Per-task overlay for safelibero_goal task_id=3
+# (open_the_top_drawer_and_put_the_bowl_inside).
+#
+# Default L3 open-verb targeting homes on wooden_cabinet_1, so the kinematic
+# hand drives through the drawer. This task only: intercept the bowl via
+# path_intercept (extra.libero.l3.intercept_alpha, default 0.5) on the
+# home-EEF → bowl segment. L0–L2 ignore extra.libero.l3.
+extra:
+  libero:
+    l3:
+      intercept_entity_substrings:
+        - bowl

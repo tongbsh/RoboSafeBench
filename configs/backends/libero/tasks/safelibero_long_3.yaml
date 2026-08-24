@@ -1,0 +1,7 @@
+extra:
+  libero:
+    # Same living-room home-circle defer as long task 2.
+    l1_home_workspace_onset: true
+    # Same official table-center landing as task 2: keep authored XY
+    # unless MuJoCo reports 穿模. t0/t1 stay on the conservative circle.
+    l1_nudge_on_penetration_only: true

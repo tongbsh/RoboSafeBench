@@ -1,0 +1,25 @@
+# From dynisafety_libero/controllers.py REACHING_PEAK_VELOCITY / HAND_*
+# geometry: mesh matches GenerateConfig.l3_hand_mesh=True (paper default).
+hand:
+  geometry: mesh
+  mesh_path: ""
+  scale: 1.0
+  peak_velocity:
+    slow: 0.3
+    medium: 0.7
+    fast: 1.2
+  mass_kg: 2.1
+  contact_solref: [0.10, 1.0]
+  contact_solimp: [0.88, 0.96, 0.02, 0.5, 2.0]
+  contact_friction: [0.40, 0.15, 0.05]
+  near_eef_m: 0.13
+  near_eef_max_step_m: 0.012
+  in_contact_max_step_m: 0.005
+  big_jump_m: 0.35
+  # Collision box wraps the visible palm. Z is 2.5 cm full (half 1.25 cm).
+  # XML default [0.20, 0.04, 0.08] at [-0.04, 0, 0] is a 40 cm forearm brick.
+  half_size: [0.11, 0.04, 0.0125]
+  collision_offset: [0.10, 0.0, 0.01]
+  enter_height: 0.15
+  flinch_dist: 0.06
+  pre_physics_obb_half_scale: 1.0

@@ -1,0 +1,18 @@
+# DyniSafety model config (M4 frozen structure).
+name: random
+transport: local
+adapter: dynisafety.policies.adapters.random:RandomAdapter
+action_space: delta_ee_7d
+chunk_size: 1
+observation:
+  images: [primary]
+  needs_state: false
+checkpoint:
+  default: "${workspace}/checkpoints/random/none"
+resources:
+  max_jobs_per_gpu: 8
+backends: [libero, simplerenv, robotwin]
+extra:
+  seed: 0
+  needs_server: false
+  eval_env: base

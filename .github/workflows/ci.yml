@@ -1,0 +1,46 @@
+# DyniSafety CI — no GPU / no simulator required.
+# sim-marked tests are deselected via pytest -m "not sim".
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-type-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install package (dev extras)
+        run: |
+          python -m pip install -U pip
+          pip install -e ".[dev]"
+
+      - name: Ruff
+        run: ruff check src tests examples
+
+      - name: Mypy (core + config)
+        run: mypy src/dynisafety/core src/dynisafety/config
+
+      - name: Pytest (not sim) + coverage gate
+        run: |
+          pytest -m "not sim" \
+            --cov=dynisafety.core \
+            --cov=dynisafety.config \
+            --cov=dynisafety.report \
+            --cov-report=term-missing \
+            --cov-fail-under=80

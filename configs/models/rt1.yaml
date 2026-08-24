@@ -1,0 +1,20 @@
+# DyniSafety model config (M4 frozen structure).
+name: rt1
+transport: local
+adapter: dynisafety.policies.adapters.rt1:RT1Adapter
+action_space: delta_ee_7d
+chunk_size: 1
+observation:
+  images: [primary]
+  needs_state: false
+checkpoint:
+  default: "${env:RT1_CKPT|${workspace}/external/checkpoints/rt1}"
+resources:
+  max_jobs_per_gpu: 2
+backends: [simplerenv]
+extra:
+  repo_root: "${env:SIMPLER_OPENVLA_ROOT|${workspace}/third_party/SimplerEnv-OpenVLA}"
+  policy_setup: google_robot
+  action_scale: 1.0
+  needs_server: false
+  eval_env: simpler_env

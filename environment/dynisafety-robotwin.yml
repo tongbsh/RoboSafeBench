@@ -1,0 +1,16 @@
+# DyniSafety RoboTwin / SAPIEN 3.0.0b1 evaluation environment.
+# name is authoritative (M10 Q1=A). Historical alias: RoboTwin
+# MUTEX with dynisafety-simplerenv (sapien 3 vs 2).
+name: dynisafety-robotwin
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+    - -r ../requirements/robotwin.txt
+# After create:
+#   conda activate dynisafety-robotwin
+#   pip install torch==2.4.1 --index-url https://download.pytorch.org/whl/cu121   # see requirements/README.md
+#   pip install -e ".[robotwin]"
+#   scripts/install/install_robotwin.sh && scripts/install/apply_patches.sh robotwin

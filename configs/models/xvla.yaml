@@ -1,0 +1,44 @@
+# DyniSafety model config (M4 frozen structure).
+name: xvla
+transport: http
+adapter: dynisafety.policies.adapters.xvla:XVLAAdapter
+# X-VLA predicts absolute EEF targets (trained with use_delta=False).
+# Settle wait is libero num_steps_wait (dummy actions), NOT policy warmup.
+# LiberoBackend._apply_action_chunk sets controller use_delta from this
+# action_space (abs_ee_7d → False); do not rely on a hard-coded task_step==0 flip.
+# Do NOT set warmup_steps to num_steps_wait: that would apply absolute poses as
+# deltas for the first chunk and zero out success.
+action_space: abs_ee_7d
+chunk_size: 30
+observation:
+  images: [primary, wrist]
+  needs_state: true
+server:
+  env: XVLA
+  root: "${env:XVLA_ROOT|${workspace}/external/model_repos/X-VLA}"
+  launch: deploy.py
+  default_port: 8010
+  # X-VLA FastAPI app only mounts POST /act (no /health). Use the framework
+  # OpenAPI doc route so HttpTransport.wait_until_ready gets HTTP 200.
+  health_path: /openapi.json
+  startup_timeout_s: 600
+  # Mirrors scripts/x-vla/start_xvla_server.sh (no --LoRA_path for the paper runs).
+  args: ["--model_path", "{checkpoint}", "--port", "{port}"]
+checkpoint:
+  # Paper LIBERO weight (not the parent xVLA/ directory).
+  default: "${env:XVLA_CKPT|${workspace}/external/checkpoints/xVLA/xvla-libero-full}"
+resources:
+  # Single job: dual EGL/MuJoCo clients on one GPU hit "Cannot place all objects".
+  max_jobs_per_gpu: 1
+backends: [libero]
+extra:
+  variant: default
+  domain_id: 3
+  denoising_steps: 10
+  act_timeout_s: 60
+  reset_path: /reset
+  act_path: /act
+  server_host: 127.0.0.1
+  needs_server: true
+  eval_env: openvla-oft
+  serve_env: XVLA

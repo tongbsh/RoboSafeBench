@@ -1,0 +1,113 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dynisafety"
+version = "0.1.0"
+description = "DyniSafety benchmark — unified dynamic safety evaluation for VLAs"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    # Upper bound is load-bearing, not cosmetic. Every bundled VLA env is
+    # NumPy-1.x era (tensorflow 2.15 / ml_dtypes 0.2.0 / sapien 2.2.2 are built
+    # against the NumPy 1.x C ABI). An unbounded ">=1.26" lets `pip install -e .`
+    # silently upgrade a working model env to NumPy 2 and break it with
+    # "AttributeError: _ARRAY_API not found". See old_cache/docs_internal/HANDOFF.md P0-1b.
+    "numpy>=1.26,<2.0",
+    "pandas>=2.0",
+    "pyyaml>=6.0",
+    "matplotlib>=3.7",
+    "pyarrow>=14.0",
+    "pillow>=10.0",
+]
+
+# Backend extras are mutually exclusive (MuJoCo vs SAPIEN 2.x vs SAPIEN 3.x vs RoboCasa numpy 2).
+# Do NOT: pip install -e ".[libero,simplerenv,robotwin]"
+# RoboCasa: pip install -e . --no-deps && pip install -r requirements/robocasa.txt
+# Prefer: conda env from environment/dynisafety-<backend>.yml
+#   then pip install -r requirements/<backend>.txt && pip install -e ".[<backend>]"
+# Full install path: scripts/install/install_*.sh (see docs/third_party.md).
+[project.optional-dependencies]
+libero = [
+    "mujoco>=3.1,<3.7",
+]
+simplerenv = [
+    "sapien==2.2.2",
+    "gymnasium>=0.28.1,<1.0",
+    "numpy>=1.26,<2.0",
+    "scipy==1.12.0",
+    "json_numpy",
+]
+robotwin = [
+    "sapien==3.0.0b1",
+    "mplib==0.2.1",
+    "trimesh==4.4.3",
+    "open3d==0.18.0",
+    "imageio==2.34.2",
+    "pyglet<2",
+    "moviepy",
+    "tyro",
+    "h5py",
+]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.6",
+    "mypy>=1.8",
+    "pre-commit>=3.0",
+]
+# AEGIS CBF-QP filter (Prompt A0). CPU_ONLY; used by policies/safety/aegis.
+aegis = [
+    "cvxpy>=1.4",
+    "osqp>=0.6",
+    "scipy>=1.10",
+]
+# Optional GroundingDINO vision obstacle source (Prompt A3c).
+aegis-vision = [
+    "cvxpy>=1.4",
+    "osqp>=0.6",
+    "scipy>=1.10",
+    "groundingdino-py>=0.4.0",
+]
+
+[project.scripts]
+dynisafety = "dynisafety.cli.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "examples/example_agent/src"]
+markers = [
+    "sim: needs simulator extras, assets, and/or GPU",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+ignore = [
+    "E501",  # line length; ruff-format + pre-commit handle layout
+]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+check_untyped_defs = false
+files = ["src/dynisafety/core", "src/dynisafety/config"]
+
+[tool.coverage.run]
+source = ["dynisafety.core", "dynisafety.config", "dynisafety.report"]
+branch = false
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+skip_empty = true

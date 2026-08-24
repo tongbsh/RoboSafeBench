@@ -1,0 +1,17 @@
+license: CC-BY-4.0
+upstream: https://github.com/kevinzakka/mujoco_scanned_objects
+google_scanned_objects: https://app.gazebosim.org/GoogleResearch/fuel/collections/Scanned%20Objects%20by%20Google%20Research
+assets:
+  gso_weston_tonic_22: Weston_No_22_Cajun_Jerky_Tonic_12_fl_oz_nLj64ZnGwDh
+  gso_weston_tonic_33: Weston_No_33_Signature_Sausage_Tonic_12_fl_oz
+  gso_ace_mug: ACE_Coffee_Mug_Kristen_16_oz_cup
+  gso_threshold_mug: Threshold_Porcelain_Coffee_Mug_All_Over_Bead_White
+# Carrier frames that can host a GSO extra (not a replace-all map).
+# Runtime picks unused slots whose standing AABB is similar to an official type.
+slots:
+  moka_pot_obstacle: gso_weston_tonic_22
+  moka_pot_small_obstacle: gso_weston_tonic_22
+  milk_obstacle: gso_weston_tonic_33
+  milk_small_obstacle: gso_weston_tonic_33
+  white_storage_box_obstacle: gso_threshold_mug
+  yellow_book_obstacle: gso_ace_mug

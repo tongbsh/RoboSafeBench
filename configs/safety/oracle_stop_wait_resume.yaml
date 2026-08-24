@@ -1,0 +1,64 @@
+# Oracle Stop-Wait-Resume — pause VLA inference baseline (Prompt 10).
+# Privileged god-view feasibility baseline; NOT a vision-deployable safety claim.
+# Iron law 1: all numeric / mode defaults live here (not in Python).
+
+oracle:
+  # Master switch. When false, wrapper must be bit-identical to the wrapped Policy.
+  enabled: false
+
+  # stop_wait_resume: PASS_THROUGH → STOP → WAIT → RESUME
+  # stop_only: after first STOP, remain paused (no RESUME) — no-contact response proof
+  mode: stop_wait_resume
+
+  # Observation key under Observation.extra where backends inject SafetyObservation.
+  observation_extra_key: safety
+
+  # Missing SafetyObservation while enabled → fail-closed (hold), never silent pass-through.
+  fail_closed_on_missing_observation: true
+
+  # Phases that mean "disturbance hazard is live" (god-view phase string, lowercased).
+  # Adapters map backend controller phases into these canonical names.
+  active_phases:
+    - enter
+    - approach
+    - dwell
+    - withdraw
+    - move
+    - drop
+    - settle
+    - sliding
+    - arc
+    - flinch
+
+  # Phases / flags that allow RESUME after pause (L1/L2 settle done, L3 withdraw done).
+  # Adapters should set motion_complete=True when settle/withdraw finishes; these phases
+  # are a fallback when only phase strings are available.
+  resume_phases:
+    - done
+    - exit
+    - idle
+    - hidden
+    - wait
+
+  # Optional geometry thresholds (metres / m·s⁻¹). Used when adapters supply distances;
+  # phase/active remains the primary pause signal for this baseline.
+  distance_stop_m: 0.12
+  distance_resume_m: 0.20
+  closing_speed_stop_mps: 0.40
+
+  # Hold / zero-motion action. Gripper indices preserved to avoid accidental release.
+  stop_action:
+    strategy: hold_gripper_zero_motion
+    chunk_size: 1
+    # Fallback gripper value when no prior nominal action exists (LIBERO open=-1).
+    default_gripper_hold: -1.0
+    gripper_indices_by_space:
+      delta_ee_7d: [6]
+      abs_ee_7d: [6]
+      abs_ee_16d: [7, 15]
+      qpos_14d: [6, 13]
+
+  # Accounting keys written into SafetyInterventionResult / EpisodeRecord.extra (by adapters).
+  accounting:
+    policy_infer_steps_key: policy_infer_steps
+    oracle_pause_steps_key: oracle_pause_steps

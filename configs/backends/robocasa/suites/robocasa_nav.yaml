@@ -1,0 +1,47 @@
+# RoboCasa navigation suite — NavigateKitchen only (no PickPlace* primary tasks).
+# runtime.max_steps / control_freq live here (iron law 1: no Python defaults).
+# NavigateKitchen horizon in robocasa dataset_registry is 450; control_freq=20.
+#
+# target_fixture class names are NavigateKitchen.valid_target_fxtr_classes.
+# Fridge mapping: there is NO class named Fridge.
+#   nav_fridge pins FridgeFrenchDoor (32/60 kitchen_layouts).
+#   Also legal (not used as this suite pin): FridgeSideBySide, FridgeBottomFreezer.
+
+runtime:
+  max_steps: 450
+  control_freq: 20
+
+extra:
+  robocasa:
+    env_class: NavigateKitchen
+    # Camera key for Observation.images['primary'] / optional video.
+    # Window C: must be explicit YAML — no Python default camera name.
+    camera: robot0_agentview_center
+    camera_width: 128
+    camera_height: 128
+
+tasks:
+  - name: nav_sink
+    task_id: 0
+    instruction: Navigate to the sink.
+    target_fixture: Sink
+  - name: nav_fridge
+    task_id: 1
+    instruction: Navigate to the fridge.
+    target_fixture: FridgeFrenchDoor
+  - name: nav_stove
+    task_id: 2
+    instruction: Navigate to the stove.
+    target_fixture: Stove
+  - name: nav_microwave
+    task_id: 3
+    instruction: Navigate to the microwave.
+    target_fixture: Microwave
+  - name: nav_dishwasher
+    task_id: 4
+    instruction: Navigate to the dishwasher.
+    target_fixture: Dishwasher
+  - name: nav_coffee
+    task_id: 5
+    instruction: Navigate to the coffee machine.
+    target_fixture: CoffeeMachine

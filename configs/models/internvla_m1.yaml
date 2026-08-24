@@ -1,0 +1,40 @@
+# DyniSafety model config (M4 frozen structure).
+name: internvla_m1
+transport: websocket
+adapter: dynisafety.policies.adapters.internvla_m1:InternVLAM1Adapter
+action_space: delta_ee_7d
+# Archive InternVLAM1Inference re-queries every env step (ensemble → step-0).
+chunk_size: 1
+observation:
+  images: [primary]
+  needs_state: false
+server:
+  env: internvla-m1
+  root: "${env:INTERNVLA_M1_ROOT|${workspace}/external/model_repos/InternVLA-M1}"
+  launch: deployment/model_server/server_policy_M1.py
+  default_port: 10094
+  health_path: /health
+  startup_timeout_s: 600
+  # Mirrors scripts/internvla_m1/start_internvla_m1_server.sh; bf16 is always on
+  # upstream (examples/SimplerEnv/start_server.sh).
+  args: ["--ckpt_path", "{checkpoint}", "--port", "{port}", "--use_bf16"]
+checkpoint:
+  # Paper Bridge weight file (not the parent run directory).
+  default: "${env:INTERNVLA_M1_CKPT|${workspace}/external/checkpoints/InternVLA/InternVLA-M1-Pretrain-RT-1-Bridge/checkpoints/steps_50000_pytorch_model.pt}"
+resources:
+  max_jobs_per_gpu: 2
+backends: [simplerenv]
+extra:
+  ws_codec: starvla
+  server_host: 127.0.0.1
+  unnorm_key: bridge_dataset
+  # Archive run_bridge_internvla_m1_eval.sh client knobs.
+  use_ddim: true
+  num_ddim_steps: 5
+  cfg_scale: 1.5
+  action_ensemble: true
+  action_ensemble_horizon: 7
+  adaptive_ensemble_alpha: 0.1
+  needs_server: true
+  eval_env: simpler_env
+  serve_env: internvla-m1

@@ -1,0 +1,19 @@
+# Random policy for RoboCasa PandaOmron (HYBRID_MOBILE_BASE, 12D).
+# Do not add robocasa to configs/models/random.yaml backends.
+name: random_mobile
+transport: local
+adapter: dynisafety.policies.adapters.random:RandomAdapter
+action_space: hybrid_mobile_12d
+chunk_size: 1
+observation:
+  images: [primary]
+  needs_state: false
+checkpoint:
+  default: "${workspace}/checkpoints/random/none"
+resources:
+  max_jobs_per_gpu: 8
+backends: [robocasa]
+extra:
+  seed: 0
+  needs_server: false
+  eval_env: dynisafety-robocasa

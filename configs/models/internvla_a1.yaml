@@ -1,0 +1,33 @@
+# DyniSafety model config (M4 frozen structure).
+# Note: loader does not support nested ${env:VAR|${workspace}...}; use ${workspace}
+# paths (override with --set / env via flat ${env:VAR} only when needed).
+name: internvla_a1
+transport: local
+adapter: dynisafety.policies.adapters.internvla_a1:InternVLAA1Adapter
+action_space: qpos_14d
+# Match archive InferenceArgs infer_horizon (backend takes min(chunk, pred)).
+chunk_size: 30
+observation:
+  images: [primary, left, right]
+  needs_state: true
+checkpoint:
+  default: "${workspace}/external/checkpoints/InternVLA/InternVLA-A1-3B-RoboTwin"
+resources:
+  max_jobs_per_gpu: 2
+backends: [robotwin]
+extra:
+  # Code checkout (lerobot / policy imports), not the HF weights dir.
+  repo_root: "${workspace}/external/model_repos/InternVLA-A1"
+  # DOF layout for dual-arm Aloha (matches InferenceArgs / InternVLAA1Policy), not a name string.
+  robot_type: [6, 1, 6, 1]
+  # Explicit paper/archive knobs (were Python defaults when policy_kwargs was {}).
+  policy_kwargs:
+    infer_horizon: 30
+    action_horizon_size: 50
+    image_history_interval: 15
+    resize_size: 224
+    stats_key: aloha
+    dtype: float32
+  needs_server: false
+  # Historical DyniSafety-RoboTwin runtime env (sapien+curobo); see dynamic_RoboTwin/README.md
+  eval_env: internvla_a1

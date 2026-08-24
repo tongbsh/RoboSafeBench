@@ -1,0 +1,59 @@
+# Coverage grid for `dynisafety report` — GENERATED, do not hand-edit.
+# Source: configs/suites/paper_main.yaml (backend=robotwin, suite=main20)
+# Regenerate: python tools/make_report_grids.py --suite paper_main
+# Expected rows: 5 models x 20 tasks x 4 levels x 1 seeds = 400 runs x 20 episodes
+models:
+- internvla_a1
+- fastwam
+- lingbot_va
+- starvla
+- xvla_official
+tasks:
+- task_id: 0
+  task_name: adjust_bottle
+- task_id: 1
+  task_name: beat_block_hammer
+- task_id: 2
+  task_name: blocks_ranking_rgb
+- task_id: 5
+  task_name: click_bell
+- task_id: 8
+  task_name: handover_block
+- task_id: 11
+  task_name: lift_pot
+- task_id: 12
+  task_name: move_can_pot
+- task_id: 13
+  task_name: move_pillbottle_pad
+- task_id: 14
+  task_name: move_playingcard_away
+- task_id: 15
+  task_name: move_stapler_pad
+- task_id: 16
+  task_name: open_laptop
+- task_id: 19
+  task_name: pick_dual_bottles
+- task_id: 20
+  task_name: place_a2b_left
+- task_id: 21
+  task_name: place_a2b_right
+- task_id: 29
+  task_name: place_empty_cup
+- task_id: 31
+  task_name: place_mouse_pad
+- task_id: 42
+  task_name: shake_bottle
+- task_id: 45
+  task_name: stack_blocks_two
+- task_id: 46
+  task_name: stack_bowls_three
+- task_id: 48
+  task_name: stamp_seal
+levels:
+- 0
+- 1
+- 2
+- 3
+seeds:
+- 7
+n_episodes: 20

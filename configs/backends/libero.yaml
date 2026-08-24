@@ -1,0 +1,98 @@
+# LIBERO / SafeLIBERO backend defaults.
+# hand.* geometry/magics live in backends/libero/hand.yaml (merge slot).
+contact:
+  impulse_reduce: sum
+
+# LIBERO-only knobs not yet on RunConfig schema (M1 todo: promote env_img_res etc.).
+# Consumed via ResolvedConfig.data["extra"]["libero"] until schema lands.
+extra:
+  libero:
+    env_img_res: 256
+    num_steps_wait: 10
+    resting_z_mode: anchor
+    drop_normalize_z: true
+    pedestal_overlap_radius: 0.06
+    # L1/L2: extra XY margin beyond collision footprints. Default: only
+    # nudge when the obstacle stack truly interpenetrates another scene
+    # object (table / floor sitting contacts do not count). If nudged,
+    # the companion pedestal is hidden in place; it is never teleported.
+    # pruned_init is not rewritten.
+    task_object_clearance_xy: 0.05
+    # Empty allowlist ⇒ use suite disturbance.obstacle.pool ∩ visible.
+    l1_drop_obstacle_allowlist: ""
+    # Dynamic-LIBERO-only: when true, L1/L2 obstacle *identity* follows this
+    # episode's SafeLIBERO Level-I init_state (visible *obstacle* bodies; if
+    # several, closest to EEF). Disables episode_names swap and pool/rotation
+    # cycling. Landing XY starts from that instance's init pose, then L1/L2
+    # may nudge it off overlapping task objects; only then is the companion
+    # pedestal hidden in place. Far / non-overlapping trajectories are unchanged.
+    # Default on: follow this episode's SafeLIBERO Level-I obstacle identity.
+    align_obstacle_with_safelibero: true
+    # Add similar-sized GSO extras on unused slots. Official types keep
+    # stock visual+collision. Default off. Does not change BDDL / pruned_init.
+    # Tasks that already use all 6 slots (spatial t0–t2) stay unchanged.
+    obstacle_pack:
+      enabled: false
+      assets:
+        - gso_weston_tonic_22
+        - gso_weston_tonic_33
+        - gso_ace_mug
+        - gso_threshold_mug
+      height_ratio_min: 0.70
+      height_ratio_max: 1.43
+      footprint_ratio_min: 0.70
+      footprint_ratio_max: 1.43
+    # When true: home EEF already inside the drop circle also enables
+    # workspace-onset, and the 3D/XY baseline is taken after wait so
+    # step 0 cannot drop. Only safelibero_long tasks turn this on.
+    l1_home_workspace_onset: false
+    # When true: L1 footprint nudge (r_obs + r_task + clearance) runs only
+    # if MuJoCo reports the obstacle stack interpenetrating another scene
+    # object (table / floor sitting contacts do not count). Nearby-but-
+    # not-clipped landings stay at the official pose. Default on; only
+    # safelibero_long task 0–1 keep the conservative circle (soup-on-mug).
+    l1_nudge_on_penetration_only: true
+    # L1 workspace-onset 3D approach radius. null = use trigger_dist + bias
+    # (other suites / tasks / L2–L3 unchanged). Only safelibero_long task 2
+    # sets an explicit value (currently 0.20) so XY wiggle cannot fire.
+    l1_workspace_onset_dist: null
+    # D3: migrated from l2_active_obstacle_metadata.json (task stem → episode obstacle names).
+    obstacle_episode_names:
+      safelibero_spatial:
+        pick_up_the_black_bowl_between_the_plate_and_the_ramekin_and_place_it_on_the_plate:
+          - moka_pot_obstacle_1
+        pick_up_the_black_bowl_on_the_ramekin_and_place_it_on_the_plate:
+          - white_storage_box_obstacle_1
+        pick_up_the_black_bowl_on_the_stove_and_place_it_on_the_plate:
+          - milk_obstacle_1
+        pick_up_the_black_bowl_on_the_wooden_cabinet_and_place_it_on_the_plate:
+          - wine_bottle_obstacle_1
+      safelibero_object:
+        pick_up_the_orange_juice_and_place_it_in_the_basket:
+          - moka_pot_obstacle_1
+        pick_up_the_chocolate_pudding_and_place_it_in_the_basket:
+          - white_storage_box_obstacle_1
+        pick_up_the_milk_and_place_it_in_the_basket:
+          - milk_obstacle_1
+        pick_up_the_bbq_sauce_and_place_it_in_the_basket:
+          - wine_bottle_obstacle_1
+      safelibero_goal:
+        put_the_bowl_on_the_plate:
+          - moka_pot_obstacle_1
+        put_the_bowl_on_top_of_the_cabinet:
+          - white_storage_box_obstacle_1
+        put_the_bowl_on_the_stove:
+          - milk_obstacle_1
+        open_the_top_drawer_and_put_the_bowl_inside:
+          - wine_bottle_obstacle_1
+        put_the_cream_cheese_in_the_bowl:
+          - red_coffee_mug_obstacle_1
+      safelibero_long:
+        LIVING_ROOM_SCENE1_put_both_the_alphabet_soup_and_the_cream_cheese_box_in_the_basket:
+          - moka_pot_small_obstacle_1
+        LIVING_ROOM_SCENE2_put_both_the_alphabet_soup_and_the_tomato_sauce_in_the_basket:
+          - white_storage_box_obstacle_1
+        LIVING_ROOM_SCENE5_put_the_white_mug_on_the_left_plate_and_put_the_yellow_and_white_mug_on_the_right_plate:
+          - milk_small_obstacle_1
+        LIVING_ROOM_SCENE6_put_the_white_mug_on_the_plate_and_put_the_chocolate_pudding_to_the_right_of_the_plate:
+          - wine_bottle_small_obstacle_1

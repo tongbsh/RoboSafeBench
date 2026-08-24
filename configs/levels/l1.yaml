@@ -1,0 +1,3 @@
+# Cross-backend Level-1 semantics: sudden object drop.
+disturbance:
+  level: 1

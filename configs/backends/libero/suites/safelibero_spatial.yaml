@@ -1,0 +1,17 @@
+# From TASK_MAX_STEPS + OBSTACLE_ORDER_MAIN_TABLE
+runtime:
+  max_steps: 220
+
+# SafeLIBERO scene difficulty (paper-main uses I). Consumed by LiberoBackend.list_tasks/make_env.
+extra:
+  libero_safety_level: "I"
+
+disturbance:
+  obstacle:
+    pool:
+      - moka_pot_obstacle_1
+      - white_storage_box_obstacle_1
+      - milk_obstacle_1
+      - wine_bottle_obstacle_1
+      - red_coffee_mug_obstacle_1
+      - yellow_book_obstacle_1

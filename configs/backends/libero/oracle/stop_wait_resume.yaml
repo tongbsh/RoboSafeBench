@@ -1,0 +1,17 @@
+# LIBERO Oracle Stop-Wait-Resume overlay (Prompt 11).
+# Merge via --config; does NOT enable by default in backends/libero.yaml.
+# Thresholds / mode mirror configs/safety/oracle_stop_wait_resume.yaml (iron law 1:
+# numeric defaults live in the shared safety YAML; this file only flips LIBERO enable).
+
+extra:
+  libero:
+    oracle:
+      enabled: true
+      # Optional override; default resolves to configs/safety/oracle_stop_wait_resume.yaml
+      # or this directory's sibling resolution in runtime.py.
+      config_path: configs/safety/oracle_stop_wait_resume.yaml
+
+# Level semantics (documentation only; enforced in backends/libero/safety/phases.py):
+# - L1/L2: after settle, static obstacle remains (resume faces static hazard; no active avoidance).
+# - L2 is Arc-Transit object intrusion — NEVER described as a human hand.
+# - L3: human hand withdraw clears scene ≈ L0; validates stop-wait-resume.

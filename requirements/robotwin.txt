@@ -1,0 +1,21 @@
+# DyniSafety RoboTwin backend — short pin
+# Conda env: dynisafety-robotwin  (alias historically: RoboTwin)
+# MUTEX: sapien==3.0.0b1 conflicts with simplerenv's sapien==2.2.2 — separate envs only.
+#
+# Install torch+CUDA first (see requirements/README.md; reference cu121).
+# Then: pip install -r requirements/robotwin.txt && pip install -e ".[robotwin]"
+# Tree: scripts/install/install_robotwin.sh + apply_patches.sh robotwin
+# Source aligned with third_party/RoboTwin/script/requirements.txt
+
+sapien==3.0.0b1
+mplib==0.2.1
+trimesh==4.4.3
+open3d==0.18.0
+imageio==2.34.2
+pyglet<2
+moviepy
+tyro
+h5py
+# Optional Azure bits used by some upstream RoboTwin tooling (omit if unused):
+# azure==4.0.0
+# azure-ai-inference

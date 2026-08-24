@@ -1,0 +1,14 @@
+# Joint-outcome analysis settings for `dynisafety report joint --joint-yaml`.
+# Missing / non-reconstructible fields render as unavailable (never silent 0).
+joint_outcomes:
+  # Collapse runs to these keys for stacked bars and SR–SSR–CR tables.
+  group_by:
+    - model
+    - level
+  # false = absolute episode counts; true = within-bar fractions
+  stack_normalize: false
+  # Reserved Base vs Oracle Pareto (Oracle stays unavailable until oracle runs exist)
+  include_pareto: true
+  # task × level SSR heatmap when task_id/task_name is present
+  include_heatmap: true
+  unavailable_token: unavailable

@@ -1,0 +1,20 @@
+# DyniSafety model config (M4 frozen structure).
+name: lerobotpifast
+transport: local
+adapter: dynisafety.policies.adapters.lerobotpifast:LeRobotPiFastAdapter
+action_space: delta_ee_7d
+chunk_size: 50
+observation:
+  images: [primary]
+  needs_state: false
+checkpoint:
+  default: "${env:LEROBOT_PI_CKPT|${workspace}/external/checkpoints/lerobot_pi}"
+resources:
+  max_jobs_per_gpu: 2
+backends: [simplerenv]
+extra:
+  repo_root: "${env:SIMPLER_OPENVLA_ROOT|${workspace}/third_party/SimplerEnv-OpenVLA}"
+  policy_setup: widowx_bridge
+  action_scale: 1.0
+  needs_server: false
+  eval_env: simpler_env

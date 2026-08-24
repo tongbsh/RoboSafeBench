@@ -1,0 +1,12 @@
+# main20 / task_id=21 — max_steps from _eval_step_limit.yml; primary_arm externalized for S3e registry (D3=B).
+runtime:
+  max_steps: 400
+disturbance:
+  obstacle:
+    target_mode: source_object
+extra:
+  robotwin:
+    task_id: 21
+    instruction: place a2b right
+    primary_arm: runtime
+    primary_arm_rule: object.pose.x > 0 → right else left

@@ -1,0 +1,13 @@
+extra:
+  libero:
+    # Home EEF already sits in the authored drop circle (moka / yellow book
+    # near table center). Defer until the arm approaches a task object after
+    # wait. Other suites stay false.
+    l1_home_workspace_onset: true
+    # Official table-center landing sits close to mugs in XY footprint
+    # circles but does not clip them. Only nudge when MuJoCo reports 穿模.
+    # long t0/t1 stay on the conservative circle (soup-on-mug).
+    l1_nudge_on_penetration_only: true
+    # 3D approach radius for workspace-onset only. XY trigger stays 15 cm.
+    # 10 cm appeared too late (knocked the arm); trying 20 cm.
+    l1_workspace_onset_dist: 0.20

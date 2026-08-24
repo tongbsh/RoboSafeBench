@@ -1,0 +1,12 @@
+# RoboCasa kitchen-nav self-check for `dynisafety sweep --suite smoke_robocasa`.
+# Separate from configs/suites/smoke.yaml (LIBERO). Do NOT add robocasa to paper_main.
+# Single cell: robocasa / robocasa_nav / task 0 / level 0 / random_mobile / 1 episode.
+name: smoke_robocasa
+episodes_per_task: 1
+seeds: [7]
+matrix:
+  - backend: robocasa
+    suites: [robocasa_nav]
+    tasks: [0]
+    levels: [0]
+    models: [random_mobile]

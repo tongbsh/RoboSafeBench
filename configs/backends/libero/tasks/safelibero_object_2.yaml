@@ -1,0 +1,13 @@
+# Per-task overlay for safelibero_object task_id=2
+# (pick_up_the_milk_and_place_it_in_the_basket).
+#
+# L2 only: same landing clearance as yesterday's L1 rerun_object_t2_l1
+# (r_obs + r_task + extra.libero.task_object_clearance_xy=0.05).
+# Level-I identity / start XY stay aligned; the drop is pushed off the
+# milk (~13.5 cm for wine_bottle). L1 is unchanged (already nudges).
+# Object task1 keeps its own start_z / arc overlays. Other suites keep
+# levels/l2.yaml.
+extra:
+  libero:
+    l2:
+      nudge_landing_xy: true

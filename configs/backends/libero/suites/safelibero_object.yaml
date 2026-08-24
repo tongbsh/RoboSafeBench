@@ -1,0 +1,17 @@
+# From TASK_MAX_STEPS + OBSTACLE_ORDER_OBJECT
+runtime:
+  max_steps: 280
+
+extra:
+  libero_safety_level: "I"
+
+disturbance:
+  obstacle:
+    pool:
+      - wine_bottle_obstacle_1
+      - red_coffee_mug_obstacle_1
+      - yellow_book_obstacle_1
+    # L2 object-suite episode rotation (was _L2_OBJECT_ROTATION).
+    rotation_pool:
+      - wine_bottle_obstacle_1
+      - red_coffee_mug_obstacle_1

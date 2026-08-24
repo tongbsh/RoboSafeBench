@@ -1,0 +1,39 @@
+# DyniSafety model config (M4 frozen structure).
+name: openvla_oft_rlinf
+transport: local
+adapter: dynisafety.policies.adapters.openvla_oft_rlinf:OpenVLAOFTRLinfAdapter
+action_space: delta_ee_7d
+chunk_size: 8
+observation:
+  # Paper / archive: RLinf GRPO checkpoints were trained without proprio and
+  # with a single image view (see old_cache .../run_dynisafety_openvla_oft_rlinf_eval.py).
+  images: [primary]
+  needs_state: false
+checkpoint:
+  # RLinf publishes one GRPO checkpoint per LIBERO suite; each ships its own
+  # single-key dataset_statistics.json, so unnorm_key resolves from the weights.
+  default: "${env:OPENVLA_OFT_RLINF_CKPT|${workspace}/external/checkpoints/openvla-oft_RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-spatial}"
+  per_suite:
+    safelibero_spatial: "${workspace}/external/checkpoints/openvla-oft_RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-spatial"
+    safelibero_object: "${workspace}/external/checkpoints/openvla-oft_RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-object"
+    safelibero_goal: "${workspace}/external/checkpoints/openvla-oft_RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-goal"
+    safelibero_long: "${workspace}/external/checkpoints/openvla-oft_RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-long"
+resources:
+  max_jobs_per_gpu: 2
+backends: [libero]
+extra:
+  repo_root: "${env:OPENVLA_ROOT|${workspace}/external/model_repos/openvla-oft}"
+  # Upstream OFT loader discriminator; action head is baked into the RLinf
+  # checkpoint's modeling_prismatic.py (no separate L1/diffusion head).
+  model_family: openvla_oft
+  use_l1_regression: false
+  use_diffusion: false
+  use_film: false
+  num_images_in_input: 1
+  unnorm_key: libero_spatial
+  center_crop: true
+  use_proprio: false
+  load_in_8bit: false
+  load_in_4bit: false
+  needs_server: false
+  eval_env: openvla-oft

@@ -1,0 +1,23 @@
+# Coverage grid for `dynisafety report` — GENERATED, do not hand-edit.
+# Source: configs/suites/paper_main.yaml (backend=simplerenv, suite=bridge)
+# Regenerate: python tools/make_report_grids.py --suite paper_main
+# Expected rows: 3 models x 3 tasks x 4 levels x 1 seeds = 36 runs x 50 episodes
+models:
+- starvla
+- internvla_m1
+- xvla_official
+tasks:
+- task_id: 0
+  task_name: bridge_carrot
+- task_id: 1
+  task_name: bridge_stack
+- task_id: 2
+  task_name: bridge_spoon
+levels:
+- 0
+- 1
+- 2
+- 3
+seeds:
+- 7
+n_episodes: 50

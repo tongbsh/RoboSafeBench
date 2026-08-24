@@ -1,0 +1,4 @@
+# LIBERO × L0 — static baseline (no disturbance parameters).
+extra:
+  libero:
+    pedestal_overlap_radius: 0.06

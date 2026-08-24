@@ -1,0 +1,18 @@
+# Per-task overlay for safelibero_spatial task_id=0
+# (pick_up_the_black_bowl_between_the_plate_and_the_ramekin_and_place_it_on_the_plate).
+#
+# Uniform asset scale for named obstacles (geom size + mesh verts).
+# Only episodes whose active obstacle is in this map are visually smaller;
+# other obstacles stay 1.0. Applies to all levels of this task only.
+#
+# L2 landing stays at the SafeLIBERO authored XY (2026-08-14 behavior).
+# Other tasks keep extra.libero.l2.nudge_landing_xy from levels/l2.yaml.
+disturbance:
+  obstacle:
+    rescale:
+      milk_obstacle_1: 0.85
+
+extra:
+  libero:
+    l2:
+      nudge_landing_xy: false

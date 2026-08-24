@@ -1,0 +1,12 @@
+# Short smoke matrix: libero × openvla_oft × L1/L2/L3 with Oracle enabled.
+# CPU unit tests cover phase/WAIT-without-act; this suite is for optional SIM_SMOKE.
+# Long feasibility matrix → Prompt 14 (BLOCKED_UNTIL_AUTHORIZED).
+name: libero_oracle_smoke
+episodes_per_task: 1
+seeds: [7]
+matrix:
+  - backend: libero
+    suites: [safelibero_spatial]
+    tasks: [0]
+    levels: [1, 2, 3]
+    models: [openvla_oft]

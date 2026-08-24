@@ -1,0 +1,43 @@
+# DyniSafety model config (M4 frozen structure).
+# Pedagogical local adapter — NOT a real VLA. Numbers must never be reported
+# as benchmark results.
+#
+# `dynisafety models` reports missing_checkpoint for this stem because the
+# unresolved ${workspace} placeholder is treated as missing. Identical to
+# `random` and every other in-tree model; expected.
+name: example_agent
+transport: local
+adapter: dyni_example_agent.local_adapter:ExampleAgentAdapter
+action_space: delta_ee_7d
+chunk_size: 8
+observation:
+  images: [primary, wrist]
+  needs_state: true
+checkpoint:
+  default: "${workspace}/examples/example_agent/assets/mock_vla_weights.npz"
+resources:
+  max_jobs_per_gpu: 8
+backends: [libero, simplerenv, robotwin]
+extra:
+  seed: 0
+  replan_steps: 8
+  action_scale: 0.05
+  feature_grid: 4
+  needs_server: false
+  eval_env: base
+per_backend:
+  simplerenv:
+    chunk_size: 1
+    observation:
+      images: [primary]
+      needs_state: true
+    extra:
+      replan_steps: 1
+  robotwin:
+    action_space: qpos_14d
+    chunk_size: 30
+    observation:
+      images: [primary, left, right]
+      needs_state: true
+    extra:
+      replan_steps: 1

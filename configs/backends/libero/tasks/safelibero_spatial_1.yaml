@@ -1,0 +1,23 @@
+# Per-task overlay for safelibero_spatial task_id=1
+# (pick_up_the_black_bowl_on_the_ramekin_and_place_it_on_the_plate).
+#
+# Uniform asset scale for named obstacles (geom size + mesh verts).
+# Only episodes whose active obstacle is in this map are visually smaller;
+# other obstacles stay 1.0. Change the number to retune.
+disturbance:
+  l1:
+    trigger_dist_bias: 0.05
+  obstacle:
+    rescale:
+      milk_obstacle_1: 0.85
+      moka_pot_obstacle_1: 0.85
+      wine_bottle_obstacle_1: 0.85
+
+# L2 spawn diversity: after_prop_top audit (12 episodes) found only this
+# task's right slot dual-low (arc 17%, linear 0%). Other tasks stay on
+# the empty default and let the fallback chain absorb rejects.
+extra:
+  libero:
+    l2:
+      spawn_diversity:
+        forbidden_slots: [right]

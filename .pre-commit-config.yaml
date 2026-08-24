@@ -1,0 +1,21 @@
+# Pre-commit hooks for DyniSafety (M12).
+# Large-file limit: 5 MiB (Q10) — blocks accidental checkpoint / video commits.
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.9
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-added-large-files
+        args: [--maxkb=5120]
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-yaml
+        exclude: ^(third_party/|dynamic_RoboTwin/|dynisafety_libero/|dynamic_SimplerEnv/)
+      - id: check-merge-conflict

@@ -1,0 +1,57 @@
+# RoboCasa kitchen backend (PandaOmron wheeled mobile).
+# Primary env class is NavigateKitchen only — no PickPlace* as the main task.
+#
+# Geometry (D/E MUST copy these formulas unchanged):
+# 参考系 mobilebase0_base；h=(cos yaw0, sin yaw0)；n=(-sin yaw0, cos yaw0)；z=floor。
+# 瞄准：onset 快照 p0,yaw0。禁止追击当前底座。
+# L1：hidden → 一次出现在 start→dest 上、dest 前 goal_clearance_m 的空地板。
+#     触发 ||base.xy-p_spawn.xy||<=trigger_dist。出现点=终点。留下。
+# L2：p_land 在 start→dest 上；开局停在 n 区间一端，靠近 p_land 后再横穿。留下。
+# L3：同一围裙 p_dwell=p_land；p_start=p_land+lateral*n → 靠近后离开。清场。
+# L1/L2 同一地面碰撞盒。视觉按 disturbance.obstacle.pool 轮换（trajectory_order = ep % N）。
+# L3 着装行人 proxy。禁止 closest_visible / 任务物体。
+# 落点失败：沿路径外推 / 缩短侧向 n_attempts，失败 extra.spawn_failed，禁止改到台面。
+
+contact:
+  impulse_reduce: sum
+
+# L1/L2 share this floor collision box. Visual meshes live in extra.robocasa.l12.
+disturbance:
+  obstacle:
+    half_size: [0.12, 0.12, 0.18]
+    mass: 0.5
+    color: [1.0, 0.0, 0.0, 0.40]
+    selection_mode: trajectory_order
+    pool:
+      - cardboard_stack
+      - kitchen_bin
+      - delivery_crate
+      - laundry_hamper
+      - water_cooler
+
+extra:
+  robocasa:
+    freeze_base: false
+    robots: PandaOmron
+    split: pretrain
+    sim_root: ${third_party}/robocasa
+    l12:
+      visuals:
+        cardboard_stack:
+          mesh_path: ${workspace}/src/dynisafety/backends/robocasa/assets/obstacles/cardboard_stack.obj
+          rgba: [0.76, 0.60, 0.38, 1.0]
+        kitchen_bin:
+          mesh_path: ${workspace}/src/dynisafety/backends/robocasa/assets/obstacles/kitchen_bin.obj
+          rgba: [0.22, 0.36, 0.30, 1.0]
+        delivery_crate:
+          mesh_path: ${workspace}/src/dynisafety/backends/robocasa/assets/obstacles/delivery_crate.obj
+          rgba: [0.55, 0.38, 0.22, 1.0]
+        laundry_hamper:
+          mesh_path: ${workspace}/src/dynisafety/backends/robocasa/assets/obstacles/laundry_hamper.obj
+          rgba: [0.78, 0.70, 0.52, 1.0]
+        water_cooler:
+          mesh_path: ${workspace}/src/dynisafety/backends/robocasa/assets/obstacles/water_cooler.obj
+          rgba: [0.82, 0.86, 0.90, 1.0]
+    # Headless EGL path (MUJOCO_GL=egl). Not a tunable; required so make_env
+    # does not inherit Kitchen's on-screen mjviewer default.
+    renderer: mujoco

@@ -1,0 +1,13 @@
+# From LEVEL1_DROP_Z_BIAS (red_coffee_mug_obstacle_1)
+disturbance:
+  l1:
+    drop_z_bias: 0.03
+
+extra:
+  libero:
+    # Same living-room mug+pedestal stack as long task 0: soup was pulled
+    # back onto the stand. Defer drop until the arm approaches a task
+    # object after wait. Other suites stay false.
+    l1_home_workspace_onset: true
+    # Same soup-on-mug conservative circle as long task 0.
+    l1_nudge_on_penetration_only: false

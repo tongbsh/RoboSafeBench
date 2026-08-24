@@ -1,0 +1,17 @@
+# Per-task overlay for safelibero_object task_id=1
+# (pick_up_the_chocolate_pudding_and_place_it_in_the_basket).
+#
+# L2 only: same landing clearance as L1 rerun_object_t1_l1_v2
+# (r_obs + r_task + extra.libero.task_object_clearance_xy=0.05).
+# Level-I identity / start XY stay aligned; the drop is pushed off the
+# pudding (~13.6 cm for wine_bottle). L1 is unchanged (already nudges).
+# Other suites / object tasks keep levels/l2.yaml.
+#
+# Start Z is +3 cm vs levels/l2.yaml so the wine-bottle pedestal clears
+# floor groceries on entry. Arc peak is +4 cm (0.24). Landing Z is unchanged.
+extra:
+  libero:
+    l2:
+      nudge_landing_xy: true
+      start_z_offset: 0.03
+      arc_height: 0.24

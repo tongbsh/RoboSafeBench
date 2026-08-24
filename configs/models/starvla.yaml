@@ -1,0 +1,85 @@
+# DyniSafety model config (M4 frozen structure).
+# Top-level defaults are LIBERO-oriented. RoboTwin / SimplerEnv overrides live
+# under per_backend (eval) and checkpoint/server.per_suite (weights + bf16).
+name: starvla
+transport: websocket
+adapter: dynisafety.policies.adapters.starvla:StarVLAAdapter
+action_space: delta_ee_7d
+chunk_size: 8
+observation:
+  images: [primary, wrist]
+  needs_state: true
+server:
+  env: starVLA
+  root: "${env:STARVLA_ROOT|${workspace}/external/model_repos/starVLA}"
+  launch: deployment/model_server/server_policy.py
+  default_port: 10093
+  health_path: /health
+  startup_timeout_s: 600
+  # LIBERO paper start_starvla_server.sh: USE_BF16=0 (no flag).
+  # RoboTwin / Bridge archive launchers pass --use_bf16.
+  # Every paper suite must appear here — missing keys are hard errors in the scheduler.
+  args: ["--ckpt_path", "{checkpoint}", "--port", "{port}"]
+  per_suite:
+    safelibero_spatial:
+      args: ["--ckpt_path", "{checkpoint}", "--port", "{port}"]
+    safelibero_object:
+      args: ["--ckpt_path", "{checkpoint}", "--port", "{port}"]
+    safelibero_goal:
+      args: ["--ckpt_path", "{checkpoint}", "--port", "{port}"]
+    safelibero_long:
+      args: ["--ckpt_path", "{checkpoint}", "--port", "{port}"]
+    main20:
+      args: ["--ckpt_path", "{checkpoint}", "--port", "{port}", "--use_bf16"]
+    bridge:
+      args: ["--ckpt_path", "{checkpoint}", "--port", "{port}", "--use_bf16"]
+checkpoint:
+  # Default = LIBERO paper weight (suite-less serve / models listing).
+  default: "${env:STARVLA_CKPT|${workspace}/external/checkpoints/starVLA/starvla-libero-4in1/checkpoints/steps_50000_pytorch_model.pt}"
+  per_suite:
+    safelibero_spatial: "${workspace}/external/checkpoints/starVLA/starvla-libero-4in1/checkpoints/steps_50000_pytorch_model.pt"
+    safelibero_object: "${workspace}/external/checkpoints/starVLA/starvla-libero-4in1/checkpoints/steps_50000_pytorch_model.pt"
+    safelibero_goal: "${workspace}/external/checkpoints/starVLA/starvla-libero-4in1/checkpoints/steps_50000_pytorch_model.pt"
+    safelibero_long: "${workspace}/external/checkpoints/starVLA/starvla-libero-4in1/checkpoints/steps_50000_pytorch_model.pt"
+    main20: "${workspace}/external/checkpoints/starVLA/starvla-robotwin2-all/checkpoints/steps_140000_pytorch_model.pt"
+    bridge: "${workspace}/external/checkpoints/starVLA/Qwen-GR00T-Bridge/checkpoints/steps_45000_pytorch_model.pt"
+resources:
+  max_jobs_per_gpu: 2
+backends: [libero, simplerenv, robotwin]
+extra:
+  ws_codec: starvla
+  obs_layout: libero
+  # Client knobs from archive LIBERO / Bridge eval scripts.
+  use_ddim: true
+  num_ddim_steps: 10
+  server_host: 127.0.0.1
+  needs_server: true
+  eval_env: openvla-oft
+  serve_env: starVLA
+per_backend:
+  robotwin:
+    # Server future_action_window_size+1 == 50 (open-loop like archive client).
+    chunk_size: 50
+    action_space: qpos_14d
+    observation:
+      images: [primary, left, right]
+      needs_state: true
+    extra:
+      obs_layout: robotwin
+      use_ddim: true
+      num_ddim_steps: 10
+      # Only internvla_a1 has curobo for RoboTwin expert-check.
+      eval_env: internvla_a1
+  simplerenv:
+    # Archive StarVLAInference re-queries every env step (take step-0 after ensemble).
+    chunk_size: 1
+    extra:
+      obs_layout: simpler
+      use_ddim: true
+      num_ddim_steps: 10
+      unnorm_key: oxe_bridge
+      eval_env: simpler_env
+      # Match widowx_bridge AdaptiveEnsembler defaults.
+      action_ensemble: true
+      action_ensemble_horizon: 7
+      adaptive_ensemble_alpha: 0.1

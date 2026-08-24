@@ -31,10 +31,29 @@ wandb_api_key*
 # IDE and notebook noise
 .vscode/
 .idea/
+.cursor/
 *.swp
 *.swo
 .DS_Store
 .ipynb_checkpoints/
+.claude/
+
+# M9 hygiene: canonical run output (see docs/contracts.md §6)
+results/
+legacy/outputs*
+
+# Local debug / feasibility / calibration dumps (not paper release artifacts)
+artifacts/
+
+# Non-submodule scratch and install-script clones under third_party/.
+# Do not blanket-ignore the directory: SimplerEnv-OpenVLA and RoboTwin are
+# submodule gitlinks and must remain visible to git.
+/third_party/_local/
+/third_party/_scratch/
+/third_party/robocasa/
+/third_party/robosuite/
+/third_party/vlsa-aegis/
+/third_party/dyniSafety_libero/
 
 # Logs and experiment trackers
 *.log
@@ -76,6 +95,17 @@ download_checkpoints/
 hf_cache/
 huggingface/
 
+# Pre-refactor code kept for local reference only (see old_cache/README.md).
+# Not part of the released benchmark.
+old_cache/
+
+# Large local install artifacts: simulator source trees, upstream model repos,
+# checkpoints, datasets, restricted assets, git mirrors. Obtained via
+# scripts/install/install_*.sh and scripts/install/download_assets.py — never committed.
+# See external/README.md.
+external/
+old_logs_cache/
+
 # Local third-party mirrors and scratch caches.
 # Publish these separately, use submodules, or document download steps instead.
 vlaModelHome/
@@ -101,4 +131,43 @@ temp/
 *.tmp
 *.pid
 *.seed
-core
+# Anchored: a bare `core` also matches the src/dynisafety/core/ package.
+/core
+
+# M8 local private RoboTwin bare mirror (D1=C); not for publish
+/mirrors/
+
+# M9: vendored RoboTwin dual-track fallback (untracked; prefer third_party/RoboTwin)
+dynamic_RoboTwin/RoboTwin/
+
+# ---------------------------------------------------------------------------
+# Open-source release scope (see docs/opensource_scope.md)
+# ---------------------------------------------------------------------------
+
+# Pre-unification trees — superseded by src/dynisafety. Do not re-add.
+/dynisafety_libero/
+/dynamic_SimplerEnv/
+/dynamic_RoboTwin/
+/legacy/
+/download_hf.py
+/scripts/dynamicRLBench/
+
+# Isolated WRM capture pipeline — not part of this benchmark repo
+/A_robosafe_capture_datasets/
+
+# Internal process docs (reviewer strategy, agent handoffs). User docs stay.
+/docs/plan/
+/docs/refine_iclr_prompt/
+/docs/experiment_upgrade/
+
+# In-house numerical anchors transcribed from our eval logs.
+# Keep tests/test_*.py and tests/fixtures/; drop golden snapshots.
+/tests/golden/
+/tests/test_golden_consistency.py
+
+# One-off L2/contact debug probes (not part of the released CLI)
+/tools/audit_l2_spawn.py
+/tools/diagnose_l2_spawn_ab.py
+/tools/diagnose_l2_spawn_rollback.py
+/tools/probe_l2_spawn.py
+/tools/recount_robotwin_contact.py

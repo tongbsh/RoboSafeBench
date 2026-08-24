@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dyni-example-agent"
+version = "0.1.0"
+description = "Example embodied-agent integration for the DyniSafety benchmark"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    # Do NOT depend on dynisafety itself: it is the host package. Declaring it
+    # here would fight the backend-extras mutex (libero / simplerenv / robotwin
+    # / robocasa extras are mutually exclusive) when this example is installed
+    # into an eval environment.
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

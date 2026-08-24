@@ -1,0 +1,26 @@
+# DyniSafety model config (M4 frozen structure).
+name: gr00t
+transport: zmq
+adapter: dynisafety.policies.adapters.gr00t:Gr00tAdapter
+action_space: delta_ee_7d
+chunk_size: 16
+observation:
+  images: [primary, wrist]
+  needs_state: true
+server:
+  env: isaac-gr00t
+  root: "${env:GR00T_ROOT|${workspace}/external/model_repos/Isaac-GR00T}"
+  launch: gr00t/eval/run_gr00t_server.py
+  default_port: 5555
+  health_path: /health
+  startup_timeout_s: 600
+checkpoint:
+  default: "${env:GR00T_CKPT|${workspace}/external/checkpoints/gr00t}"
+resources:
+  max_jobs_per_gpu: 1
+backends: [libero, simplerenv]
+extra:
+  server_host: 127.0.0.1
+  needs_server: true
+  eval_env: openvla-oft
+  serve_env: isaac-gr00t

@@ -1,0 +1,50 @@
+# RoboTwin × L3 — CLI-effective (D4: entry_steps=6000; §0.1 alpha=0.9).
+# approach/exit/dwell_height/spawn_* → extra.robotwin (schema gap D6).
+# disturbance.l2 block: schema-valid spawn-mirror fields used by manager.arm L3
+# (l2_start_mode / flip / min_distance stay in extra.robotwin — not in L2 schema).
+disturbance:
+  l2:
+    alpha: 0.9
+    start_offset: [0.0, 0.0, 0.18]
+    start_dist_mult: 1.3
+  l3:
+    alpha: 0.9
+    move_start_step: 1
+    entry_steps: 6000
+    dwell_steps: 3
+    enter_height: 0.10
+    start_offset: [0.0, 0.0, 0.12]
+    flip_side: false
+    start_mode: head_on
+    start_dist_mult: 1.6
+    # Official metrics + handle_collision: ignore wrist cameras (not L2's
+    # l12_collision_exclude). Empty list = no filter. Does not apply an impulse gate.
+    ignore_collision_link_substrings: [camera]
+
+hand:
+  flinch_dist: 0.08
+
+# path_intercept + primary-arm reach slots. target_mode=current keeps
+# today's l3_alpha interpolate. All keys required.
+extra:
+  robotwin:
+    l3:
+      target_mode: current
+      intercept_alpha: 0.5
+      min_eef_clearance: 0.12
+      min_task_clearance: 0.0
+      tip_overshoot: 0.0
+      reach_diversity:
+        enabled: false
+        lateral_width_m: 0.15
+        near_alpha: 0.30
+        mid_alpha: 0.50
+        hover_rise_m: 0.10
+        via_descent_alpha: 0.20
+        pin_approach_steps: true
+        clearance_samples: 24
+        min_clearance_m: 0.03
+        depth_collapse_m: 0.08
+        path_num_samples: 24
+        forbidden_slots: []
+        forbidden_depths: []

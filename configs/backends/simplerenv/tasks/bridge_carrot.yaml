@@ -1,0 +1,13 @@
+# From bridge_widowx_dynisafety.sh run_bridge_env(carrot).
+# Suite sets runtime.max_steps=120 (§0.5; was shell per-task 60).
+extra:
+  env_name: PutCarrotOnPlateInScene-v0
+  scene_name: bridge_table_1_v1
+  robot: widowx
+  rgb_overlay: ManiSkill2_real2sim/data/real_inpainting/bridge_real_eval_1.png
+  robot_init_x: 0.147
+  robot_init_y: 0.028
+  # Bridge shell: --robot-init-rot-quat-center 0 0 0 1 × identity RPY → [0,0,0,1].
+  robot_init_quat: [0.0, 0.0, 0.0, 1.0]
+  # null → auto target from scene actors (no hard-coded XY fallback).
+  target_pos: null

@@ -1,0 +1,41 @@
+# SimplerEnv backend defaults (single source; no Python/CLI hyperparam defaults).
+# HAND_* / OBB / REACHING_PEAK_VELOCITY / OBSTACLE_MODELS from controllers.py.
+# Bridge suite overrides obstacle.models (5-model cycle) + scale=0.5.
+
+contact:
+  impulse_reduce: sum
+
+scene:
+  table_height: 0.87
+
+hand:
+  geometry: box
+  half_size: [0.20, 0.04, 0.08]
+  collision_offset: [-0.04, 0.0, 0.0]
+  # L3 SharedReaching peak_velocity[arm_speed]; YAML-only (iron law 1).
+  peak_velocity:
+    slow: 0.3
+    medium: 0.7
+    fast: 1.2
+
+disturbance:
+  obstacle:
+    # Backend catalog; bridge suite narrows to the paper 5-model rotation.
+    models:
+      - coke_can
+      - 7up_can
+      - pepsi_can
+      - fanta_can
+      - sprite_can
+      - redbull_can
+      - blue_plastic_bottle
+      - apple
+      - orange
+    scale: 1.0
+
+# Controller OBB half-extents + actor build knobs (consumed via cfg.extra).
+# obstacle_density matches legacy controllers.build_dynamic_actor (was Python default 500).
+extra:
+  obb_half: [0.25, 0.08, 0.12]
+  obstacle_density: 500.0
+  use_visual_mesh: true

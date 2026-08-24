@@ -1,0 +1,19 @@
+# pin: ccfe3809766839a2fcfb7a3d3c9abff585189188
+# path: third_party/SimplerEnv-OpenVLA
+# why: Some DyniSafety policies lack visualize_epoch; guard avoids AttributeError at episode end.
+# apply: git apply -p1 (from third_party/SimplerEnv-OpenVLA) or scripts/install/apply_patches.sh
+
+diff --git a/simpler_env/evaluation/maniskill2_evaluator.py b/simpler_env/evaluation/maniskill2_evaluator.py
+index a824479..548a85c 100644
+--- a/simpler_env/evaluation/maniskill2_evaluator.py
++++ b/simpler_env/evaluation/maniskill2_evaluator.py
+@@ -177,7 +177,8 @@ def run_maniskill2_eval_single_episode(
+     action_root = os.path.dirname(action_path) + "/actions/"
+     os.makedirs(action_root, exist_ok=True)
+     action_path = action_root + os.path.basename(action_path)
+-    model.visualize_epoch(predicted_actions, images, save_path=action_path)
++    if hasattr(model, "visualize_epoch") and callable(model.visualize_epoch):
++        model.visualize_epoch(predicted_actions, images, save_path=action_path)
+     return success == "success"
+ 
+ 

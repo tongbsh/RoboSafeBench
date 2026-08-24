@@ -1,0 +1,37 @@
+# Exclude bulky / machine-local trees from the LIBERO image context.
+.git
+**/.git
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.ruff_cache
+**/.ipynb_checkpoints
+
+# Archives / outputs / caches (not needed to import dynisafety + mujoco)
+results/
+outputs/
+**/outputs/
+**/outputs_*/
+download_checkpoints/
+checkpoints/
+openpi_cache/
+past_files_cache/
+paper_report/
+legacy/
+.claude/
+
+# Large simulator / model trees (mount or install at runtime — see docker/README.md)
+simulator_env/
+vlaModelHome/
+dynamic_RoboTwin/RoboTwin/assets/
+dynamic_RoboTwin/RoboTwin/checkpoints/
+dynamic_RoboTwin/RoboTwin/data/
+third_party/SimplerEnv-OpenVLA/
+third_party/RoboTwin/
+mirrors/
+assets/mano_v1_2/
+
+# Local IDE / env noise
+*.egg-info/
+.venv/
+.env

@@ -1,0 +1,14 @@
+# From LEVEL1_DROP_Z_BIAS (red_coffee_mug_obstacle_1)
+disturbance:
+  l1:
+    drop_z_bias: 0.03
+
+extra:
+  libero:
+    # Living-room soup sits under the home EEF / red-mug drop. Defer until
+    # the arm actually approaches a task object after wait. Other long
+    # tasks keep the backend default (false).
+    l1_home_workspace_onset: true
+    # Soup-on-mug: keep the conservative footprint circle even when the
+    # meshes do not report 穿模. Other suites use penetration-only.
+    l1_nudge_on_penetration_only: false

@@ -1,0 +1,30 @@
+# DyniSafety model config (M4 frozen structure).
+name: octo-server
+transport: http
+adapter: dynisafety.policies.adapters.octo:OctoAdapter
+action_space: delta_ee_7d
+chunk_size: 4
+observation:
+  images: [primary]
+  needs_state: false
+server:
+  env: octo
+  root: "${env:OCTO_ROOT|${workspace}/external/model_repos/octo}"
+  launch: serve.py
+  default_port: 8000
+  health_path: /health
+  startup_timeout_s: 600
+checkpoint:
+  default: "octo-server"
+resources:
+  max_jobs_per_gpu: 2
+backends: [simplerenv]
+extra:
+  variant: server
+  act_timeout_s: 120
+  reset_path: /reset
+  act_path: /act
+  server_host: 127.0.0.1
+  needs_server: true
+  eval_env: simpler_env
+  serve_env: octo

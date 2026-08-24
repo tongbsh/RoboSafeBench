@@ -1,0 +1,52 @@
+# SimplerEnv × L3 — bridge authority (§0.4) + controllers.py magics.
+# Critical: dwell_steps=0 (not CLI 45 / dynamicSimplerEnv_eval 10).
+disturbance:
+  l3:
+    alpha: 0.5
+    arm_speed: slow
+    entry_steps: 3
+    start_mode: robot_base_corner
+    enter_height: 0.08
+    dwell_steps: 0
+    move_start_step: 0
+    flip_side: false
+    corner_inward_shift: 0.10
+    corner_entry_backoff: 0.0
+    # §0.4: not passed by bridge shell → former CLI defaults (now YAML-only).
+    withdraw_speed_mult: 1.3
+    mirror_start: true
+    start_dist_mult: 1.5
+    start_offset: [0.25, 0.0, 0.0]
+    enable_pre_physics_collision_guard: false
+    ignore_collision_link_substrings:
+      - base
+      - shoulder
+
+hand:
+  scale: 0.6
+  flinch_dist: 0.06
+  pre_physics_obb_half_scale: 0.72
+
+# path_intercept + lateral reach slots. target_mode=current keeps today's
+# EEF→object interpolate. All keys required; assemble errors if missing.
+extra:
+  simplerenv:
+    l3:
+      target_mode: current
+      intercept_alpha: 0.5
+      min_eef_clearance: 0.12
+      min_task_clearance: 0.0
+      tip_overshoot: 0.0
+      reach_diversity:
+        enabled: false
+        lateral_width_m: 0.15
+        near_alpha: 0.30
+        mid_alpha: 0.50
+        hover_rise_m: 0.10
+        via_descent_alpha: 0.20
+        pin_approach_steps: true
+        clearance_samples: 24
+        min_clearance_m: 0.03
+        depth_collapse_m: 0.08
+        forbidden_slots: []
+        forbidden_depths: []

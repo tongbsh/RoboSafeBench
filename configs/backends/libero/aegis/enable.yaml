@@ -1,0 +1,32 @@
+# LIBERO AEGIS overlay (Prompt A1).
+# Merge via --config. Does NOT enable in backends/libero.yaml by default.
+# Pair with configs/backends/libero/oracle/stop_wait_resume.yaml for oracle+aegis.
+# Hook lives in LiberoBackend.rollout (not in the adapter).
+# Supports delta_ee_7d natively; abs_ee_7d (e.g. X-VLA) is converted abs→delta→abs
+# around the CBF-QP. Other action spaces are skipped (counted in episode.extra).
+#
+# Behavior with activate_after=settled_or_done:
+# - oracle+aegis: dynamic phase = Oracle pause only; filter after hazard motion
+#   finishes (L1/L2 SETTLED_OR_DONE with static residual; L3 WITHDRAWN = cleared,
+#   so AEGIS intentionally no-ops post-hand — use activate_after=always if you
+#   need CBF while the hand is present, typically with oracle off)
+# - aegis only (oracle off): filter every stepped 7D action (静态对照)
+
+extra:
+  libero:
+    aegis:
+      enabled: true
+      activate_after: settled_or_done
+      obstacle_source: sim_gt
+      config_path: configs/safety/aegis.yaml
+      # Upstream main_aegis.py EEF ellipsoid offset / axes (sim_gt bridge).
+      eef_offset_local: [0.0, 0.0, -0.08]
+      eef_axes_diag: [0.06, 0.12, 0.11]
+      # Upstream main_aegis.py: taller EEF ellipsoid when the instruction names these objects.
+      eef_axes_diag_by_instruction_substr:
+        orange juice: [0.06, 0.12, 0.2]
+        milk: [0.06, 0.12, 0.2]
+        alphabet soup: [0.06, 0.12, 0.2]
+      # Fallback obstacle semi-axes when geom sizing is unavailable.
+      obstacle_axes_diag_default: [0.06, 0.06, 0.08]
+      use_geom_size_for_obstacle: true

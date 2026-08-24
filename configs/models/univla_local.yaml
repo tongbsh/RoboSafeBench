@@ -1,0 +1,22 @@
+# DyniSafety model config (M4 frozen structure).
+name: univla_local
+transport: local
+adapter: dynisafety.policies.adapters.univla_local:UniVLALocalAdapter
+action_space: delta_ee_7d
+chunk_size: 1
+observation:
+  images: [primary]
+  needs_state: true
+checkpoint:
+  default: "${env:UNIVLA_LOCAL_CKPT|${workspace}/external/checkpoints/univla}"
+resources:
+  max_jobs_per_gpu: 1
+backends: [libero, simplerenv]
+extra:
+  repo_root: "${env:UNIVLA_ROOT|${workspace}/external/model_repos/UniVLA}"
+  unnorm_key: libero_spatial_no_noops
+  center_crop: true
+  window_size: 12
+  action_decoder_path: "${env:UNIVLA_ACTION_DECODER|${workspace}/external/checkpoints/univla/action_decoder.pt}"
+  needs_server: false
+  eval_env: openvla-oft

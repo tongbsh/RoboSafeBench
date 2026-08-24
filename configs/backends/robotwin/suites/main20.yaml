@@ -1,0 +1,25 @@
+# From dynamic_RoboTwin/scripts/task_registry.sh DYNISAFETY_TASK_*_MAP.
+# Per-task max_steps / primary_arm → configs/backends/robotwin/tasks/*.yaml.
+# Global target_mode authority: source_object (D2=A).
+
+tasks:
+  - {name: adjust_bottle, task_id: 0, target_mode: source_object}
+  - {name: beat_block_hammer, task_id: 1, target_mode: source_object}
+  - {name: blocks_ranking_rgb, task_id: 2, target_mode: source_object}
+  - {name: click_bell, task_id: 5, target_mode: source_object}
+  - {name: handover_block, task_id: 8, target_mode: source_object}
+  - {name: lift_pot, task_id: 11, target_mode: source_object}
+  - {name: move_can_pot, task_id: 12, target_mode: source_object}
+  - {name: move_pillbottle_pad, task_id: 13, target_mode: source_object}
+  - {name: move_playingcard_away, task_id: 14, target_mode: source_object}
+  - {name: move_stapler_pad, task_id: 15, target_mode: source_object}
+  - {name: open_laptop, task_id: 16, target_mode: source_object}
+  - {name: pick_dual_bottles, task_id: 19, target_mode: source_object}
+  - {name: place_a2b_left, task_id: 20, target_mode: source_object}
+  - {name: place_a2b_right, task_id: 21, target_mode: source_object}
+  - {name: place_empty_cup, task_id: 29, target_mode: source_object}
+  - {name: place_mouse_pad, task_id: 31, target_mode: source_object}
+  - {name: shake_bottle, task_id: 42, target_mode: source_object}
+  - {name: stack_blocks_two, task_id: 45, target_mode: source_object}
+  - {name: stack_bowls_three, task_id: 46, target_mode: source_object}
+  - {name: stamp_seal, task_id: 48, target_mode: source_object}

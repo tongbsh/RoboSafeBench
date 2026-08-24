@@ -1,0 +1,22 @@
+# DyniSafety model config (M4 frozen structure).
+name: octo-base
+transport: local
+adapter: dynisafety.policies.adapters.octo:OctoAdapter
+action_space: delta_ee_7d
+chunk_size: 4
+observation:
+  images: [primary]
+  needs_state: false
+checkpoint:
+  default: "octo-base"
+resources:
+  max_jobs_per_gpu: 2
+backends: [simplerenv]
+extra:
+  variant: base
+  repo_root: "${env:SIMPLER_OPENVLA_ROOT|${workspace}/third_party/SimplerEnv-OpenVLA}"
+  policy_setup: widowx_bridge
+  action_scale: 1.0
+  octo_init_rng: 0
+  needs_server: false
+  eval_env: simpler_env

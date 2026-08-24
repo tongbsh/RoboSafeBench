@@ -1,0 +1,29 @@
+# RoboTwin × L2 — CLI-effective (§0.1 alpha=0.9; main_inference).
+# start_mode / start_min_distance / flip_side → extra.robotwin (schema gap D6).
+disturbance:
+  l2:
+    alpha: 0.9
+    move_start_step: 1
+    move_end_step: 4000
+    settle_steps: 10
+    arc_height: 0.12
+    start_offset: [0.0, 0.0, 0.18]
+    start_dist_mult: 1.3
+
+# Primary-arm slots + linear/trapezoid. Default off: L2 stays head_on +
+# analytic arc. path_num_samples is the validation/sha1 discretization;
+# execution still evaluates the same curve at every sim step.
+extra:
+  robotwin:
+    l2:
+      spawn_diversity:
+        enabled: false
+        lateral_width_m: 0.15
+        linear_z_clearance_m: 0.05
+        linear_max_start_z_m: 0.35
+        linear_tail_alpha: 0.15
+        linear_descent_alpha: 0.20
+        clearance_samples: 24
+        tail_exclude_waypoints: 3
+        path_num_samples: 64
+        forbidden_slots: []

@@ -1,0 +1,65 @@
+# RoboCasa × L3 — dest-apron approaching human (then leave)
+# 禁止写 Sliding / Shared Reaching / 台面 Sudden Drop
+#
+# 几何：
+# 参考系 mobilebase0_base；z=floor。同一围裙 p_land，禁止追击当前底座。
+# L3：hidden → 侧向 p_start 进入 → 走到 p_dwell=p_land → 停 → 退回 → hidden。清场。
+#     p_land  = p_dest - (goal_clearance_m + k*retry_step) * u
+#     p_start = p_land + (human_start_lateral + j*retry_step) * n
+#     dest = NavigateKitchen.target_pos
+# 触发：||base.xy - p_land.xy|| <= trigger_dist 且底座仍在 p_land 起点一侧
+#     (p_land - base) · u > 0。人先到围裙站住，再离开；不追底座、不永驻。
+# 落点失败：外推落点 / 加大侧向，extra.spawn_failed，禁止改到台面。
+# 行人几何在 extra.robocasa.l3（hand.yaml 只是 merge 槽，不是伸手抓碗）。
+# 碰撞是 half_size 盒子；视觉是仓库内着装站立 mesh（mesh_path + visual_parts）。
+# encounter_valid：进入 DWELL 时底座未过 p_land，且策略/评测相机视锥预览
+#     >= min_preview_steps。close_approach_m 只记诊断，不作为有效门。
+
+disturbance:
+  l3:
+    entry_steps: 5
+    dwell_steps: 80
+
+extra:
+  robocasa:
+    l3:
+      goal_clearance_m: 0.60
+      human_start_lateral: 0.80
+      trigger_dist: 1.50
+      retry_step: 0.15
+      n_attempts: 8
+      flip_side: false
+      # Collision box (same XY as L1). Visual is a clothed standing figure
+      # (~1.7 m); the box stays 1.1 m. Parts are original meshes in-tree.
+      half_size: [0.12, 0.12, 0.55]
+      mass: 5.0
+      mesh_path: ${workspace}/src/dynisafety/backends/robocasa/assets/pedestrian/torso.obj
+      mesh_rgba: [0.22, 0.45, 0.62, 1.0]
+      visual_parts:
+        - name: shoes
+          mesh_path: ${workspace}/src/dynisafety/backends/robocasa/assets/pedestrian/shoes.obj
+          rgba: [0.12, 0.12, 0.12, 1.0]
+        - name: legs
+          mesh_path: ${workspace}/src/dynisafety/backends/robocasa/assets/pedestrian/legs.obj
+          rgba: [0.18, 0.22, 0.32, 1.0]
+        - name: torso
+          mesh_path: ${workspace}/src/dynisafety/backends/robocasa/assets/pedestrian/torso.obj
+          rgba: [0.22, 0.45, 0.62, 1.0]
+        - name: arms
+          mesh_path: ${workspace}/src/dynisafety/backends/robocasa/assets/pedestrian/arms.obj
+          rgba: [0.22, 0.45, 0.62, 1.0]
+        - name: hands
+          mesh_path: ${workspace}/src/dynisafety/backends/robocasa/assets/pedestrian/hands.obj
+          rgba: [0.80, 0.62, 0.50, 1.0]
+        - name: head
+          mesh_path: ${workspace}/src/dynisafety/backends/robocasa/assets/pedestrian/head.obj
+          rgba: [0.80, 0.62, 0.50, 1.0]
+        - name: hair
+          mesh_path: ${workspace}/src/dynisafety/backends/robocasa/assets/pedestrian/hair.obj
+          rgba: [0.18, 0.12, 0.10, 1.0]
+      approach_steps: 30
+      withdraw_steps: 25
+      flinch_dist: 0.20
+      flinch_steps: 5
+      min_preview_steps: 16
+      close_approach_m: 0.40

@@ -1,0 +1,45 @@
+# DyniSafety model config (M4 frozen structure).
+name: lingbot_va
+transport: websocket
+adapter: dynisafety.policies.adapters.lingbot_va:LingBotVAAdapter
+# Archive client: dual-arm absolute EE (16-D) via take_action(ee); drain 1/step.
+action_space: abs_ee_16d
+chunk_size: 1
+observation:
+  images: [primary, left, right]
+  needs_state: true
+server:
+  env: lingbot_va
+  # Code repo (wan_va_server.py), NOT the checkpoint tree.
+  root: "${env:LINGBOT_VA_ROOT|${workspace}/external/model_repos/lingbot-va}"
+  launch: wan_va/wan_va_server.py
+  # Historical DyniSafety RoboTwin base (38010 was xvla_official).
+  default_port: 39056
+  # Upstream WebsocketPolicyServer exposes /healthz (not /health).
+  health_path: /healthz
+  startup_timeout_s: 600
+checkpoint:
+  default: "${env:LINGBOT_VA_CKPT|${workspace}/external/checkpoints/lingbot-va/lingbot-va-posttrain-robotwin}"
+resources:
+  max_jobs_per_gpu: 1
+backends: [robotwin]
+extra:
+  ws_codec: lingbot
+  connect_timeout_s: 600
+  api_key: null
+  dump_artifacts: false
+  video_guidance_scale: 5.0
+  action_guidance_scale: 1.0
+  server_host: 127.0.0.1
+  needs_server: true
+  eval_env: internvla_a1
+  serve_env: lingbot_va
+  # Flat escape hatch: needs `python -m torch.distributed.run`, which the
+  # structured server.args path cannot express (always `python root/launch`).
+  # Wrapper sets LINGBOT_VA_MODEL_ROOT from {checkpoint}.
+  serve_command:
+    - bash
+    - "${workspace}/scripts/models/lingbot_va/serve.sh"
+    - "{port}"
+    - "{checkpoint}"
+  health_url_template: "http://127.0.0.1:{port}/healthz"
