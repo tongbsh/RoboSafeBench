@@ -8,10 +8,10 @@ runnable example, not a second contract.
 Canonical procedure, frozen contracts, and install rules live elsewhere — read
 those, do not re-learn them here:
 
-- [docs/adding_a_model.md](../../docs/adding_a_model.md) — 6-step procedure
-- [docs/contracts.md](../../docs/contracts.md) — frozen contracts
-- [docs/installation.md](../../docs/installation.md) — one backend per environment; extras are mutually exclusive
-- [docs/benchmark_design.md](../../docs/benchmark_design.md), [docs/metrics.md](../../docs/metrics.md)
+- [docs/user/adding_a_model.md](../../docs/user/adding_a_model.md) — 6-step procedure
+- [docs/user/contracts.md](../../docs/user/contracts.md) — frozen contracts
+- [docs/user/installation.md](../../docs/user/installation.md) — one backend per environment; extras are mutually exclusive
+- [docs/user/benchmark_design.md](../../docs/user/benchmark_design.md), [docs/user/metrics.md](../../docs/user/metrics.md)
 
 ## What this is (and is not)
 

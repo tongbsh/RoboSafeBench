@@ -4,7 +4,7 @@
 #
 # Install torch+CUDA first (see requirements/README.md; reference cu118).
 # Then: pip install -r requirements/simplerenv.txt && pip install -e ".[simplerenv]"
-# Trees: scripts/install/install_simplerenv.sh + apply_patches.sh simplerenv
+# Trees: scripts/setup/install_simplerenv.sh + apply_patches.sh simplerenv
 #   pip install -e third_party/SimplerEnv-OpenVLA/ManiSkill2_real2sim
 #   pip install -e third_party/SimplerEnv-OpenVLA
 # Heavy TF/Jax policy deps: third_party/SimplerEnv-OpenVLA/requirements_full_install.txt

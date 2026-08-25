@@ -11,6 +11,10 @@ from typing import Any, Protocol
 
 import numpy as np
 
+from dynisafety.backends._engine.mujoco_contact import (
+    collect_geom_ids_for_bodies,
+    expand_body_descendants,
+)
 from dynisafety.backends.libero.env import (
     LiberoEnvHandle,
     _is_base_name,
@@ -441,6 +445,13 @@ def _geom_collision_xy_half_extent(model: Any, data: Any, gid: int) -> float:
     return 0.0
 
 
+def object_subtree_geom_ids(sim: Any, root_body_id: int) -> set[int]:
+    """All geoms on a free-joint object (root + every descendant body)."""
+    return collect_geom_ids_for_bodies(
+        sim.model, expand_body_descendants(sim.model, [int(root_body_id)])
+    )
+
+
 def collision_xy_radius(
     sim: Any,
     body_id: int,
@@ -450,6 +461,7 @@ def collision_xy_radius(
     body_xy = np.asarray(sim.data.body_xpos[int(body_id)][:2], dtype=np.float64)
     model, data = sim.model, sim.data
     best = 0.0
+    allowed = None if geom_ids is not None else expand_body_descendants(model, [int(body_id)])
     if geom_ids is None:
         gids = range(int(model.ngeom))
     else:
@@ -457,9 +469,8 @@ def collision_xy_radius(
     for gid in gids:
         gid_i = int(gid)
         bid = int(model.geom_bodyid[gid_i])
-        if geom_ids is None:
-            if bid != int(body_id) and int(model.body_parentid[bid]) != int(body_id):
-                continue
+        if allowed is not None and bid not in allowed:
+            continue
         if not _geom_is_collision(model, gid_i):
             continue
         gxy = np.asarray(data.geom_xpos[gid_i][:2], dtype=np.float64)
@@ -633,7 +644,7 @@ def contacts_show_penetration(
 
 
 def named_object_geom_ids(handle: LiberoEnvHandle, object_names: Sequence[str]) -> set[int]:
-    """Collision+visual geom IDs for named free-joint objects (root + children)."""
+    """Collision+visual geom IDs for named free-joint objects (full subtree)."""
     inner = handle.env.env
     sim = inner.sim
     gids: set[int] = set()
@@ -645,10 +656,7 @@ def named_object_geom_ids(handle: LiberoEnvHandle, object_names: Sequence[str]) 
             body_id = int(sim.model.body_name2id(obj.root_body))
         except Exception:
             continue
-        for gid in range(int(sim.model.ngeom)):
-            bid = int(sim.model.geom_bodyid[gid])
-            if bid == body_id or int(sim.model.body_parentid[bid]) == body_id:
-                gids.add(int(gid))
+        gids |= object_subtree_geom_ids(sim, body_id)
     return gids
 
 

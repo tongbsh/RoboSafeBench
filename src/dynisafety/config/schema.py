@@ -101,7 +101,7 @@ class DiagnosticsHazardEndConfig:
 class DiagnosticsConfig:
     """Behavior diagnostics (react / stop / avoid / recover).
 
-    See docs/behavior_diagnostics.md. Disabled → EpisodeRecord.diagnostics is
+    See docs/user/behavior_diagnostics.md. Disabled → EpisodeRecord.diagnostics is
     null and tables render n/a (never 0.0).
     """
 

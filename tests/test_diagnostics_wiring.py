@@ -501,7 +501,7 @@ def test_record_step_ignores_unknown_fields(tmp_path: Path) -> None:
 
 
 def test_session_consumes_no_rng(tmp_path: Path) -> None:
-    """Determinism red line (docs/behavior_diagnostics.md §0.2).
+    """Determinism red line (docs/user/behavior_diagnostics.md §0.2).
 
     Toggling diagnostics must not shift any rollout that draws from the global
     RNG streams, so the whole capture path has to leave both the legacy and the
@@ -840,8 +840,9 @@ def test_robotwin_backend_wires_diagnostics_session() -> None:
     assert "diag_session.episode_diagnostics()" in src
     assert "copy_vec" in src
     assert 'dynisafety_manager' in src
-    # EEF comes from the already-fetched obs; no extra camera render.
+    # EEF + policy images come from the already-fetched obs; no extra camera render.
     assert src.count("task_env.get_obs()") == 2
+    assert "raw_obs=raw_obs" in src
     assert "_copy_endpose_xyz(raw_obs, \"left_endpose\")" in src
     assert "_copy_endpose_xyz(raw_obs, \"right_endpose\")" in src
 

@@ -2,8 +2,8 @@
 # Debug VLA serve — screen / log 友好入口。
 #
 # 改编自 artifacts/feasibility/pi05_base_full_alignv2/launch_serve.sh
-# 与 scripts/feasibility/run_pi05_aegis_vision_full_serve.sh：
-# 在 tool env 里跑 `python -m dynisafety.cli serve`（不要用 scripts/run/20_serve.sh）。
+# 与 scripts/extra/feasibility/run_pi05_aegis_vision_full_serve.sh：
+# 在 tool env 里跑 `python -m dynisafety.cli serve`（不要用 scripts/eval/serve.sh）。
 #
 # 按 suite 加载权重的模型（xvla_official / univla）必须传 --suite，或传 --backend 推断。
 #
@@ -16,7 +16,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 # shellcheck disable=SC1091
-source "$ROOT/scripts/run/00_env.sh"
+source "$ROOT/scripts/lib/env.sh"
 cd "$ROOT"
 
 MODEL="pi05"

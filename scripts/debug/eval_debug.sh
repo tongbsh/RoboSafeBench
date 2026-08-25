@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # DyniSafety debug eval — 快速切换 VLA × backend × level × 轨迹数。
 #
-# 面向日常调参 / 冒烟，不是论文正式矩阵（正式请用 scripts/run/30_sweep.sh 或
-# configs/suites/paper_main.yaml）。内部走 scripts/run/10_eval.sh（自动选 conda）。
+# 面向日常调参 / 冒烟，不是论文正式矩阵（正式请用 scripts/eval/sweep.sh 或
+# configs/suites/paper_main.yaml）。内部走 scripts/eval/cell.sh（自动选 conda）。
 #
 # 用法:
 #   bash scripts/debug/eval_debug.sh [选项]
@@ -13,7 +13,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 # shellcheck disable=SC1091
-source "$ROOT/scripts/run/00_env.sh"
+source "$ROOT/scripts/lib/env.sh"
 
 # --- defaults (debug-friendly) ---------------------------------------------
 BACKEND="libero"
@@ -91,7 +91,7 @@ DyniSafety debug eval — 单机调试不同 VLA / benchmark / level
     --model pi05 --level 1 --episodes 1 --oracle --aegis
 
 结果目录: results/l{level}/<run_id>/
-正式大规模跑: bash scripts/run/30_sweep.sh --dry-run
+正式大规模跑: bash scripts/eval/sweep.sh --dry-run
 EOF
 }
 
@@ -195,7 +195,7 @@ if [[ "$TASK_MODE" == "all" ]]; then
   for lv in "${LEVEL_LIST[@]}"; do
     n_jobs=$((n_jobs + 1))
     info "[$n_jobs] eval level=$lv task=ALL"
-    if ! bash "$ROOT/scripts/run/10_eval.sh" "$BACKEND" "$MODEL" "$SUITE" "$lv" "${COMMON[@]}"; then
+    if ! bash "$ROOT/scripts/eval/cell.sh" "$BACKEND" "$MODEL" "$SUITE" "$lv" "${COMMON[@]}"; then
       warn "failed: level=$lv task=ALL"
       fail=1
     fi
@@ -205,7 +205,7 @@ else
     for tid in "${TASK_LIST[@]}"; do
       n_jobs=$((n_jobs + 1))
       info "[$n_jobs] eval level=$lv task=$tid"
-      if ! bash "$ROOT/scripts/run/10_eval.sh" "$BACKEND" "$MODEL" "$SUITE" "$lv" \
+      if ! bash "$ROOT/scripts/eval/cell.sh" "$BACKEND" "$MODEL" "$SUITE" "$lv" \
           --task "$tid" "${COMMON[@]}"; then
         warn "failed: level=$lv task=$tid"
         fail=1

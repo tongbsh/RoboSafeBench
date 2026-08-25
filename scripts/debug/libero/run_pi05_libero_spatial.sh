@@ -17,7 +17,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 # shellcheck disable=SC1091
-source "$ROOT/scripts/run/00_env.sh"
+source "$ROOT/scripts/lib/env.sh"
 
 export DYNI_SAVE_VIDEO="${DYNI_SAVE_VIDEO:-1}"
 
@@ -42,4 +42,4 @@ fi
 info "debug sweep: pi05 × safelibero_spatial × task0 × L0–L3 × ${EPISODES} ep"
 info "suite=$SUITE_ARG  save_video=${DYNI_SAVE_VIDEO}  extra=[$*]"
 export DYNI_SUITE="$SUITE_ARG"
-bash "$ROOT/scripts/run/30_sweep.sh" "$@"
+bash "$ROOT/scripts/eval/sweep.sh" "$@"

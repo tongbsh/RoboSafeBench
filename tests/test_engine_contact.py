@@ -341,6 +341,18 @@ def test_mujoco_expand_body_subtree_direct_children_only() -> None:
     assert mj.expand_body_subtree(model, [1]) == {1, 2, 3}
 
 
+def test_mujoco_expand_body_descendants_includes_grandchildren() -> None:
+    model = _FakeMjModel(
+        nbody=4,
+        ngeom=0,
+        body_parentid=[-1, 0, 1, 1],
+        geom_bodyid=[],
+        body_names={},
+    )
+    assert mj.expand_body_descendants(model, [0]) == {0, 1, 2, 3}
+    assert mj.expand_body_descendants(model, [1]) == {1, 2, 3}
+
+
 def test_mujoco_collect_geom_helpers() -> None:
     model = _FakeMjModel(
         nbody=3,

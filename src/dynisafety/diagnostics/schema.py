@@ -1,6 +1,6 @@
 """Frozen data contract for behavior diagnostics (react / stop / avoid / recover).
 
-See docs/behavior_diagnostics.md. This module is the single interface shared by
+See docs/user/behavior_diagnostics.md. This module is the single interface shared by
 the recorder (rollout-side), the writer/reader (IO), the probes (backend
 adapters), and the analyzer (pure functions). It must not import any backend,
 any simulator, or ``dynisafety.core``.
@@ -330,7 +330,7 @@ class DisturbanceProbe(Protocol):
     """Read-only adapter over a backend disturbance controller.
 
     Implementations live in ``dynisafety.diagnostics.probes`` — NEVER inside
-    ``backends/*/disturbance/``, which is frozen (docs/behavior_diagnostics.md
+    ``backends/*/disturbance/``, which is frozen (docs/user/behavior_diagnostics.md
     §0.1). A probe may only read attributes; it must not mutate controller
     state, step the simulator, or influence control flow.
     """

@@ -466,3 +466,110 @@ def test_is_job_complete_level_bucket_and_legacy_flat(tmp_path: Path) -> None:
         episodes=2,
     )
     assert is_job_complete(results, other) is False
+
+
+def test_only_filter_pipe_is_or_within_key() -> None:
+    from dynisafety.runner.scheduler import OnlyFilter, parse_only_filter
+
+    job = JobSpec(
+        backend="libero",
+        suite="safelibero_spatial",
+        task_id=0,
+        task_name="t0",
+        level=2,
+        model="pi05",
+        seed=7,
+        episodes=1,
+    )
+    assert parse_only_filter("backend=libero,level=1|2,model=pi05").match(job)
+    assert not parse_only_filter("level=0|3").match(job)
+    assert parse_only_filter(None) == OnlyFilter(clauses=())
+
+
+def test_dyni_servers_per_gpu_starts_one_serve_per_slot(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from dynisafety.runner import scheduler as sched_mod
+    from dynisafety.runner.scheduler import (
+        JobSpec,
+        OnlyFilter,
+        SchedulerConfig,
+        ServerHandle,
+        SweepScheduler,
+        servers_per_gpu_count,
+    )
+
+    assert servers_per_gpu_count(2) == 1
+    monkeypatch.setenv("DYNI_SERVERS_PER_GPU", "2")
+    assert servers_per_gpu_count(2) == 2
+    assert servers_per_gpu_count(1) == 1
+
+    models = tmp_path / "models"
+    models.mkdir()
+    (models / "srv.yaml").write_text(
+        yaml.dump(
+            {
+                "name": "srv",
+                "transport": "http",
+                "checkpoint": {"default": "/ckpt"},
+                "resources": {"max_jobs_per_gpu": 2},
+                "server": {
+                    "env": "srvenv",
+                    "root": "/repo",
+                    "launch": "serve.py",
+                    "default_port": 9000,
+                    "health_path": "/health",
+                    "startup_timeout_s": 60,
+                    "args": ["--port", "{port}"],
+                },
+                "extra": {"needs_server": True, "server_host": "127.0.0.1"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    started_ports: list[int] = []
+
+    def fake_start(spec, *, gpu, port, log_path, health_timeout_s):  # noqa: ANN001
+        del spec, gpu, log_path, health_timeout_s
+        started_ports.append(int(port))
+        return ServerHandle(
+            model="srv", gpu=0, port=int(port), pid=-1, log_path=Path("/tmp/x")
+        )
+
+    monkeypatch.setattr(sched_mod, "start_model_server", fake_start)
+    monkeypatch.setattr(sched_mod, "stop_server", lambda handle: None)
+
+    class _Proc:
+        def wait(self) -> int:
+            return 0
+
+    monkeypatch.setattr(sched_mod.subprocess, "Popen", lambda *a, **k: _Proc())
+
+    cfg = SchedulerConfig(
+        gpu_ids=(0,),
+        jobs_per_gpu_cap=None,
+        resume=False,
+        retry_failed=False,
+        dry_run=False,
+        results_root=tmp_path / "results",
+        sweep_dir=tmp_path / "sweep",
+        configs_root=tmp_path,
+        health_timeout_s=1.0,
+        only=OnlyFilter(clauses=()),
+    )
+    jobs = [
+        JobSpec(
+            backend="libero",
+            suite="safelibero_spatial",
+            task_id=tid,
+            task_name=f"t{tid}",
+            level=1,
+            model="srv",
+            seed=7,
+            episodes=1,
+        )
+        for tid in (0, 1)
+    ]
+    assert SweepScheduler(cfg, jobs).run() == 0
+    assert len(started_ports) == 2
+    assert started_ports[0] != started_ports[1]

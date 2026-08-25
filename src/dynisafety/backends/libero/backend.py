@@ -34,6 +34,7 @@ from dynisafety.backends.libero.env import (
     save_episode_video,
 )
 from dynisafety.backends.libero.obstacle_pack import (
+    attach_obstacle_pack_reset,
     overlay_obstacle_pack,
     parse_obstacle_pack,
     plan_for_task,
@@ -52,6 +53,7 @@ from dynisafety.core.rollout import (
     episode_video_dir,
     require_bound,
     resolve_save_video,
+    setup_invalid_extra,
 )
 from dynisafety.diagnostics import DiagnosticsSession, copy_vec
 from dynisafety.policies.action_space import convert_action, effective_action_space
@@ -429,6 +431,7 @@ class LiberoBackend:
                 resolution=resolution,
                 bddl_file_name=bddl_file_name,
             )
+        attach_obstacle_pack_reset(handle.env, pack)
 
         _apply_obstacle_rescale(handle, cfg)
         return handle
@@ -511,6 +514,41 @@ class LiberoBackend:
             episode_index=episode_index,
             extra_libero=self._extra_libero,
         )
+        if level > 0 and controller is None:
+            # Assembly failed: do not run a silent L0 trial under the requested level.
+            wall = time.perf_counter() - t0
+            metrics = EpisodeMetricsBuilder(metrics_cfg).finalize(
+                success=False,
+                success_step=None,
+                steps=0,
+                force_equiv_dt_s=force_dt,
+            )
+            extra = setup_invalid_extra(
+                "disturbance_unassembled",
+                extra={"active_obstacle": None},
+            )
+            return build_episode_record(
+                metrics=metrics,
+                run_id=str(cfg.run_id),
+                config_hash=bound.config_hash,
+                backend=str(cfg.backend),
+                suite=str(cfg.suite),
+                model=str(cfg.model),
+                checkpoint=str(cfg.checkpoint),
+                level=level,
+                episode_index=episode_index,
+                task_id=handle.task_id,
+                task_name=handle.task_name,
+                instruction=handle.task_description,
+                seed=int(cfg.seed),
+                max_steps=max_steps,
+                steps=0,
+                termination="error",
+                wall_time_s=float(wall),
+                video_path=None,
+                extra=extra,
+                diagnostics=None,
+            )
 
         # Prompt 11: pause-VLA oracle (explicit extra.libero.oracle.enabled; L0 bypass).
         oracle_session = LiberoOracleSession.create(

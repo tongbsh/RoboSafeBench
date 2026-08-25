@@ -20,7 +20,10 @@ from dynisafety.core.aggregate import (
     AggregateOptions,
     aggregate_groups,
     discover_episode_files,
+    filter_episodes_for_grid,
     is_force_anomaly,
+    is_setup_invalid,
+    metric_episodes,
     load_coverage_grid,
     load_episodes,
     validate_coverage,
@@ -91,17 +94,74 @@ def _ep(**kw) -> EpisodeRecord:
     return EpisodeRecord(**base)
 
 
-def _write_jsonl(path: Path, episodes: list[EpisodeRecord]) -> None:
+def _write_jsonl(
+    path: Path,
+    episodes: list[EpisodeRecord],
+    *,
+    complete: bool = True,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as fp:
         for ep in episodes:
             fp.write(json.dumps(ep.to_json_dict()) + "\n")
+    if complete:
+        (path.parent / "summary.json").write_text(
+            json.dumps(
+                {
+                    "status": "completed",
+                    "n_episodes_written": len(episodes),
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
 
 
 def test_is_force_anomaly_whitelist() -> None:
     assert is_force_anomaly(_ep(extra={})) is False
     assert is_force_anomaly(_ep(extra={"force_anomaly": True})) is True
     assert is_force_anomaly(_ep(extra={"force_anomaly": False, "other": 1})) is False
+
+
+def test_is_setup_invalid_whitelist() -> None:
+    assert is_setup_invalid(_ep(extra={})) is False
+    assert is_setup_invalid(_ep(extra={"setup_invalid": True})) is True
+    assert is_setup_invalid(_ep(extra={"setup_invalid": False, "other": 1})) is False
+    valid, invalid = _ep(success=True), _ep(
+        extra={"setup_invalid": True},
+        success=True,
+        termination="error",
+        episode_index=1,
+    )
+    assert metric_episodes([valid, invalid]) == [valid]
+
+
+def test_setup_invalid_excluded_from_sr_cr() -> None:
+    eps = [
+        _ep(success=True, contact_steps=2, episode_index=0),
+        _ep(
+            extra={"setup_invalid": True, "setup_invalid_reason": "disturbance_unassembled"},
+            success=True,
+            contact_steps=0,
+            termination="error",
+            episode_index=1,
+        ),
+    ]
+    opts = AggregateOptions(
+        group_keys=("model", "level", "seed"),
+        ci_method="bootstrap",
+        bootstrap_samples=20,
+        bootstrap_seed=0,
+        confidence=0.95,
+    )
+    runs = aggregate_groups(eps, _cfg(), opts)
+    row = runs.iloc[0]
+    assert int(row["n_episodes"]) == 2
+    assert int(row["n_valid_episodes"]) == 1
+    assert int(row["setup_invalid_episodes"]) == 1
+    assert float(row["sr"]) == pytest.approx(1.0)
+    assert float(row["cr"]) == pytest.approx(1.0)
+    assert int(row["ss"]) + int(row["us"]) + int(row["cff"]) + int(row["cif"]) == 1
 
 
 def test_aggregate_groups_dual_f_peak_and_anomaly_column() -> None:
@@ -340,3 +400,374 @@ def test_aggregate_does_not_recompute_force_from_dt() -> None:
     assert float(runs.iloc[0]["f_peak_mean_all"]) == pytest.approx(10.0)
     assert float(runs.iloc[0]["f_peak_mean_contact"]) == pytest.approx(10.0)
     assert float(runs.iloc[0]["f_peak_max"]) == pytest.approx(10.0)
+
+
+def test_paper_grids_declare_backend_and_suite() -> None:
+    root = Path(__file__).resolve().parents[1] / "configs" / "report" / "grids"
+    paths = sorted(root.glob("*.yaml"))
+    assert paths, "expected generated paper grids"
+    for path in paths:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        assert raw["backend"], path.name
+        assert raw["suite"], path.name
+        expected = load_coverage_grid(path)
+        assert set(expected["backend"]) == {raw["backend"]}
+        assert set(expected["suite"]) == {raw["suite"]}
+
+
+def test_discover_skips_sweep_bookkeeping(tmp_path: Path) -> None:
+    keep = tmp_path / "results" / "l0" / "run" / "episodes.jsonl"
+    skip = tmp_path / "results" / "_sweep" / "paper_main" / "episodes.jsonl"
+    _write_jsonl(keep, [_ep(episode_index=0)])
+    _write_jsonl(
+        skip,
+        [_ep(episode_index=0, backend="robotwin", suite="main20")],
+    )
+    found = discover_episode_files(tmp_path / "results")
+    assert found == [keep]
+
+
+def test_discover_skips_incomplete_and_crash_runs(tmp_path: Path) -> None:
+    """``--resume`` leftovers must not enter paper aggregation."""
+    done = tmp_path / "results" / "l0" / "done" / "episodes.jsonl"
+    crashed = tmp_path / "results" / "l0" / "crashed" / "episodes.jsonl"
+    short = tmp_path / "results" / "l0" / "short" / "episodes.jsonl"
+    _write_jsonl(done, [_ep(episode_index=0, run_id="done")])
+    _write_jsonl(crashed, [_ep(episode_index=0, run_id="crashed")], complete=False)
+    _write_jsonl(short, [_ep(episode_index=0, run_id="short")], complete=False)
+    (short.parent / "summary.json").write_text(
+        json.dumps({"status": "incomplete", "n_episodes_written": 1}) + "\n",
+        encoding="utf-8",
+    )
+    found = discover_episode_files(tmp_path / "results")
+    assert found == [done]
+
+
+def test_filter_grid_uses_job_seed_not_accepted_seed(tmp_path: Path) -> None:
+    """RoboTwin extra.accepted_seed must not be EpisodeRecord.seed."""
+    job_seed = 7
+    eps = [
+        _ep(
+            backend="robotwin",
+            suite="main20",
+            model="starvla",
+            task_id=8,
+            seed=job_seed,
+            episode_index=i,
+            extra={"accepted_seed": 16000 + i},
+        )
+        for i in range(2)
+    ]
+    leaked = [
+        _ep(
+            backend="robotwin",
+            suite="main20",
+            model="starvla",
+            task_id=8,
+            seed=16000,
+            episode_index=0,
+            extra={"accepted_seed": 16000},
+        )
+    ]
+    _write_jsonl(tmp_path / "results" / "l3" / "ok" / "episodes.jsonl", eps)
+    _write_jsonl(tmp_path / "results" / "l3" / "leaked" / "episodes.jsonl", leaked)
+    grid = tmp_path / "robotwin_main20.yaml"
+    grid.write_text(
+        yaml.safe_dump(
+            {
+                "backend": "robotwin",
+                "suite": "main20",
+                "models": ["starvla"],
+                "tasks": [{"task_id": 8, "task_name": "handover_block"}],
+                "levels": [3],
+                "seeds": [job_seed],
+                "n_episodes": 2,
+            }
+        ),
+        encoding="utf-8",
+    )
+    expected = load_coverage_grid(grid)
+    loaded = load_episodes(discover_episode_files(tmp_path / "results"))
+    scoped = filter_episodes_for_grid(loaded, expected)
+    assert len(scoped) == 2
+    assert {ep.seed for ep in scoped} == {job_seed}
+    assert all(int(ep.extra["accepted_seed"]) >= 16000 for ep in scoped)
+
+
+def test_coverage_grid_reads_backend_and_suite(tmp_path: Path) -> None:
+    grid = tmp_path / "grid.yaml"
+    grid.write_text(
+        yaml.safe_dump(
+            {
+                "backend": "libero",
+                "suite": "safelibero_spatial",
+                "models": ["starvla"],
+                "tasks": [{"task_id": 0, "task_name": "t0"}],
+                "levels": [3],
+                "seeds": [0],
+                "n_episodes": 2,
+            }
+        ),
+        encoding="utf-8",
+    )
+    expected = load_coverage_grid(grid)
+    assert list(expected["backend"]) == ["libero"]
+    assert list(expected["suite"]) == ["safelibero_spatial"]
+
+
+def test_coverage_grid_infers_scope_from_filename(tmp_path: Path) -> None:
+    grid = tmp_path / "libero_safelibero_spatial.yaml"
+    grid.write_text(
+        yaml.safe_dump(
+            {
+                "models": ["starvla"],
+                "tasks": [{"task_id": 0, "task_name": "t0"}],
+                "levels": [3],
+                "seeds": [0],
+                "n_episodes": 2,
+            }
+        ),
+        encoding="utf-8",
+    )
+    expected = load_coverage_grid(grid)
+    assert list(expected["backend"]) == ["libero"]
+    assert list(expected["suite"]) == ["safelibero_spatial"]
+
+
+def test_coverage_scopes_shared_results_tree(tmp_path: Path) -> None:
+    """Same (model, task_id, level, seed) on two backends must not share a cell."""
+    import pandas as pd
+
+    spatial = [
+        _ep(
+            backend="libero",
+            suite="safelibero_spatial",
+            model="starvla",
+            task_id=0,
+            episode_index=i,
+        )
+        for i in range(2)
+    ]
+    twin = [
+        _ep(
+            backend="robotwin",
+            suite="main20",
+            model="starvla",
+            task_id=0,
+            episode_index=i,
+        )
+        for i in range(2)
+    ]
+    _write_jsonl(tmp_path / "results" / "l3" / "libero-run" / "episodes.jsonl", spatial)
+    _write_jsonl(tmp_path / "results" / "l3" / "twin-run" / "episodes.jsonl", twin)
+    grid = tmp_path / "libero_safelibero_spatial.yaml"
+    grid.write_text(
+        yaml.safe_dump(
+            {
+                "backend": "libero",
+                "suite": "safelibero_spatial",
+                "models": ["starvla"],
+                "tasks": [{"task_id": 0, "task_name": "t0"}],
+                "levels": [3],
+                "seeds": [0],
+                "n_episodes": 2,
+            }
+        ),
+        encoding="utf-8",
+    )
+    expected = load_coverage_grid(grid)
+    loaded = load_episodes(discover_episode_files(tmp_path / "results"))
+    assert len(loaded) == 4
+    scoped = filter_episodes_for_grid(loaded, expected)
+    assert len(scoped) == 2
+    assert {ep.backend for ep in scoped} == {"libero"}
+    assert {ep.suite for ep in scoped} == {"safelibero_spatial"}
+    cov = validate_coverage(
+        pd.DataFrame(),
+        scoped,
+        expected,
+        max_error_rate=0.5,
+        expected_config_hash=None,
+    )
+    assert cov.complete
+    assert int(cov.rows.iloc[0]["actual_n_episodes"]) == 2
+    assert cov.rows.iloc[0]["backend"] == "libero"
+    assert cov.rows.iloc[0]["suite"] == "safelibero_spatial"
+
+
+def test_generate_report_does_not_mix_backends(tmp_path: Path) -> None:
+    spatial = [
+        _ep(
+            backend="libero",
+            suite="safelibero_spatial",
+            model="starvla",
+            task_id=0,
+            episode_index=i,
+        )
+        for i in range(2)
+    ]
+    twin = [
+        _ep(
+            backend="robotwin",
+            suite="main20",
+            model="starvla",
+            task_id=0,
+            episode_index=i,
+        )
+        for i in range(2)
+    ]
+    _write_jsonl(tmp_path / "results" / "l3" / "libero-run" / "episodes.jsonl", spatial)
+    _write_jsonl(tmp_path / "results" / "l3" / "twin-run" / "episodes.jsonl", twin)
+    grid = tmp_path / "libero_safelibero_spatial.yaml"
+    grid.write_text(
+        yaml.safe_dump(
+            {
+                "backend": "libero",
+                "suite": "safelibero_spatial",
+                "models": ["starvla"],
+                "tasks": [{"task_id": 0, "task_name": "t0"}],
+                "levels": [3],
+                "seeds": [0],
+                "n_episodes": 2,
+            }
+        ),
+        encoding="utf-8",
+    )
+    metrics_yaml = Path(__file__).resolve().parents[1] / "configs" / "base.yaml"
+    out = tmp_path / "out"
+    rc = generate_report(
+        results=tmp_path / "results",
+        out=out,
+        grid=grid,
+        metrics_cfg=load_metrics_config(metrics_yaml),
+        settings=ReportSettings(
+            bootstrap_samples=10,
+            bootstrap_seed=0,
+            confidence=0.95,
+            max_error_rate=0.5,
+        ),
+        allow_incomplete=False,
+        expected_config_hash=None,
+        write_plots=False,
+        write_parquet=False,
+    )
+    assert rc == 0
+    import pandas as pd
+
+    runs = pd.read_csv(out / "runs.csv")
+    assert set(runs["backend"]) == {"libero"}
+    assert set(runs["suite"]) == {"safelibero_spatial"}
+    assert int(runs.iloc[0]["n_episodes"]) == 2
+
+
+def test_coverage_scopes_libero_suites(tmp_path: Path) -> None:
+    """Four LIBERO suites reuse task_id 0–3; the spatial grid must ignore object."""
+    import pandas as pd
+
+    spatial = [
+        _ep(
+            backend="libero",
+            suite="safelibero_spatial",
+            model="starvla",
+            task_id=0,
+            episode_index=0,
+        )
+    ]
+    other = [
+        _ep(
+            backend="libero",
+            suite="safelibero_object",
+            model="starvla",
+            task_id=0,
+            episode_index=0,
+        )
+    ]
+    _write_jsonl(tmp_path / "results" / "spatial" / "episodes.jsonl", spatial)
+    _write_jsonl(tmp_path / "results" / "object" / "episodes.jsonl", other)
+    grid = tmp_path / "libero_safelibero_spatial.yaml"
+    grid.write_text(
+        yaml.safe_dump(
+            {
+                "backend": "libero",
+                "suite": "safelibero_spatial",
+                "models": ["starvla"],
+                "tasks": [{"task_id": 0, "task_name": "t0"}],
+                "levels": [3],
+                "seeds": [0],
+                "n_episodes": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+    expected = load_coverage_grid(grid)
+    scoped = filter_episodes_for_grid(
+        load_episodes(discover_episode_files(tmp_path / "results")),
+        expected,
+    )
+    assert [ep.suite for ep in scoped] == ["safelibero_spatial"]
+    cov = validate_coverage(
+        pd.DataFrame(),
+        scoped,
+        expected,
+        max_error_rate=0.5,
+        expected_config_hash=None,
+    )
+    assert cov.complete
+    assert int(cov.rows.iloc[0]["actual_n_episodes"]) == 1
+
+
+def test_coverage_counts_backend_error_terminations() -> None:
+    import pandas as pd
+
+    eps = [
+        _ep(episode_index=0, termination="error", success=False),
+        _ep(episode_index=1, termination="sim_unstable", success=False),
+    ]
+    expected = pd.DataFrame(
+        [
+            {
+                "model": "m1",
+                "task_id": 0,
+                "task_name": "t0",
+                "level": 3,
+                "seed": 0,
+                "n_episodes": 2,
+            }
+        ]
+    )
+    cov = validate_coverage(
+        pd.DataFrame(),
+        eps,
+        expected,
+        max_error_rate=0.1,
+        expected_config_hash=None,
+    )
+    assert int(cov.rows.iloc[0]["error_episodes"]) == 2
+    assert {i.kind for i in cov.issues} == {"high_error_rate"}
+
+
+def test_coverage_excess_episodes() -> None:
+    import pandas as pd
+
+    eps = [_ep(episode_index=i) for i in range(4)]
+    expected = pd.DataFrame(
+        [
+            {
+                "model": "m1",
+                "task_id": 0,
+                "task_name": "t0",
+                "level": 3,
+                "seed": 0,
+                "n_episodes": 2,
+            }
+        ]
+    )
+    cov = validate_coverage(
+        pd.DataFrame(),
+        eps,
+        expected,
+        max_error_rate=0.5,
+        expected_config_hash=None,
+    )
+    assert cov.complete is False
+    assert {i.kind for i in cov.issues} == {"excess_episodes"}

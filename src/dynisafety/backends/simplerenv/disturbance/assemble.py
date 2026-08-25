@@ -222,6 +222,7 @@ def build_controller(
             reset_options=reset_options,
             get_eef_pos_fn=get_eef_pos_fn,
             table_height=table_height,
+            resolved_extra=resolved_extra,
         )
     if level == 2:
         return _build_l2(
@@ -256,6 +257,21 @@ def build_controller(
     raise ValueError(f"unhandled level={level}")
 
 
+def _l1_home_onset(extra: Mapping[str, Any]) -> tuple[bool, float]:
+    raw = _se_nested(extra, "simplerenv", "l1")
+    if not isinstance(raw, Mapping):
+        raise TypeError(f"extra.simplerenv.l1 must be a mapping, got {type(raw)!r}")
+    enabled = raw.get("home_onset")
+    if not isinstance(enabled, bool):
+        raise TypeError(f"extra.simplerenv.l1.home_onset must be bool, got {type(enabled)!r}")
+    if "home_approach_eps" not in raw:
+        raise ValueError("extra.simplerenv.l1.home_approach_eps missing from resolved config")
+    eps = float(raw["home_approach_eps"])
+    if eps < 0.0:
+        raise ValueError(f"extra.simplerenv.l1.home_approach_eps must be >= 0, got {eps!r}")
+    return enabled, eps
+
+
 def _build_l1(
     actor: Any,
     cfg: RunConfig,
@@ -265,10 +281,12 @@ def _build_l1(
     reset_options: Mapping[str, Any],
     get_eef_pos_fn: Callable[[], np.ndarray],
     table_height: float,
+    resolved_extra: Mapping[str, Any],
 ) -> SuddenDropController:
     del cfg
     l1 = _require(disturbance.l1, "disturbance.l1")
     alpha = float(_require(l1.alpha, "disturbance.l1.alpha"))
+    home_onset, home_eps = _l1_home_onset(resolved_extra)
     target = compute_target_pos(
         access,
         reset_options,
@@ -293,6 +311,8 @@ def _build_l1(
         drop_height=float(_require(l1.drop_height, "disturbance.l1.drop_height")),
         trigger_dist=float(_require(l1.trigger_dist, "disturbance.l1.trigger_dist")),
         get_eef_pos_fn=get_eef_pos_fn,
+        home_onset=home_onset,
+        home_approach_eps=home_eps,
     )
 
 

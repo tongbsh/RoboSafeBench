@@ -172,14 +172,37 @@ def _obstacle_axes_from_body(
 ) -> np.ndarray:
     if not use_geom_size:
         return np.asarray(fallback, dtype=np.float64).reshape(3)
+    from dynisafety.backends._engine.mujoco_contact import (
+        collect_geom_ids_for_bodies,
+        expand_body_descendants,
+    )
+
     model = sim.model
+    data = sim.data
+    bodies = expand_body_descendants(model, [int(body_id)])
+    gids = sorted(collect_geom_ids_for_bodies(model, bodies))
+    collision = [
+        gid
+        for gid in gids
+        if not (
+            int(model.geom_contype[gid]) == 0 and int(model.geom_conaffinity[gid]) == 0
+        )
+    ]
+    use = collision or gids
+    if not use:
+        return np.asarray(fallback, dtype=np.float64).reshape(3)
+
+    mesh_type = 7  # mujoco.mjtGeom.mjGEOM_MESH
+    has_mesh = any(int(model.geom_type[gid]) == mesh_type for gid in use)
+    if has_mesh:
+        axes = _union_aabb_axes_in_body_frame(sim, int(body_id), use)
+        if axes is not None:
+            return axes
+
     best: np.ndarray | None = None
     best_vol = -1.0
-    for gid in range(int(model.ngeom)):
-        if int(model.geom_bodyid[gid]) != int(body_id):
-            continue
+    for gid in use:
         size = np.asarray(model.geom_size[gid], dtype=np.float64).reshape(-1)
-        # Approximate axis-aligned semi-axes from geom half-extents.
         if size.size >= 3:
             axes = np.maximum(size[:3], 1e-3)
         elif size.size == 1:
@@ -193,6 +216,47 @@ def _obstacle_axes_from_body(
     if best is None:
         return np.asarray(fallback, dtype=np.float64).reshape(3)
     return best
+
+
+def _union_aabb_axes_in_body_frame(
+    sim: Any,
+    body_id: int,
+    geom_ids: Sequence[int],
+) -> np.ndarray | None:
+    """Half-extents of the union AABB of *geom_ids*, in the root body frame."""
+    model = sim.model
+    data = sim.data
+    try:
+        root_r = np.asarray(data.body_xmat[int(body_id)], dtype=np.float64).reshape(3, 3)
+        root_p = np.asarray(data.body_xpos[int(body_id)], dtype=np.float64).reshape(3)
+    except Exception:
+        return None
+    mn = np.full(3, np.inf, dtype=np.float64)
+    mx = np.full(3, -np.inf, dtype=np.float64)
+    found = False
+    for gid in geom_ids:
+        try:
+            gpos = np.asarray(data.geom_xpos[int(gid)], dtype=np.float64).reshape(3)
+            g_r = np.asarray(data.geom_xmat[int(gid)], dtype=np.float64).reshape(3, 3)
+            size = np.asarray(model.geom_size[int(gid)], dtype=np.float64).reshape(-1)
+        except Exception:
+            continue
+        if size.size < 3:
+            rb = float(model.geom_rbound[int(gid)]) if hasattr(model, "geom_rbound") else 0.0
+            half = np.full(3, max(rb, 1e-3), dtype=np.float64)
+        else:
+            half = np.maximum(size[:3], 0.0)
+        for sx in (-1.0, 1.0):
+            for sy in (-1.0, 1.0):
+                for sz in (-1.0, 1.0):
+                    corner = gpos + g_r @ (half * np.array([sx, sy, sz]))
+                    local = root_r.T @ (corner - root_p)
+                    mn = np.minimum(mn, local)
+                    mx = np.maximum(mx, local)
+                    found = True
+    if not found:
+        return None
+    return np.maximum(0.5 * (mx - mn), 1e-3)
 
 
 def build_obstacle_ellipsoid_sim_gt(

@@ -5,12 +5,18 @@ from __future__ import annotations
 import argparse
 import sys
 
+from dynisafety.analysis.cli import dispatch as dispatch_analysis
+from dynisafety.analysis.cli import register_analysis_parser
 from dynisafety.cli.config_cmd import dispatch_config, register_config_parser
 from dynisafety.cli.doctor import dispatch_doctor, register_doctor_parser
 from dynisafety.cli.eval import dispatch_eval, register_eval_parser
 from dynisafety.cli.report import dispatch_report, register_report_parser
 from dynisafety.cli.serve import dispatch_serve, register_serve_parser
 from dynisafety.cli.sweep import dispatch_sweep, register_sweep_parser
+from dynisafety.parallel_eval.cli import (
+    dispatch_parallel_eval,
+    register_parallel_eval_parser,
+)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -21,6 +27,7 @@ def _build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command")
 
     register_eval_parser(sub)
+    register_parallel_eval_parser(sub)
     register_sweep_parser(sub)
     register_serve_parser(sub)
     register_doctor_parser(sub)
@@ -32,6 +39,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     register_config_parser(sub)
     register_report_parser(sub)
+    register_analysis_parser(sub)
     return parser
 
 
@@ -43,6 +51,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "eval":
         return dispatch_eval(args)
+    if args.command == "parallel-eval":
+        return dispatch_parallel_eval(args)
     if args.command == "sweep":
         return dispatch_sweep(args)
     if args.command == "serve":
@@ -53,6 +63,8 @@ def main(argv: list[str] | None = None) -> int:
         return dispatch_config(args)
     if args.command == "report":
         return dispatch_report(args)
+    if args.command == "analysis":
+        return dispatch_analysis(args)
     print(f"dynisafety {args.command}: not implemented yet (stub)", file=sys.stderr)
     return 0
 

@@ -18,6 +18,23 @@ import numpy as np
 from dynisafety.config.schema import MISSING, RunConfig
 from dynisafety.core.episode import SCHEMA_VERSION, EpisodeRecord
 
+# Whitelist extra keys (aggregate may read these; report/tables must not).
+SETUP_INVALID_KEY = "setup_invalid"
+SETUP_INVALID_REASON_KEY = "setup_invalid_reason"
+
+
+def setup_invalid_extra(reason: str, extra: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Mark an episode as not a valid trial of the requested disturbance level.
+
+    Used when L1–L3 assembly fails (no visible obstacle, bind miss, no L3
+    target). The requested ``level`` stays on the record for coverage; metrics
+    exclude these rows so they cannot inflate ``sr`` or deflate ``cr``.
+    """
+    out = dict(extra or {})
+    out[SETUP_INVALID_KEY] = True
+    out[SETUP_INVALID_REASON_KEY] = str(reason)
+    return out
+
 
 @dataclass(frozen=True)
 class BoundRun:

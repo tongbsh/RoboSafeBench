@@ -18,6 +18,7 @@ from dynisafety.backends._engine.mujoco_contact import (
     body_quat,
     collect_geom_ids_by_body_prefix,
     collect_geom_ids_for_bodies,
+    expand_body_descendants,
     expand_body_subtree,
     measure_geom_pair_contact,
 )
@@ -50,7 +51,7 @@ def collect_obstacle_geom_ids(env: Any) -> set[int]:
             continue
         try:
             body_id = int(model.body_name2id(obj_body.root_body))
-            obstacle_body_ids |= expand_body_subtree(model, [body_id])
+            obstacle_body_ids |= expand_body_descendants(model, [body_id])
         except Exception:
             pass
     return collect_geom_ids_for_bodies(model, obstacle_body_ids)

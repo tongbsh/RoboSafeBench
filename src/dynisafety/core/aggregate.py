@@ -21,6 +21,7 @@ from dynisafety.core.metrics import (
     phi_for_episode,
     sr,
 )
+from dynisafety.core.rollout import SETUP_INVALID_KEY
 from dynisafety.diagnostics.schema import BehaviorClass, BehaviorDiagnostics
 
 # Joint-outcome columns appended to runs.csv / summary (counts + ssr).
@@ -40,7 +41,7 @@ _JOINT_OUTCOME_KEYS = (
 _DIAG_SCALAR_KEYS: tuple[str, ...] = tuple(f.name for f in fields(BehaviorDiagnostics))
 _BEHAVIOR_CLASS_VALUES: tuple[str, ...] = tuple(c.value for c in BehaviorClass)
 
-# Process-metric columns appended to runs.csv (docs/behavior_diagnostics.md §7.1).
+# Process-metric columns appended to runs.csv (docs/user/behavior_diagnostics.md §7.1).
 # Rate columns are paired with their denominators (n_triggered / n_recovery /
 # n_reaction_latency / n_min_clearance). An all-None diagnostics group writes
 # None for every key so tables render n/a, not 0.0.
@@ -66,8 +67,29 @@ _BEHAVIOR_RUN_KEYS: tuple[str, ...] = (
     _BEHAVIOR_RATE_KEYS + _BEHAVIOR_COUNT_KEYS + _BEHAVIOR_COUNT_RATE_KEYS
 )
 
-_ERROR_TERMINATIONS = frozenset({"env_error", "policy_error"})
+# Backends write ``error`` / ``sim_unstable``. Keep the older env/policy names
+# so a leftover 1.x-style row still counts as a crashed cell.
+_ERROR_TERMINATIONS = frozenset(
+    {"env_error", "policy_error", "error", "sim_unstable"}
+)
 _FORCE_ANOMALY_KEY = "force_anomaly"
+_RATE_METRIC_KEYS = (
+    "sr",
+    "cr",
+    "contact_steps_per_ep",
+    "topple_rate",
+    "f_peak_mean_all",
+    "f_peak_mean_contact",
+    "f_peak_p95",
+    "f_peak_max",
+    "injury_dist",
+    "sasr",
+    "safety_score",
+)
+_SWEEP_DIRNAME = "_sweep"
+# Filename fallback for grids that omit backend/suite. Longer names first so
+# ``simplerenv_`` wins over a hypothetical shorter prefix.
+_KNOWN_BACKENDS = ("robocasa", "simplerenv", "robotwin", "libero")
 
 
 @dataclass(frozen=True)
@@ -97,12 +119,41 @@ class CoverageReport:
     complete: bool
 
 
+def _run_dir_completed(run_dir: Path) -> bool:
+    """True iff ``summary.json`` exists and ``status`` is ``completed``.
+
+    Crash leftovers from ``--resume`` have JSONL but no summary (or
+    ``status=incomplete``). Those rows must not enter paper tables.
+    """
+    summary_path = Path(run_dir) / "summary.json"
+    if not summary_path.is_file():
+        return False
+    try:
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return False
+    if not isinstance(summary, dict):
+        return False
+    return summary.get("status") == "completed"
+
+
 def discover_episode_files(results_root: Path) -> list[Path]:
-    """Find ``**/episodes.jsonl`` under results_root."""
+    """Find ``**/episodes.jsonl`` under results_root.
+
+    Skips the scheduler bookkeeping tree ``_sweep/`` (failures.jsonl lives
+    there; it is not a run). Same rule as the calibrator and analysis loader.
+
+    Also skips run dirs that are not ``summary.status==completed``, so a
+    crashed cell plus its ``--resume`` retry cannot double-count episodes.
+    """
     root = Path(results_root)
     if not root.is_dir():
         raise FileNotFoundError(f"results root not found: {root}")
-    return sorted(root.rglob("episodes.jsonl"))
+    return sorted(
+        path
+        for path in root.rglob("episodes.jsonl")
+        if _SWEEP_DIRNAME not in path.parts and _run_dir_completed(path.parent)
+    )
 
 
 def load_episodes(paths: Iterable[Path]) -> list[EpisodeRecord]:
@@ -126,9 +177,43 @@ def load_episodes(paths: Iterable[Path]) -> list[EpisodeRecord]:
 def is_force_anomaly(ep: EpisodeRecord) -> bool:
     """Whitelist read: ``bool(ep.extra.get('force_anomaly', False))``.
 
-    Sole approved ``extra`` key for aggregate; tables/plots must not call this.
+    Approved ``extra`` keys for aggregate: ``force_anomaly``, ``setup_invalid``.
+    tables/plots must not call this.
     """
     return bool(ep.extra.get(_FORCE_ANOMALY_KEY, False))
+
+
+def is_setup_invalid(ep: EpisodeRecord) -> bool:
+    """Whitelist read: ``bool(ep.extra.get('setup_invalid', False))``.
+
+    True when the requested L1–L3 disturbance never assembled (no obstacle /
+    bind / reach target). Those rows stay in JSONL and coverage, but are
+    excluded from ``sr`` / ``cr`` / joint / behavior denominators.
+    """
+    return bool(ep.extra.get(SETUP_INVALID_KEY, False))
+
+
+def metric_episodes(episodes: Sequence[EpisodeRecord]) -> list[EpisodeRecord]:
+    """Episodes that are valid trials of the recorded ``level``."""
+    return [ep for ep in episodes if not is_setup_invalid(ep)]
+
+
+def _empty_valid_metrics() -> dict[str, Any]:
+    """No valid trials → rates are n/a, not a fake 0.0 ``sr``."""
+    return {key: None for key in _RATE_METRIC_KEYS}
+
+
+def _empty_valid_joint() -> dict[str, Any]:
+    return {
+        "ss": 0,
+        "us": 0,
+        "cff": 0,
+        "cif": 0,
+        "ssr": None,
+        "us_rate": None,
+        "cff_rate": None,
+        "cif_rate": None,
+    }
 
 
 def _flatten_diagnostics(diag: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -159,6 +244,7 @@ def episodes_to_frame(episodes: Sequence[EpisodeRecord]) -> pd.DataFrame:
         d["diagnostics"] = json.dumps(raw_diag, sort_keys=True) if raw_diag is not None else None
         d.update(_flatten_diagnostics(ep.diagnostics))
         d["force_anomaly"] = is_force_anomaly(ep)
+        d["setup_invalid"] = is_setup_invalid(ep)
         rows.append(d)
     if not rows:
         return pd.DataFrame()
@@ -355,36 +441,48 @@ def aggregate_groups(
 
     rows: list[dict[str, Any]] = []
     for key, group in sorted(buckets.items(), key=lambda kv: kv[0]):
+        valid = metric_episodes(group)
         # Majority level for compute_all_metrics flag; sasr overwritten below.
-        use_force = sum(1 for ep in group if _use_force_based_sasr(ep)) >= (
-            len(group) / 2.0
+        use_force = bool(valid) and (
+            sum(1 for ep in valid if _use_force_based_sasr(ep)) >= (len(valid) / 2.0)
         )
-        metrics = compute_all_metrics(
-            group, metrics_cfg, use_force_based_sasr=use_force
-        )
-        metrics["sasr"] = _sasr_per_episode_rules(group, metrics_cfg.sasr_penalty)
-        joint = joint_outcome_metrics(group)
-        injury = metrics["injury_dist"]
-        sr_lo, sr_hi = _bootstrap_ci(
-            group,
-            sr,
-            samples=options.bootstrap_samples,
-            seed=options.bootstrap_seed,
-            confidence=options.confidence,
-        )
-        cr_lo, cr_hi = _bootstrap_ci(
-            group,
-            cr,
-            samples=options.bootstrap_samples,
-            seed=options.bootstrap_seed,
-            confidence=options.confidence,
-        )
+        if valid:
+            metrics = compute_all_metrics(
+                valid, metrics_cfg, use_force_based_sasr=use_force
+            )
+            metrics["sasr"] = _sasr_per_episode_rules(valid, metrics_cfg.sasr_penalty)
+            joint = joint_outcome_metrics(valid)
+            injury = metrics["injury_dist"]
+            sr_lo, sr_hi = _bootstrap_ci(
+                valid,
+                sr,
+                samples=options.bootstrap_samples,
+                seed=options.bootstrap_seed,
+                confidence=options.confidence,
+            )
+            cr_lo, cr_hi = _bootstrap_ci(
+                valid,
+                cr,
+                samples=options.bootstrap_samples,
+                seed=options.bootstrap_seed,
+                confidence=options.confidence,
+            )
+            behavior = behavior_group_metrics(valid)
+        else:
+            metrics = _empty_valid_metrics()
+            joint = _empty_valid_joint()
+            injury = None
+            sr_lo, sr_hi = None, None
+            cr_lo, cr_hi = None, None
+            behavior = _behavior_na_payload()
         row: dict[str, Any] = {
             options.group_keys[i]: key[i] for i in range(len(options.group_keys))
         }
         row.update(
             {
                 "n_episodes": len(group),
+                "n_valid_episodes": len(valid),
+                "setup_invalid_episodes": sum(1 for ep in group if is_setup_invalid(ep)),
                 "force_anomaly_episodes": sum(1 for ep in group if is_force_anomaly(ep)),
                 "sr": metrics["sr"],
                 "cr": metrics["cr"],
@@ -394,7 +492,7 @@ def aggregate_groups(
                 "f_peak_mean_contact": metrics["f_peak_mean_contact"],
                 "f_peak_p95": metrics["f_peak_p95"],
                 "f_peak_max": metrics["f_peak_max"],
-                "injury_dist": json.dumps(injury, sort_keys=True),
+                "injury_dist": json.dumps(injury, sort_keys=True) if injury is not None else None,
                 "sasr": metrics["sasr"],
                 "safety_score": metrics["safety_score"],
                 "ss": joint["ss"],
@@ -409,7 +507,7 @@ def aggregate_groups(
                 "sr_ci_hi": sr_hi,
                 "cr_ci_lo": cr_lo,
                 "cr_ci_hi": cr_hi,
-                **behavior_group_metrics(group),
+                **behavior,
             }
         )
         rows.append(row)
@@ -417,6 +515,8 @@ def aggregate_groups(
     if not rows:
         cols = list(options.group_keys) + [
             "n_episodes",
+            "n_valid_episodes",
+            "setup_invalid_episodes",
             "force_anomaly_episodes",
             "sr",
             "cr",
@@ -465,21 +565,157 @@ def summarize_run(
     use_force_based_sasr: bool,
 ) -> dict[str, Any]:
     """Per-run summary.json payload (includes joint outcomes; keeps ``sasr``)."""
-    metrics = compute_all_metrics(
-        episodes, metrics_cfg, use_force_based_sasr=use_force_based_sasr
-    )
-    joint = joint_outcome_metrics(episodes)
+    valid = metric_episodes(episodes)
+    if valid:
+        metrics = compute_all_metrics(
+            valid, metrics_cfg, use_force_based_sasr=use_force_based_sasr
+        )
+        joint = joint_outcome_metrics(valid)
+        behavior = behavior_group_metrics(valid)
+    else:
+        metrics = _empty_valid_metrics()
+        joint = _empty_valid_joint()
+        behavior = _behavior_na_payload()
     return {
         "n_episodes": len(episodes),
+        "n_valid_episodes": len(valid),
+        "setup_invalid_episodes": sum(1 for ep in episodes if is_setup_invalid(ep)),
         "force_anomaly_episodes": sum(1 for ep in episodes if is_force_anomaly(ep)),
         **metrics,
         **joint,
-        **behavior_group_metrics(episodes),
+        **behavior,
     }
 
 
+def _nonempty_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def infer_grid_scope(path: Path, raw: Mapping[str, Any]) -> tuple[str | None, str | None]:
+    """Read ``backend`` / ``suite`` from the YAML, else from ``{backend}_{suite}.yaml``."""
+    backend = _nonempty_str(raw.get("backend"))
+    suite = _nonempty_str(raw.get("suite"))
+    if backend and suite:
+        return backend, suite
+    stem = Path(path).stem
+    for name in _KNOWN_BACKENDS:
+        prefix = f"{name}_"
+        if stem.startswith(prefix):
+            rest = stem[len(prefix) :]
+            if rest:
+                return backend or name, suite or rest
+    return backend, suite
+
+
+def _grid_uses(expected: pd.DataFrame, column: str) -> bool:
+    return column in expected.columns and bool(expected[column].notna().any())
+
+
+def _coverage_cell_key(
+    *,
+    model: str,
+    task_id: int,
+    level: int,
+    seed: int,
+    backend: str | None,
+    suite: str | None,
+    use_backend: bool,
+    use_suite: bool,
+) -> tuple[Any, ...]:
+    parts: list[Any] = []
+    if use_backend:
+        parts.append(backend)
+    if use_suite:
+        parts.append(suite)
+    parts.extend([model, int(task_id), int(level), int(seed)])
+    return tuple(parts)
+
+
+def _episode_cell_key(
+    ep: EpisodeRecord, *, use_backend: bool, use_suite: bool
+) -> tuple[Any, ...]:
+    return _coverage_cell_key(
+        model=str(ep.model),
+        task_id=int(ep.task_id),
+        level=int(ep.level),
+        seed=int(ep.seed),
+        backend=str(ep.backend) if use_backend else None,
+        suite=str(ep.suite) if use_suite else None,
+        use_backend=use_backend,
+        use_suite=use_suite,
+    )
+
+
+def _expected_cell_key(
+    exp: Mapping[str, Any], *, use_backend: bool, use_suite: bool
+) -> tuple[Any, ...]:
+    return _coverage_cell_key(
+        model=str(exp["model"]),
+        task_id=int(exp["task_id"]),
+        level=int(exp["level"]),
+        seed=int(exp["seed"]),
+        backend=str(exp["backend"]) if use_backend else None,
+        suite=str(exp["suite"]) if use_suite else None,
+        use_backend=use_backend,
+        use_suite=use_suite,
+    )
+
+
+def _expected_key_dict(
+    exp: Mapping[str, Any], *, use_backend: bool, use_suite: bool
+) -> dict[str, Any]:
+    key: dict[str, Any] = {
+        "model": str(exp["model"]),
+        "task_id": int(exp["task_id"]),
+        "level": int(exp["level"]),
+        "seed": int(exp["seed"]),
+    }
+    if use_backend:
+        key["backend"] = str(exp["backend"])
+    if use_suite:
+        key["suite"] = str(exp["suite"])
+    return key
+
+
+def filter_episodes_for_grid(
+    episodes: Sequence[EpisodeRecord],
+    expected: pd.DataFrame,
+) -> list[EpisodeRecord]:
+    """Keep episodes that belong to this grid.
+
+    When the grid carries ``backend`` / ``suite`` (or they were inferred from
+    the filename), cells are ``(backend, suite, model, task_id, level, seed)``.
+    A shared ``results/`` tree can then feed six paper grids without mixing
+    LIBERO suites with RoboTwin / SimplerEnv. Grids that omit both fields keep
+    the older 4-tuple key so hand-written test YAML still works.
+    """
+    if expected.empty:
+        return []
+    use_backend = _grid_uses(expected, "backend")
+    use_suite = _grid_uses(expected, "suite")
+    allowed = {
+        _expected_cell_key(exp, use_backend=use_backend, use_suite=use_suite)
+        for _, exp in expected.iterrows()
+    }
+    return [
+        ep
+        for ep in episodes
+        if _episode_cell_key(ep, use_backend=use_backend, use_suite=use_suite)
+        in allowed
+    ]
+
+
 def load_coverage_grid(path: Path) -> pd.DataFrame:
-    """Load grid YAML → expected rows (model × task × level × seed × n_episodes)."""
+    """Load grid YAML → expected rows (model × task × level × seed × n_episodes).
+
+    Optional top-level ``backend`` and ``suite`` are copied onto every row so
+    coverage and ``report generate`` can slice a shared results tree. If those
+    keys are missing, ``{backend}_{suite}.yaml`` (the paper grid naming) is
+    used as a fallback.
+    """
     path = Path(path)
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(raw, Mapping):
@@ -490,6 +726,7 @@ def load_coverage_grid(path: Path) -> pd.DataFrame:
     seeds = list(raw["seeds"])
     n_episodes = int(raw["n_episodes"])
     config_hash = raw.get("config_hash")
+    backend, suite = infer_grid_scope(path, raw)
 
     rows: list[dict[str, Any]] = []
     for model in models:
@@ -508,6 +745,10 @@ def load_coverage_grid(path: Path) -> pd.DataFrame:
                         "seed": int(seed),
                         "n_episodes": n_episodes,
                     }
+                    if backend is not None:
+                        row["backend"] = backend
+                    if suite is not None:
+                        row["suite"] = suite
                     if config_hash is not None:
                         row["config_hash"] = str(config_hash)
                     rows.append(row)
@@ -522,34 +763,28 @@ def validate_coverage(
     max_error_rate: float,
     expected_config_hash: str | None,
 ) -> CoverageReport:
-    """Emit coverage rows + issues for missing / short / high error / hash mismatch.
+    """Emit coverage rows + issues for missing / short / excess / high error / hash.
 
     ``runs_df`` is accepted for API symmetry with the report CLI; episode rows are
-    the source of truth for counts and error rates.
+    the source of truth for counts and error rates. Cell identity includes
+    ``backend`` / ``suite`` when those columns are present on ``expected``.
     """
     del runs_df
     issues: list[CoverageIssue] = []
     cov_rows: list[dict[str, Any]] = []
+    use_backend = _grid_uses(expected, "backend")
+    use_suite = _grid_uses(expected, "suite")
 
-    # Index actual episodes by (model, task_id, level, seed)
     actual_groups: dict[tuple[Any, ...], list[EpisodeRecord]] = {}
     for ep in episodes:
-        key = (ep.model, ep.task_id, ep.level, ep.seed)
+        key = _episode_cell_key(ep, use_backend=use_backend, use_suite=use_suite)
         actual_groups.setdefault(key, []).append(ep)
 
     for _, exp in expected.iterrows():
-        key = (
-            str(exp["model"]),
-            int(exp["task_id"]),
-            int(exp["level"]),
-            int(exp["seed"]),
+        key = _expected_cell_key(exp, use_backend=use_backend, use_suite=use_suite)
+        key_dict = _expected_key_dict(
+            exp, use_backend=use_backend, use_suite=use_suite
         )
-        key_dict = {
-            "model": key[0],
-            "task_id": key[1],
-            "level": key[2],
-            "seed": key[3],
-        }
         want_n = int(exp["n_episodes"])
         group = actual_groups.get(key, [])
         actual_n = len(group)
@@ -578,6 +813,17 @@ def validate_coverage(
                         kind="short_episodes",
                         key=key_dict,
                         message=f"episode count {actual_n} < expected {want_n}",
+                        expected=want_n,
+                        actual=actual_n,
+                    )
+                )
+            elif actual_n > want_n:
+                status = "excess_episodes"
+                issues.append(
+                    CoverageIssue(
+                        kind="excess_episodes",
+                        key=key_dict,
+                        message=f"episode count {actual_n} > expected {want_n}",
                         expected=want_n,
                         actual=actual_n,
                     )

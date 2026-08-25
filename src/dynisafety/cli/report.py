@@ -18,6 +18,7 @@ from dynisafety.core.aggregate import (
     aggregate_groups,
     discover_episode_files,
     episodes_to_frame,
+    filter_episodes_for_grid,
     load_coverage_grid,
     load_episodes,
     validate_coverage,
@@ -173,12 +174,16 @@ def run_coverage(
     settings: ReportSettings,
     expected_config_hash: str | None,
 ) -> tuple[list[EpisodeRecord], CoverageReport]:
-    """Load episodes, validate against grid, write ``coverage.csv``."""
+    """Load episodes, slice to this grid, validate, write ``coverage.csv``.
+
+    The slice is what ``generate`` aggregates: a shared ``results/`` tree can
+    hold every paper backend without each grid's ``table_main`` absorbing the
+    others. ``backend`` / ``suite`` on the grid (or inferred from the filename)
+    are part of the cell key.
+    """
     paths = discover_episode_files(results)
-    episodes = load_episodes(paths)
     expected = load_coverage_grid(grid)
-    # Empty runs frame placeholder for API
-    import pandas as pd
+    episodes = filter_episodes_for_grid(load_episodes(paths), expected)
 
     coverage = validate_coverage(
         pd.DataFrame(),
@@ -252,7 +257,12 @@ def generate_report(
 
 
 def run_report_joint(args: argparse.Namespace) -> int:
-    """Regenerate joint-outcome tables/plots from ``runs.csv`` or ``results/``."""
+    """Regenerate joint-outcome tables/plots from ``runs.csv`` or ``results/``.
+
+    ``--results`` must also pass ``--grid``. The grid slices the tree the same
+    way ``report generate`` does, so a shared model id (``starvla``) is not
+    pooled across backends or LIBERO suites.
+    """
     joint_cfg = load_joint_report_settings(Path(args.joint_yaml))
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -278,10 +288,20 @@ def run_report_joint(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 2
+        grid = getattr(args, "grid", None)
+        if grid is None:
+            print(
+                "dynisafety report joint --results requires --grid "
+                "(same coverage grid as report generate; slices backend/suite "
+                "so shared model ids such as starvla are not pooled)",
+                file=sys.stderr,
+            )
+            return 2
         metrics_cfg = load_metrics_config(Path(args.metrics_yaml))
         settings = load_report_settings(Path(args.report_yaml))
+        expected = load_coverage_grid(Path(grid))
         paths = discover_episode_files(Path(args.results))
-        episodes = load_episodes(paths)
+        episodes = filter_episodes_for_grid(load_episodes(paths), expected)
         options = AggregateOptions(
             group_keys=_DEFAULT_GROUP_KEYS,
             ci_method="bootstrap",
@@ -446,6 +466,12 @@ def register_report_parser(subparsers: argparse._SubParsersAction) -> None:
         type=Path,
         default=None,
         help="Required with --results: metrics YAML (e.g. configs/base.yaml)",
+    )
+    p_joint.add_argument(
+        "--grid",
+        type=Path,
+        default=None,
+        help="Required with --results: coverage grid (backend/suite slice)",
     )
     p_joint.add_argument(
         "--oracle-runs",

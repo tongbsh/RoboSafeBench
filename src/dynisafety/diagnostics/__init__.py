@@ -14,7 +14,7 @@ Thresholds live in ``configs/base.yaml`` under ``diagnostics.*`` and reach this
 package as ``DiagnosticsConfig`` (defined in ``dynisafety.config.schema``, next
 to the other config dataclasses).
 
-See docs/behavior_diagnostics.md for the operational definitions.
+See docs/user/behavior_diagnostics.md for the operational definitions.
 """
 
 from __future__ import annotations

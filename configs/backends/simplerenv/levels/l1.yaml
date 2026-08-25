@@ -4,3 +4,11 @@ disturbance:
     trigger_dist: 0.20
     drop_height: 0.01
     alpha: 0.5
+
+# Home-inside defer: if the EEF already sits in the trigger circle at bind,
+# wait until it moves closer (same latch as RoboTwin). Off-circle L1 is unchanged.
+extra:
+  simplerenv:
+    l1:
+      home_onset: true
+      home_approach_eps: 0.02

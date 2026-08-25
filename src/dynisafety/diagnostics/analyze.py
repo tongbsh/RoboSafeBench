@@ -1,6 +1,6 @@
 """Pure-function analyzer: ``Trace`` → ``BehaviorDiagnostics``.
 
-Operational definitions live in ``docs/behavior_diagnostics.md`` §2–§3. This
+Operational definitions live in ``docs/user/behavior_diagnostics.md`` §2–§3. This
 module must stay free of IO, global state, backend imports, and ``dynisafety.core``.
 Thresholds come only from ``DiagnosticsConfig`` (YAML), never from literals
 embedded as defaults.

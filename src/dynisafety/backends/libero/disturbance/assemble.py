@@ -31,6 +31,7 @@ from dynisafety.backends.libero.disturbance.l2 import DynamicObstacleController
 from dynisafety.backends.libero.disturbance.l3 import SharedReachingController
 from dynisafety.backends.libero.disturbance.l3_reach import DEPTHS, SLOTS
 from dynisafety.backends.libero.obstacle_pack import (
+    align_carrier_quat,
     parse_obstacle_pack,
     plan_for_task,
     planned_instance,
@@ -46,6 +47,10 @@ from dynisafety.config.schema import MISSING, RunConfig
 from dynisafety.core.disturbance import require_configured
 
 _require = require_configured
+
+
+def _log_unassembled(reason: str) -> None:
+    print(f"[libero.assemble] unassembled: {reason}", flush=True)
 
 
 def _libero_extra(extra_libero: Mapping[str, Any], *keys: str, required: bool = True) -> Any:
@@ -162,8 +167,9 @@ def _swap_obstacle(
     if old is None or new is None:
         raise KeyError(f"cannot swap obstacles {old_name!r} → {new_name!r}")
     far = np.array([10.0, 10.0, 0.0, 1.0, 0.0, 0.0, 0.0])
+    aligned = align_carrier_quat(old_name, new_name, quat)
     sim.data.set_joint_qpos(old.joints[-1], far)
-    sim.data.set_joint_qpos(new.joints[-1], np.concatenate([pos, quat]))
+    sim.data.set_joint_qpos(new.joints[-1], np.concatenate([pos, aligned]))
     mujoco.mj_forward(sim.model._model, sim.data._data)
 
 
@@ -576,6 +582,7 @@ def _build_l1(
         if not visible:
             hide_overlapping_bases(handle, overlap_radius=overlap)
             _hide_hand_pusher(handle)
+            _log_unassembled("no_visible_obstacle")
             return None
         eef = handle.env.env.sim.data.site_xpos[handle.env.env.robots[0].eef_site_id].copy()
         chosen_name, chosen_pos, chosen_quat = select_safelibero_init_obstacle(
@@ -627,6 +634,7 @@ def _build_l1(
     if not ctrl._bound:  # noqa: SLF001 — assembly needs bind status
         hide_overlapping_bases(handle, overlap_radius=overlap)
         _hide_hand_pusher(handle)
+        _log_unassembled("bind_failed")
         return None
     hide_overlapping_bases(handle, overlap_radius=overlap)
     hide_all_obstacles(handle, include_bases=False)
@@ -659,6 +667,7 @@ def _build_l2(
     if not visible:
         hide_overlapping_bases(handle, overlap_radius=overlap)
         _hide_hand_pusher(handle)
+        _log_unassembled("no_visible_obstacle")
         return None
 
     eef = handle.env.env.sim.data.site_xpos[handle.env.env.robots[0].eef_site_id].copy()
@@ -909,6 +918,7 @@ def _build_l3(
         # stand (box_small_base / box_base) stays on the table.
         hide_all_obstacles(handle, include_bases=True)
         hide_overlapping_bases(handle, overlap_radius=overlap)
+        _log_unassembled("no_l3_reach_target")
         return None
 
     plan["target_pos"] = _as_xyz_list(target_pos)

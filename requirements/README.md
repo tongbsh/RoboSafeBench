@@ -27,7 +27,7 @@ conda activate dynisafety-<backend>
 # Install torch+CUDA for your GPU first (matrix below), then:
 pip install -r requirements/<backend>.txt
 pip install -e ".[<backend>]"
-# Then follow docs/third_party.md / scripts/install/install_<backend>.sh for trees + patches.
+# Then follow docs/user/third_party.md / scripts/setup/install_<backend>.sh for trees + patches.
 ```
 
 Do **not**:
@@ -64,6 +64,6 @@ Exact torch pins are **not** duplicated inside `*.txt` so CUDA choice stays expl
 
 - Full TensorFlow / Jax stacks for some SimplerEnv policies — see
   `third_party/SimplerEnv-OpenVLA/requirements_full_install.txt` when needed.
-- Editable LIBERO / ManiSkill2 / SimplerEnv / RoboTwin / RoboCasa trees — `scripts/install/install_*.sh`.
+- Editable LIBERO / ManiSkill2 / SimplerEnv / RoboTwin / RoboCasa trees — `scripts/setup/install_*.sh`.
 - Model **server** conda envs (`openpi`, `univla`, `starVLA`, …) — see
   `environment/README.md` (upstream self-built; Q2=B).

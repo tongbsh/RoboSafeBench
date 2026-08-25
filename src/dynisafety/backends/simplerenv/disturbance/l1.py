@@ -15,6 +15,31 @@ from dynisafety.backends.simplerenv.disturbance._support import (
 )
 
 
+def eef_xy_dist(eef_pos: np.ndarray, drop_xy: np.ndarray) -> float:
+    eef = np.asarray(eef_pos, dtype=np.float64).reshape(-1)
+    drop = np.asarray(drop_xy, dtype=np.float64).reshape(-1)
+    return float(np.hypot(float(eef[0]) - float(drop[0]), float(eef[1]) - float(drop[1])))
+
+
+def eef_xy_should_drop(
+    *,
+    xy_dist: float,
+    trigger_dist: float,
+    init_xy_dist: float,
+    home_inside: bool,
+    home_onset: bool,
+    approach_eps: float,
+) -> bool:
+    """XY drop latch. Home-inside + home_onset must get closer than bind distance.
+
+    When ``home_onset`` is off, or the home EEF sits outside the circle, this
+    is exactly ``xy_dist <= trigger_dist`` (unchanged L1).
+    """
+    if not home_onset or not home_inside:
+        return float(xy_dist) <= float(trigger_dist)
+    return float(xy_dist) < float(init_xy_dist) - float(approach_eps)
+
+
 class SuddenDropController:
     """Level 1 — EEF proximity triggers a kinematic→dynamic object drop."""
 
@@ -26,6 +51,8 @@ class SuddenDropController:
         drop_height: float,
         trigger_dist: float,
         get_eef_pos_fn: Callable[[], np.ndarray],
+        home_onset: bool,
+        home_approach_eps: float,
     ) -> None:
         self.actor = actor
         self.target_pos = np.asarray(target_pos, dtype=np.float64).copy()
@@ -34,6 +61,20 @@ class SuddenDropController:
         self._trigger_dist = float(trigger_dist)
         self._get_eef_pos = get_eef_pos_fn
         self._arm_quat = compute_obstacle_quat(0.0)
+        self.home_onset = bool(home_onset)
+        self.home_approach_eps = float(home_approach_eps)
+        if self.home_approach_eps < 0.0:
+            raise ValueError(
+                f"extra.simplerenv.l1.home_approach_eps must be >= 0, got {home_approach_eps!r}"
+            )
+
+        init_eef = np.asarray(get_eef_pos_fn(), dtype=np.float64).reshape(-1)
+        if init_eef.size < 2 or not np.all(np.isfinite(init_eef[:2])):
+            self.init_xy_dist = float("inf")
+            self.home_inside = False
+        else:
+            self.init_xy_dist = eef_xy_dist(init_eef, self.target_pos[:2])
+            self.home_inside = self.init_xy_dist <= self._trigger_dist
 
         self.blocked = False
         self._frozen_pos: np.ndarray | None = None
@@ -52,8 +93,15 @@ class SuddenDropController:
 
     def _check_trigger(self) -> bool:
         eef_pos = self._get_eef_pos()
-        xy_dist = float(np.linalg.norm(eef_pos[:2] - self.target_pos[:2]))
-        return xy_dist <= self._trigger_dist
+        xy_dist = eef_xy_dist(eef_pos, self.target_pos[:2])
+        return eef_xy_should_drop(
+            xy_dist=xy_dist,
+            trigger_dist=self._trigger_dist,
+            init_xy_dist=self.init_xy_dist,
+            home_inside=self.home_inside,
+            home_onset=self.home_onset,
+            approach_eps=self.home_approach_eps,
+        )
 
     def update_before_step(self, task_step: int) -> None:
         if self._dropped:

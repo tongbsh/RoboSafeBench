@@ -68,7 +68,7 @@ def test_episode_record_round_trip() -> None:
 def test_episode_record_rejects_schema_1x() -> None:
     data = _sample_record().to_json_dict()
     data["schema_version"] = "1.0"
-    with pytest.raises(ValueError, match="docs/migration.md"):
+    with pytest.raises(ValueError, match="docs/user/migration.md"):
         EpisodeRecord.from_json_dict(data)
 
 

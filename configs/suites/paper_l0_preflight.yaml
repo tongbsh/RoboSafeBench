@@ -8,8 +8,8 @@
 #   simplerenv: 1 suite  × 3 tasks  × 1 level × 3 models =   9 jobs × 3 ep
 #   total = 221 jobs / 663 episodes
 #
-#   bash scripts/run/30_sweep.sh --dry-run          # with DYNI_SUITE=paper_l0_preflight
-#   DYNI_SUITE=paper_l0_preflight bash scripts/run/30_sweep.sh
+#   bash scripts/eval/sweep.sh --dry-run          # with DYNI_SUITE=paper_l0_preflight
+#   DYNI_SUITE=paper_l0_preflight bash scripts/eval/sweep.sh
 name: paper_l0_preflight
 episodes_per_task: 3
 seeds: [7]

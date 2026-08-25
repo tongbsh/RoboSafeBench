@@ -50,7 +50,7 @@ def register_sweep_parser(subparsers: argparse._SubParsersAction) -> None:
     p.add_argument(
         "--only",
         default=None,
-        help="Filter jobs, e.g. model=starvla,level=3",
+        help="Filter jobs, e.g. model=starvla,level=3 or level=1|2 (OR within a key)",
     )
     p.add_argument(
         "--dry-run",

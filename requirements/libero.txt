@@ -4,11 +4,11 @@
 #
 # Install torch+CUDA first (see requirements/README.md; reference cu124).
 # Then: pip install -r requirements/libero.txt && pip install -e ".[libero]"
-# LIBERO/SafeLIBERO tree: scripts/install/install_libero.sh → pip install -e third_party/dyniSafety_libero
+# LIBERO/SafeLIBERO tree: scripts/setup/install_libero.sh → pip install -e third_party/dyniSafety_libero
 
 mujoco>=3.1,<3.7
 einops>=0.4
 opencv-python>=4.6
 cloudpickle>=2.1
 # Upstream libero/requirements.txt also lists robosuite/bddl/gym/hydra; install those
-# from the dyniSafety_libero tree after scripts/install/install_libero.sh (versions follow that tree).
+# from the dyniSafety_libero tree after scripts/setup/install_libero.sh (versions follow that tree).

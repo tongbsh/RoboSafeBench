@@ -1,4 +1,4 @@
-# P5 threshold calibration for behavior diagnostics (docs/behavior_diagnostics.md §8).
+# P5 threshold calibration for behavior diagnostics (docs/user/behavior_diagnostics.md §8).
 #
 # Same tasks and seed as paper_main's libero/safelibero_spatial cell, so the
 # thresholds are calibrated on the distribution they will be reported on rather
@@ -13,7 +13,7 @@
 # from the saved traces (tools/calibrate_diagnostics.py), so changing a
 # threshold never costs another rollout.
 #
-#   DYNI_SUITE=calib_behavior_diagnostics bash scripts/run/30_sweep.sh --dry-run
+#   DYNI_SUITE=calib_behavior_diagnostics bash scripts/eval/sweep.sh --dry-run
 name: calib_behavior_diagnostics
 episodes_per_task: 25
 seeds: [7]

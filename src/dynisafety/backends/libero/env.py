@@ -65,7 +65,7 @@ def resolve_libero_root(
             return cand
     raise FileNotFoundError(
         "SafeLIBERO tree not found: set DYNISAFETY_LIBERO_ROOT, or run "
-        f"scripts/install/install_libero.sh (tried {candidates[0]} and {candidates[1]})"
+        f"scripts/setup/install_libero.sh (tried {candidates[0]} and {candidates[1]})"
     )
 
 

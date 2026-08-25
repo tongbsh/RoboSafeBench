@@ -1,6 +1,6 @@
 # Gate before adding pi05 to paper_main: 1 episode, L0 only.
-#   DYNI_SUITE=smoke_pi05_libero bash scripts/run/30_sweep.sh --dry-run
-#   DYNI_SUITE=smoke_pi05_libero DYNI_GPUS=0 bash scripts/run/30_sweep.sh
+#   DYNI_SUITE=smoke_pi05_libero bash scripts/eval/sweep.sh --dry-run
+#   DYNI_SUITE=smoke_pi05_libero DYNI_GPUS=0 bash scripts/eval/sweep.sh
 name: smoke_pi05_libero
 episodes_per_task: 1
 seeds: [7]

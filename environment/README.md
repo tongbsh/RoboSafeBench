@@ -24,7 +24,7 @@
 #   conda env create -f environment/dynisafety-robocasa.yml
 #   conda activate dynisafety-robocasa
 #   export MUJOCO_GL=egl
-#   scripts/install/install_backend.sh robocasa   # pip install -e . --no-deps + requirements/robocasa.txt
+#   scripts/setup/install_backend.sh robocasa   # pip install -e . --no-deps + requirements/robocasa.txt
 #
 # Model **server** envs are NOT shipped as yml (M10 Q2=B). Build them from upstream
 # model repos. Names referenced by configs/models/*.yaml include:

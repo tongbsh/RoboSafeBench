@@ -141,7 +141,7 @@ temp/
 dynamic_RoboTwin/RoboTwin/
 
 # ---------------------------------------------------------------------------
-# Open-source release scope (see docs/opensource_scope.md)
+# Open-source release scope (see docs/paper/opensource_scope.md)
 # ---------------------------------------------------------------------------
 
 # Pre-unification trees — superseded by src/dynisafety. Do not re-add.
@@ -150,15 +150,14 @@ dynamic_RoboTwin/RoboTwin/
 /dynamic_RoboTwin/
 /legacy/
 /download_hf.py
-/scripts/dynamicRLBench/
+/scripts/extra/dynamicRLBench/
 
 # Isolated WRM capture pipeline — not part of this benchmark repo
 /A_robosafe_capture_datasets/
 
-# Internal process docs (reviewer strategy, agent handoffs). User docs stay.
-/docs/plan/
-/docs/refine_iclr_prompt/
-/docs/experiment_upgrade/
+# Internal process docs (reviewer strategy, agent handoffs). User docs live in docs/user/.
+/docs/paper/**
+!/docs/paper/README.md
 
 # In-house numerical anchors transcribed from our eval logs.
 # Keep tests/test_*.py and tests/fixtures/; drop golden snapshots.

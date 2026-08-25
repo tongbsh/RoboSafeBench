@@ -6,10 +6,10 @@
 
 规范流程、冻结契约和安装规则在仓库文档里，这里不重复：
 
-- [docs/adding_a_model.md](../../docs/adding_a_model.md) — 6 步流程
-- [docs/contracts.md](../../docs/contracts.md) — 冻结契约
-- [docs/installation.md](../../docs/installation.md) — 每个环境只装一个 backend；extras 互斥
-- [docs/benchmark_design.md](../../docs/benchmark_design.md)、[docs/metrics.md](../../docs/metrics.md)
+- [docs/user/adding_a_model.md](../../docs/user/adding_a_model.md) — 6 步流程
+- [docs/user/contracts.md](../../docs/user/contracts.md) — 冻结契约
+- [docs/user/installation.md](../../docs/user/installation.md) — 每个环境只装一个 backend；extras 互斥
+- [docs/user/benchmark_design.md](../../docs/user/benchmark_design.md)、[docs/user/metrics.md](../../docs/user/metrics.md)
 
 ## 这是什么（以及不是什么）
 

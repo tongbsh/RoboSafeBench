@@ -2,7 +2,7 @@
 # Debug VLA eval 矩阵 — 等 serve ready 后按 suite × task × level 循环 dynisafety eval。
 #
 # 改编自 artifacts/feasibility/pi05_base_full_alignv2/launch_eval.sh
-# 与 scripts/feasibility/run_pi05_base_full_eval.sh。
+# 与 scripts/extra/feasibility/run_pi05_base_full_eval.sh。
 #
 # 已接通: libero / robotwin / simplerenv。
 # 论文 X-VLA：RoboTwin / SimplerEnv 用 --model xvla_official（不要用 xvla）。
@@ -15,7 +15,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 # shellcheck disable=SC1091
-source "$ROOT/scripts/run/00_env.sh"
+source "$ROOT/scripts/lib/env.sh"
 cd "$ROOT"
 
 BACKEND="libero"

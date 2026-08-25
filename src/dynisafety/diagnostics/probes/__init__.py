@@ -2,7 +2,7 @@
 
 ``make_probe`` returns a backend adapter that normalizes a controller snapshot
 onto the frozen ``DisturbanceState`` contract
-(``docs/behavior_diagnostics.md`` §4.4).
+(``docs/user/behavior_diagnostics.md`` §4.4).
 
 Call ``make_probe`` **once per episode**. The probe latches the first
 non-``None`` onset and the first ``CLEARED`` hazard-end on that instance;

@@ -11,7 +11,7 @@ in this image.
 | Backend | `libero` |
 | Base image | `pytorch/pytorch:2.4.1-cuda12.4-cudnn9-runtime` (matches `requirements/README.md` cu124 row) |
 | Conda env twin | `environment/dynisafety-libero.yml` (`name: dynisafety-libero`) |
-| Host install twin | `make install-libero` → `scripts/install/install_backend.sh libero` |
+| Host install twin | `make install-libero` → `scripts/setup/install_backend.sh libero` |
 
 SimplerEnv / RoboTwin / RoboCasa images are **not** shipped in this PR; use the matching
 conda yml + `make install-*` on bare metal, or add sibling Dockerfiles later (M11).
@@ -70,7 +70,7 @@ docker run --rm --gpus all -it \
 Inside the container, complete install if the tree is not mounted yet:
 
 ```bash
-bash scripts/install/install_backend.sh libero --skip-pip   # tree + patches; pip already done in image
+bash scripts/setup/install_backend.sh libero --skip-pip   # tree + patches; pip already done in image
 dynisafety doctor --backend libero
 ```
 

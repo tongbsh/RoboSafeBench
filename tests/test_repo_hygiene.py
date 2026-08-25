@@ -397,8 +397,8 @@ def test_scripts_no_per_model_eval_shell() -> None:
         # per-model paper eval entrypoints (H20 targets leftover one-off shells).
         if rel.startswith((
             "scripts/debug/",
-            "scripts/run/",
-            "scripts/feasibility/",
+            "scripts/eval/",
+            "scripts/extra/",
         )) or name == "debug_eval.sh":
             continue
         if _EVAL_SHELL_NAME_RE.search(name) or _EVAL_SHELL_NAME_RE.search(rel):

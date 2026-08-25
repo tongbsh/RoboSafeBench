@@ -66,6 +66,7 @@ def _minimal_extra_robotwin() -> dict:
         "collision_force_control_freq_hz": 20.0,
         "task_config": "demo_clean",
         "expert_check": True,
+        "expert_check_cache": True,
         "expert_check_max_attempts": 200,
         "expert_check_timeout_s": 900.0,
         "expert_check_log_every": 10,

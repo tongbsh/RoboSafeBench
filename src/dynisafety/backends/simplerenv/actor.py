@@ -41,6 +41,17 @@ def current_obstacle_model(
     return str(fallback_model)
 
 
+def require_obstacle_collision_file(model_dir: Path) -> Path:
+    """Return ``collision.obj`` or fail. A missing mesh must not become a 3 cm box."""
+    collision_file = Path(model_dir) / "collision.obj"
+    if not collision_file.exists():
+        raise FileNotFoundError(
+            f"obstacle collision mesh missing: {collision_file}; "
+            "refusing box fallback (would change CR/force)"
+        )
+    return collision_file
+
+
 def compute_obstacle_quat(yaw: float) -> np.ndarray:
     """Orient object-model obstacles upright, then spin in-plane by yaw (wxyz).
 
@@ -100,7 +111,7 @@ def build_dynamic_actor(
         if not model_name:
             raise ValueError("model_name required for obstacle actors")
         model_dir = Path(models_dir) / model_name
-        collision_file = model_dir / "collision.obj"
+        collision_file = require_obstacle_collision_file(model_dir)
         visual_file = model_dir / "textured.dae"
         if not visual_file.exists():
             visual_file = model_dir / "textured.obj"
@@ -111,14 +122,7 @@ def build_dynamic_actor(
         if not kinematic:
             col_kwargs["density"] = float(density)
 
-        if collision_file.exists():
-            builder.add_multiple_collisions_from_file(filename=str(collision_file), **col_kwargs)
-        else:
-            half = np.array([0.03, 0.03, 0.06], dtype=np.float64) * float(scale)
-            builder.add_box_collision(
-                half_size=half,
-                **({"density": float(density)} if not kinematic else {}),
-            )
+        builder.add_multiple_collisions_from_file(filename=str(collision_file), **col_kwargs)
 
         if visual_file.exists():
             builder.add_visual_from_file(filename=str(visual_file), scale=[float(scale)] * 3)

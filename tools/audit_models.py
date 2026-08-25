@@ -123,7 +123,7 @@ def main() -> int:
 
     print(f"\n{missing} path(s) MISSING or UNRESOLVED out of {len(rows)} checked")
     if missing:
-        print("Fix: python scripts/install/download_assets.py --list   (or export the env var)")
+        print("Fix: python scripts/setup/download_assets.py --list   (or export the env var)")
     return 1 if missing else 0
 
 

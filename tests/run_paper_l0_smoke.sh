@@ -18,8 +18,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=../scripts/run/00_env.sh
-source "${SCRIPT_DIR}/../scripts/run/00_env.sh"
+# shellcheck source=../scripts/lib/env.sh
+source "${SCRIPT_DIR}/../scripts/lib/env.sh"
 
 SUITE_YAML="${SCRIPT_DIR}/paper_l0_smoke.yaml"
 [[ -f "$SUITE_YAML" ]] || die "missing suite: $SUITE_YAML"

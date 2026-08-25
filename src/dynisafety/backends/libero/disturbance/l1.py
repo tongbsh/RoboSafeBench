@@ -13,6 +13,7 @@ from dynisafety.backends.libero.disturbance._support import (
     _compute_body_to_bottom_offset,
     _scene_persistent_support_z,
     detect_visible_obstacles,
+    object_subtree_geom_ids,
     relocate_obstacle_clear_of_task_objects,
 )
 from dynisafety.backends.libero.env import LiberoEnvHandle
@@ -232,12 +233,7 @@ class SuddenDropController:
         self.target_quat = np.asarray(target_quat, dtype=np.float64).copy()
         self._trigger_dist = self._trigger_dist_cfg + self._trigger_dist_bias
         self._eef_site_id = self.inner_env.robots[0].eef_site_id
-        self.obstacle_geom_ids = set()
-        model = self.inner_env.sim.model
-        for gid in range(model.ngeom):
-            bid = model.geom_bodyid[gid]
-            if bid == self._body_id or model.body_parentid[bid] == self._body_id:
-                self.obstacle_geom_ids.add(gid)
+        self.obstacle_geom_ids = object_subtree_geom_ids(self.inner_env.sim, self._body_id)
         new_xy, pedestal, notes = relocate_obstacle_clear_of_task_objects(
             self.handle,
             obstacle_name,

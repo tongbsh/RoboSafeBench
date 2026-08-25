@@ -13,6 +13,6 @@ dependencies:
 #   conda activate dynisafety-simplerenv
 #   pip install torch==2.3.1 --index-url https://download.pytorch.org/whl/cu118   # see requirements/README.md
 #   pip install -e ".[simplerenv]"
-#   scripts/install/install_simplerenv.sh && scripts/install/apply_patches.sh simplerenv
+#   scripts/setup/install_simplerenv.sh && scripts/setup/apply_patches.sh simplerenv
 #   pip install -e third_party/SimplerEnv-OpenVLA/ManiSkill2_real2sim
 #   pip install -e third_party/SimplerEnv-OpenVLA

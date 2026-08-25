@@ -30,7 +30,7 @@ metrics:
   force_anomaly_threshold_n: 25000.0
   impulse_anomaly_threshold_ns: 100.0
 
-# Behavior diagnostics (react / stop / avoid / recover). See docs/behavior_diagnostics.md.
+# Behavior diagnostics (react / stop / avoid / recover). See docs/user/behavior_diagnostics.md.
 # All speed thresholds are RELATIVE to each episode's own pre-onset baseline mean
 # speed (mu_pre), with an absolute floor; absolute-only thresholds do not hold
 # across simulators.

@@ -1,0 +1,75 @@
+# Temporary stem for the parallel-eval verification period (plan 0.12).
+# Self-contained: YAML layering loads one model file. Do not edit xvla_official.yaml.
+# After P0, robotwin per_backend folds back into xvla_official (out of this plan).
+name: xvla_official_parallel
+transport: http
+adapter: dynisafety.policies.adapters.xvla:XVLAAdapter
+action_space: abs_ee_7d
+chunk_size: 30
+observation:
+  images: [primary, left, right]
+  needs_state: true
+server:
+  env: XVLA
+  root: "${env:XVLA_ROOT|${workspace}/external/model_repos/X-VLA}"
+  launch: deploy.py
+  default_port: 8010
+  health_path: /openapi.json
+  startup_timeout_s: 600
+  args: ["--model_path", "{checkpoint}", "--port", "{port}"]
+checkpoint:
+  default: "${env:XVLA_OFFICIAL_CKPT|${workspace}/external/checkpoints/xVLA/X-VLA-RoboTwin2}"
+  per_suite:
+    main20: "${workspace}/external/checkpoints/xVLA/X-VLA-RoboTwin2"
+    bridge: "${workspace}/external/checkpoints/xVLA/xvla-simpler-widowx"
+resources:
+  max_jobs_per_gpu: 2
+backends: [robotwin, simplerenv]
+extra:
+  variant: official
+  domain_id: 6
+  denoising_steps: 10
+  gripper_threshold: 0.7
+  act_timeout_s: 60
+  reset_path: /reset
+  act_path: /act
+  server_host: 127.0.0.1
+  needs_server: false
+  eval_env: internvla_a1
+  serve_env: XVLA
+  parallel_eval:
+    enabled: false
+    num_envs: 2
+    pipeline_stage_num: 1
+    batch_window_ms: 15
+    infer_conda_env: XVLA
+    env_conda_env: internvla_a1
+    infer_device: cuda:0
+    env_cuda_visible_devices: "0"
+    channel_host: 127.0.0.1
+    channel_port: 18765
+    channel_timeout_s: 120
+    torch_dtype: float32
+    deterministic_rng: false
+    rng_seed: 0
+per_backend:
+  robotwin:
+    action_space: abs_ee_16d
+    extra:
+      domain_id: 6
+      gripper_threshold: 0.7
+      eval_env: internvla_a1
+  simplerenv:
+    action_space: delta_ee_7d
+    observation:
+      images: [primary]
+      needs_state: true
+    extra:
+      domain_id: 0
+      gripper_threshold: 0.95
+      gripper_threshold_by_task:
+        bridge_carrot: 0.95
+        bridge_stack: 0.91
+        bridge_spoon: 0.7
+        bridge_eggplant: 0.8
+      eval_env: simpler_env

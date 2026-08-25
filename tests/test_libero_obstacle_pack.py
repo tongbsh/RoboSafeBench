@@ -5,9 +5,11 @@ from __future__ import annotations
 from collections import Counter
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from dynisafety.backends.libero.obstacle_pack import (
+    align_carrier_quat,
     default_pack_root,
     parse_obstacle_pack,
     plan_for_task,
@@ -121,6 +123,19 @@ def test_rewrite_only_remeshed_obstacle_objects_paths(tmp_path: Path) -> None:
     assert rewrite_obstacle_xml_path(wine, pack) == wine
     assert rewrite_obstacle_xml_path(other, pack) == other
     assert rewrite_obstacle_xml_path(stock, None) == stock
+
+
+def test_align_carrier_quat_stands_y_up_milk_on_z_up_official() -> None:
+    identity = np.array([1.0, 0.0, 0.0, 0.0])
+    same = align_carrier_quat(
+        "wine_bottle_obstacle_1", "moka_pot_obstacle_1", identity
+    )
+    assert same == pytest.approx(identity)
+    q = align_carrier_quat(
+        "yellow_book_obstacle_1", "milk_obstacle_1", identity
+    )
+    # +90° about X: milk +Y → book +Z
+    assert q == pytest.approx(np.array([0.70710678, 0.70710678, 0.0, 0.0]), abs=1e-5)
 
 
 def test_similar_standing_window_is_symmetric() -> None:

@@ -154,7 +154,8 @@ class OnlyFilter:
         for key, value in self.clauses:
             if key not in fields:
                 return False
-            if fields[key] != value:
+            allowed = {item for item in value.split("|") if item}
+            if not allowed or fields[key] not in allowed:
                 return False
         return True
 
@@ -599,6 +600,22 @@ def _resolve_max_jobs_per_gpu(
         raw_extra = data.get("extra")
         extra = raw_extra if isinstance(raw_extra, Mapping) else {}
     return extra.get("max_jobs_per_gpu")
+
+
+def servers_per_gpu_count(max_jobs_per_gpu: int) -> int:
+    """How many serve processes to start on each GPU.
+
+    Default 1: all eval slots on that GPU share one loaded model.
+    ``DYNI_SERVERS_PER_GPU`` may raise this up to ``max_jobs_per_gpu`` so each
+    slot gets its own weights (needs enough VRAM).
+    """
+    raw = os.environ.get("DYNI_SERVERS_PER_GPU", "").strip()
+    if not raw:
+        return 1
+    value = int(raw)
+    if value < 1:
+        raise ValueError(f"DYNI_SERVERS_PER_GPU must be >= 1, got {value}")
+    return min(value, max_jobs_per_gpu)
 
 
 def effective_max_jobs_per_gpu(
@@ -1101,9 +1118,13 @@ class SweepScheduler:
                     print(f"[sweep] model {model}: {exc}")
                 else:
                     slots = len(self.cfg.gpu_ids) * eff if self.cfg.gpu_ids else 0
+                    n_serve = (
+                        servers_per_gpu_count(eff) if spec.needs_server else 0
+                    )
                     print(
                         f"[sweep] model {model}: max_jobs_per_gpu={eff} "
-                        f"needs_server={spec.needs_server} worker_slots={slots}"
+                        f"needs_server={spec.needs_server} worker_slots={slots} "
+                        f"servers_per_gpu={n_serve}"
                     )
         max_print = 40
         for i, job in enumerate(jobs):
@@ -1179,30 +1200,36 @@ class SweepScheduler:
             return len(jobs)
 
         failures = 0
-        # One server per unique GPU if needed.
-        server_by_gpu: dict[int, ServerHandle] = {}
+        started_servers: list[ServerHandle] = []
         try:
+            servers_by_gpu: dict[int, list[ServerHandle]] = {}
             if spec.needs_server:
+                n_serve = servers_per_gpu_count(max_jobs_per_gpu)
                 tag = f"{spec.name}-{spec.suite}" if spec.suite else spec.name
                 for gpu in sorted(set(slot_gpus)):
-                    port = allocate_port()
-                    log_path = self.cfg.sweep_dir / "servers" / tag / f"gpu{gpu}.log"
-                    handle = start_model_server(
-                        spec,
-                        gpu=gpu,
-                        port=port,
-                        log_path=log_path,
-                        health_timeout_s=self.cfg.health_timeout_s,
-                    )
-                    server_by_gpu[gpu] = handle
-                    self._servers.append(handle)
+                    handles: list[ServerHandle] = []
+                    for k in range(n_serve):
+                        port = allocate_port()
+                        suffix = f"gpu{gpu}" if n_serve == 1 else f"gpu{gpu}_s{k}"
+                        log_path = self.cfg.sweep_dir / "servers" / tag / f"{suffix}.log"
+                        handle = start_model_server(
+                            spec,
+                            gpu=gpu,
+                            port=port,
+                            log_path=log_path,
+                            health_timeout_s=self.cfg.health_timeout_s,
+                        )
+                        handles.append(handle)
+                        started_servers.append(handle)
+                        self._servers.append(handle)
+                    servers_by_gpu[gpu] = handles
 
             pending = list(jobs)
             while pending:
                 batch = pending[: len(slot_gpus)]
                 pending = pending[len(slot_gpus) :]
                 procs: list[tuple[JobSpec, subprocess.Popen[Any], Path]] = []
-                for job, gpu in zip(batch, slot_gpus):
+                for slot_i, (job, gpu) in enumerate(zip(batch, slot_gpus)):
                     log_path = (
                         self.cfg.sweep_dir
                         / "jobs"
@@ -1225,8 +1252,9 @@ class SweepScheduler:
                     )
                     _prefer_conda_env_libs(env, eval_env_name)
                     server_port: int | None = None
-                    if gpu in server_by_gpu:
-                        handle = server_by_gpu[gpu]
+                    if gpu in servers_by_gpu:
+                        handles = servers_by_gpu[gpu]
+                        handle = handles[slot_i % len(handles)]
                         env["HOST"] = _LOOPBACK_HOST
                         env["PORT"] = str(handle.port)
                         # Also inject via --set so ModelConfig.extra.server_port
@@ -1262,7 +1290,7 @@ class SweepScheduler:
                     else:
                         print(f"[done] {job.job_key}")
         finally:
-            for handle in list(server_by_gpu.values()):
+            for handle in started_servers:
                 stop_server(handle)
                 if handle in self._servers:
                     self._servers.remove(handle)

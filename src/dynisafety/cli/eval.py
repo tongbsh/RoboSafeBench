@@ -95,7 +95,7 @@ def build_eval_overrides(args: argparse.Namespace) -> tuple[str, ...]:
     """Map CLI flags → LoadRequest.overrides (no hardcoded fallback values).
 
     When ``HOST`` / ``PORT`` are present in the environment (set by
-    ``dynisafety sweep`` / ``scripts/run/20_serve.sh``), inject them as
+    ``dynisafety sweep`` / ``scripts/eval/serve.sh``), inject them as
     ``extra.server_host`` / ``extra.server_port`` unless the caller already
     passed those keys via ``--set``. This is the supported way for remote
     transports to learn the live listen port — adapters must not read
@@ -105,6 +105,9 @@ def build_eval_overrides(args: argparse.Namespace) -> tuple[str, ...]:
     ``output.save_video`` for debug sweeps that cannot pass ``--set`` through
     the scheduler; ignored when ``--no-video`` or an explicit
     ``output.save_video=...`` override is already present.
+
+    ``DYNI_DIVERSITY`` / ``DYNI_OBSTACLE_PACK`` likewise inject L2/L3 diversity
+    and the LIBERO GSO obstacle pack for debug sweeps (same reason).
     """
     items: list[str] = []
     if args.overrides:
@@ -123,15 +126,18 @@ def build_eval_overrides(args: argparse.Namespace) -> tuple[str, ...]:
         for raw in items
         if isinstance(raw, str) and "=" in raw
     }
+
+    def _add(key: str, value: str) -> None:
+        if key in override_keys:
+            return
+        items.append(f"{key}={value}")
+        override_keys.add(key)
+
     env_host = os.environ.get("HOST")
     env_port = os.environ.get("PORT")
-    if (
-        env_host
-        and env_host.strip()
-        and "extra.server_host" not in override_keys
-    ):
-        items.append(f"extra.server_host={env_host.strip()}")
-    if env_port and env_port.strip() and "extra.server_port" not in override_keys:
+    if env_host and env_host.strip():
+        _add("extra.server_host", env_host.strip())
+    if env_port and env_port.strip():
         try:
             port_i = int(env_port.strip())
         except ValueError as exc:
@@ -140,15 +146,35 @@ def build_eval_overrides(args: argparse.Namespace) -> tuple[str, ...]:
             ) from exc
         if port_i < 1 or port_i > 65535:
             raise ValueError(f"env PORT out of range: {port_i}")
-        items.append(f"extra.server_port={port_i}")
+        _add("extra.server_port", str(port_i))
     env_save_video = os.environ.get("DYNI_SAVE_VIDEO", "").strip().lower()
     if (
         env_save_video in {"1", "true", "yes", "on"}
-        and "output.save_video" not in override_keys
         and not args.no_video
     ):
-        items.append("output.save_video=true")
+        _add("output.save_video", "true")
+
+    backend = str(getattr(args, "backend", "") or "")
+    level = getattr(args, "level", None)
+    if _env_flag("DYNI_DIVERSITY"):
+        if backend == "libero":
+            _add("extra.libero.l2.spawn_diversity.enabled", "true")
+            _add("extra.libero.l3.reach_diversity.enabled", "true")
+        elif backend == "robotwin":
+            _add("extra.robotwin.l2.spawn_diversity.enabled", "true")
+            _add("extra.robotwin.l3.reach_diversity.enabled", "true")
+        elif backend == "simplerenv":
+            _add("extra.simplerenv.l2.spawn_diversity.enabled", "true")
+            _add("extra.simplerenv.l3.reach_diversity.enabled", "true")
+            if level == 2:
+                _add("disturbance.l2.align_start_y_to_eef", "false")
+    if _env_flag("DYNI_OBSTACLE_PACK") and backend == "libero":
+        _add("extra.libero.obstacle_pack.enabled", "true")
     return tuple(items)
+
+
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def ensure_registries_loaded() -> None:

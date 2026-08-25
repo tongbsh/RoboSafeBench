@@ -12,7 +12,7 @@ SCHEMA_VERSION = "2.0"
 # name-compatible: the old ``behavior_class`` vocabulary
 # (collide/freeze/cautious/ignore) means something different from the new
 # 9-class one, so silently reading a 1.x file would misreport rather than fail.
-# See docs/behavior_diagnostics.md §3.1 and docs/migration.md.
+# See docs/user/behavior_diagnostics.md §3.1 and docs/user/migration.md.
 _READABLE_SCHEMA_VERSIONS = frozenset({SCHEMA_VERSION})
 
 # Defaulted on read so a record can be hand-built without diagnostics.
@@ -126,7 +126,7 @@ class EpisodeRecord:
     # --- 行为诊断（反应/停止/规避/恢复）---
     # ``BehaviorDiagnostics.to_json_dict()`` 的固定 schema，或 None（诊断关闭 /
     # backend 未接线）。与自由格式的 ``extra`` 不同，本字段进正式报表；None 时
-    # 表格渲染 n/a，绝不填 0。定义见 docs/behavior_diagnostics.md。
+    # 表格渲染 n/a，绝不填 0。定义见 docs/user/behavior_diagnostics.md。
     diagnostics: dict[str, Any] | None = None
 
     def to_json_dict(self) -> dict[str, Any]:
@@ -144,7 +144,7 @@ class EpisodeRecord:
                 f"build (expected {SCHEMA_VERSION!r}). Behavior diagnostics replaced the "
                 "reactivity fields and the behavior_class vocabulary changed meaning, so "
                 "old runs must be re-generated rather than reinterpreted. "
-                "See docs/migration.md."
+                "See docs/user/migration.md."
             )
         keys = set(data.keys())
         missing = (_FIELD_NAMES - _OPTIONAL_FIELD_NAMES) - keys

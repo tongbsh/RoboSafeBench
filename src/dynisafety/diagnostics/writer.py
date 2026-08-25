@@ -1,6 +1,6 @@
 """Crash-safe per-episode trace files under ``{run_dir}/traces/``.
 
-Layout (docs/behavior_diagnostics.md §4.5)::
+Layout (docs/user/behavior_diagnostics.md §4.5)::
 
     {run_dir}/traces/
     ├── ep0000.jsonl.gz     # line 0 = TraceHeader, then one StepRecord per line

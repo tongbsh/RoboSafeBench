@@ -16,8 +16,8 @@ deployment-grade physical safety certification. Absolute contact-force values
 must **not** be compared across simulators or scenes (`force_source` differs;
 kitchen-floor contacts are not tabletop newtons). Step clocks (`max_steps`,
 `move_*_step`) must **not** be compared across backends. See
-[docs/metrics.md](docs/metrics.md) and
-[docs/benchmark_design.md](docs/benchmark_design.md).
+[docs/user/metrics.md](docs/user/metrics.md) and
+[docs/user/benchmark_design.md](docs/user/benchmark_design.md).
 
 > **Anonymous submission.** Author names and affiliations are withheld
 > (`TODO` in the citation block). Do not treat placeholder metadata as final.
@@ -34,10 +34,10 @@ available._
 
 ## Quick Start (5-minute smoke)
 
-Install one backend first ([docs/installation.md](docs/installation.md)), e.g.:
+Install one backend first ([docs/user/installation.md](docs/user/installation.md)), e.g.:
 
 ```bash
-make install-libero          # or: scripts/install/install_backend.sh libero
+make install-libero          # or: scripts/setup/install_backend.sh libero
 pip install -e ".[libero]"   # extras are mutually exclusive
 dynisafety doctor --backend libero
 ```
@@ -100,8 +100,8 @@ dynisafety config print --backend libero --level 0 --model random --suite safeli
 
 Aggregate only from JSONL (never from text-log regex). Full flag set is required
 (`--grid`, `--report-yaml`, `--metrics-yaml`, …) — see `dynisafety report
-generate --help` and [docs/metrics.md](docs/metrics.md); paper command sequence
-in [docs/reproducing_paper.md](docs/reproducing_paper.md).
+generate --help` and [docs/user/metrics.md](docs/user/metrics.md); paper command sequence
+in [docs/user/reproducing_paper.md](docs/user/reproducing_paper.md).
 
 ---
 
@@ -116,12 +116,12 @@ in [docs/reproducing_paper.md](docs/reproducing_paper.md).
 
 Geometry, triggers, and physical parameters are defined in YAML under
 `configs/backends/<backend>/levels/` (defaults live only there). Narrative and
-comparability notes: [docs/benchmark_design.md](docs/benchmark_design.md).
+comparability notes: [docs/user/benchmark_design.md](docs/user/benchmark_design.md).
 
 The L1–L3 **display names above are for tabletop backends** (LIBERO / SimplerEnv
 / RoboTwin). RoboCasa uses a **parallel floor-nav ladder** (Frontal Sudden Appear
 / Base-Directed Approach / Approaching Human) — see the RoboCasa section in
-[docs/benchmark_design.md](docs/benchmark_design.md). Do not treat RoboCasa L1–L3
+[docs/user/benchmark_design.md](docs/user/benchmark_design.md). Do not treat RoboCasa L1–L3
 as tabletop drop / arc-transit / shared reaching.
 
 **SimplerEnv step budget:** all models use `runtime.max_steps: 120` on the
@@ -149,8 +149,8 @@ Episode fields are written as machine-readable `EpisodeRecord` lines in
 | SASR | `sasr` | Safety-adjusted success (`success * φ` from YAML) | Comparable as a rate |
 
 Full definitions, injury bins, and report artifacts:
-[docs/metrics.md](docs/metrics.md). Contracts:
-[docs/contracts.md](docs/contracts.md).
+[docs/user/metrics.md](docs/user/metrics.md). Contracts:
+[docs/user/contracts.md](docs/user/contracts.md).
 
 ---
 
@@ -172,7 +172,7 @@ multi-destination). Smoke model: `random_mobile` (`hybrid_mobile_12d`).
 Additional registered stems (smoke / servers / extras) include `random`,
 `random_mobile`, `openvla`, `gr00t`, `dreamvla`, `octo-*`, `spatialvla*`,
 and others under `configs/models/`. How to add a model:
-[docs/adding_a_model.md](docs/adding_a_model.md).
+[docs/user/adding_a_model.md](docs/user/adding_a_model.md).
 
 ---
 
@@ -182,13 +182,13 @@ One backend per environment. Preferred entrypoints:
 
 ```bash
 make install-libero        # or install-simplerenv / install-robotwin / install-robocasa
-# equivalent: scripts/install/install_backend.sh libero|simplerenv|robotwin|robocasa
+# equivalent: scripts/setup/install_backend.sh libero|simplerenv|robotwin|robocasa
 ```
 
 Full guide (conda, extras mutex, patches, MANO, Docker, troubleshooting):
-**[docs/installation.md](docs/installation.md)**.
+**[docs/user/installation.md](docs/user/installation.md)**.
 
-Pins and licenses: [docs/third_party.md](docs/third_party.md),
+Pins and licenses: [docs/user/third_party.md](docs/user/third_party.md),
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ---
@@ -196,7 +196,7 @@ Pins and licenses: [docs/third_party.md](docs/third_party.md),
 ## Reproducing the paper
 
 End-to-end command sequence, job counts, and report mapping:
-[docs/reproducing_paper.md](docs/reproducing_paper.md)
+[docs/user/reproducing_paper.md](docs/user/reproducing_paper.md)
 (hardware / wall-clock marked TBD until filled).
 
 Sweep entry:
@@ -211,7 +211,7 @@ dynisafety sweep --suite paper_main --gpus 0,1,2,3
 ## Adding a model
 
 One adapter + one YAML — no new shell user entrypoints:
-[docs/adding_a_model.md](docs/adding_a_model.md).
+[docs/user/adding_a_model.md](docs/user/adding_a_model.md).
 Runnable out-of-tree walkthrough: [examples/example_agent/README.md](examples/example_agent/README.md).
 
 ---
@@ -230,7 +230,7 @@ for anonymous review). BibTeX placeholder (do not invent names):
 }
 ```
 
-Optional result-submission format: [docs/leaderboard.md](docs/leaderboard.md).
+Optional result-submission format: [docs/user/leaderboard.md](docs/user/leaderboard.md).
 
 ---
 
@@ -249,9 +249,11 @@ models are **not** redistributed (obtain them yourself). See
 .
 ├── src/dynisafety/          # Package: core, backends, policies, CLI
 ├── configs/                 # Sole source of hyperparameter defaults (YAML)
-├── docs/                    # User + design docs
+├── docs/
+│   ├── user/                # Open-source user docs
+│   └── paper/               # Paper/benchmark construction (not shipped)
 ├── examples/example_agent/  # Runnable out-of-tree agent integration walkthrough
-├── scripts/                 # Install / patch / asset helpers (not eval entrypoints)
+├── scripts/                 # setup / eval / debug / extra
 ├── environment/             # conda env ymls (one backend each)
 ├── requirements/            # Mutually exclusive backend pins
 ├── third_party/             # Simulators (submodules / install trees)
@@ -260,6 +262,6 @@ models are **not** redistributed (obtain them yourself). See
 └── LICENSE
 ```
 
-Old shell entrypoints and layouts: [docs/migration.md](docs/migration.md).
-Download checkpoints with `scripts/install/download_assets.py` (not hard-coded machine
+Old shell entrypoints and layouts: [docs/user/migration.md](docs/user/migration.md).
+Download checkpoints with `scripts/setup/download_assets.py` (not hard-coded machine
 paths).

@@ -421,7 +421,7 @@ def test_hazard_persists_survives_not_triggered_episodes() -> None:
     ``not_triggered`` episodes carry ``hazard_persists=None``. Treating that as
     a third distinct value made an otherwise-uniform L1 group look mixed, which
     silently removed the very column that keeps L1/L2 Recovery from being pooled
-    with L3 (docs/behavior_diagnostics.md §1.1).
+    with L3 (docs/user/behavior_diagnostics.md §1.1).
     """
     eps = [
         _ep(episode_index=0, level=1, diagnostics=_diag(hazard_persists=True)),

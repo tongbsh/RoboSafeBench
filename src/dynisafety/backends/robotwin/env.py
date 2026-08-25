@@ -16,6 +16,12 @@ import imageio
 import numpy as np
 import yaml
 
+from dynisafety.backends.robotwin.expert_cache import (
+    cache_key,
+    exclusive_key_lock,
+    load_entry,
+    store_entry,
+)
 from dynisafety.config.schema import RunConfig
 from dynisafety.core.protocols import TaskSpec
 from dynisafety.policies.base import Observation
@@ -219,6 +225,13 @@ def _import_unstable_error() -> type[BaseException]:
         return Exception
 
 
+@dataclass(frozen=True)
+class ExpertCheckOutcome:
+    accepted_seed: int
+    episode_info: dict[str, Any]
+    cache_hit: bool
+
+
 def expert_check_setup(
     handle: RoboTwinEnvHandle,
     *,
@@ -228,15 +241,104 @@ def expert_check_setup(
     max_attempts: int,
     timeout_s: float,
     log_every: int,
-) -> tuple[int, dict[str, Any]]:
-    """Run expert-check for one accepted episode seed."""
-    if not enabled:
-        return int(seed), {}
+    cache_dir: Path | None = None,
+) -> ExpertCheckOutcome:
+    """Run expert-check for one accepted episode seed.
 
+    When ``cache_dir`` is set, a hit skips ``setup_demo`` / ``play_once`` /
+    ``close_env``. The caller still ``setup_demo``s the accepted seed for the
+    real policy episode.
+    """
+    if not enabled:
+        return ExpertCheckOutcome(int(seed), {}, False)
+
+    task_name = handle.task.task_name
+    start_seed = int(seed)
+
+    if cache_dir is None:
+        return _expert_check_search(
+            handle,
+            start_seed=start_seed,
+            episode_index=episode_index,
+            max_attempts=max_attempts,
+            timeout_s=timeout_s,
+            log_every=log_every,
+        )
+
+    task_config = handle.task_args.get("task_config")
+    if not isinstance(task_config, str) or not task_config.strip():
+        raise ValueError("handle.task_args.task_config required for expert-check cache")
+
+    key = cache_key(
+        task_name=task_name,
+        task_config=task_config,
+        start_seed=start_seed,
+        episode_index=int(episode_index),
+    )
+    with exclusive_key_lock(cache_dir, key):
+        cached = load_entry(cache_dir, key)
+        if cached is not None:
+            if cached.accepted_seed < start_seed:
+                logger.warning(
+                    "Expert-check cache ignored | task=%s start=%s accepted=%s (accepted < start)",
+                    task_name,
+                    start_seed,
+                    cached.accepted_seed,
+                )
+            else:
+                logger.info(
+                    "Expert-check cache hit | task=%s start=%s accepted=%s episode=%s",
+                    task_name,
+                    start_seed,
+                    cached.accepted_seed,
+                    episode_index,
+                )
+                handle.episode_info = dict(cached.episode_info)
+                return ExpertCheckOutcome(
+                    cached.accepted_seed, dict(cached.episode_info), True
+                )
+        outcome = _expert_check_search(
+            handle,
+            start_seed=start_seed,
+            episode_index=episode_index,
+            max_attempts=max_attempts,
+            timeout_s=timeout_s,
+            log_every=log_every,
+        )
+        try:
+            store_entry(
+                cache_dir,
+                key,
+                accepted_seed=outcome.accepted_seed,
+                episode_info=outcome.episode_info,
+                task_name=task_name,
+                task_config=task_config,
+                start_seed=start_seed,
+                episode_index=int(episode_index),
+            )
+        except OSError as exc:
+            logger.warning(
+                "Expert-check cache store failed | task=%s key=%s err=%s",
+                task_name,
+                key,
+                exc,
+            )
+        return outcome
+
+
+def _expert_check_search(
+    handle: RoboTwinEnvHandle,
+    *,
+    start_seed: int,
+    episode_index: int,
+    max_attempts: int,
+    timeout_s: float,
+    log_every: int,
+) -> ExpertCheckOutcome:
     unstable_err = _import_unstable_error()
     task_env = handle.task_env
     task_name = handle.task.task_name
-    now_seed = int(seed)
+    now_seed = int(start_seed)
     attempts = 0
     start_ts = time.time()
 
@@ -302,7 +404,7 @@ def expert_check_setup(
                 else:
                     info_payload = dict(episode_info)
             handle.episode_info = info_payload
-            return now_seed, info_payload
+            return ExpertCheckOutcome(now_seed, info_payload, False)
 
         logger.warning(
             "Expert-check rejected seed=%s for task=%s because plan_success=%s check_success=%s",
@@ -355,9 +457,13 @@ def build_observation(
     instruction: str,
     step: int,
     needs_state: bool,
+    raw_obs: Mapping[str, Any] | None = None,
 ) -> Observation:
-    raw_obs = handle.task_env.get_obs()
-    observation = raw_obs.get("observation")
+    """Pack a policy ``Observation``. Reuse ``raw_obs`` when the caller already
+    fetched it — ``get_obs()`` re-renders the three cameras.
+    """
+    payload = handle.task_env.get_obs() if raw_obs is None else raw_obs
+    observation = payload.get("observation")
     if not isinstance(observation, Mapping):
         raise ValueError("observation missing from RoboTwin get_obs() payload")
 
@@ -372,7 +478,7 @@ def build_observation(
     state: np.ndarray | None = None
     extra: dict[str, Any] = {}
     # Dual-arm EE proprio for official X-VLA (and similar); other adapters ignore.
-    endpose = raw_obs.get("endpose")
+    endpose = payload.get("endpose")
     if isinstance(endpose, Mapping):
         extra["endpose"] = {
             "left_endpose": np.asarray(endpose["left_endpose"], dtype=np.float64),
@@ -382,7 +488,7 @@ def build_observation(
         }
     if needs_state:
         # joint_action is a top-level key on get_obs(), not under observation{}
-        joint_action = raw_obs.get("joint_action")
+        joint_action = payload.get("joint_action")
         if isinstance(joint_action, Mapping) and "vector" in joint_action:
             state = np.asarray(joint_action["vector"], dtype=np.float64)
         else:
@@ -414,6 +520,7 @@ def apply_ee_action(handle: RoboTwinEnvHandle, action: np.ndarray) -> None:
 
 
 __all__ = [
+    "ExpertCheckOutcome",
     "RoboTwinEnvHandle",
     "apply_ee_action",
     "apply_qpos_action",

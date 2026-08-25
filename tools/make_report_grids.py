@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Generate coverage grids for ``dynisafety report`` from a sweep suite.
 
-``report generate --grid`` needs an explicit expected (model × task × level ×
-seed × n_episodes) grid. Deriving it from the sweep suite keeps a single source
-of truth: the same YAML that drives the runs also defines what "complete" means.
+``report generate --grid`` needs an explicit expected (backend × suite × model ×
+task × level × seed × n_episodes) grid. Deriving it from the sweep suite keeps a
+single source of truth: the same YAML that drives the runs also defines what
+"complete" means. ``backend`` / ``suite`` let one ``results/`` tree feed every
+paper grid without mixing suites.
 
 Writes one grid per suite matrix entry, since backends differ in tasks, models
 and episode counts.
@@ -83,6 +85,8 @@ def main() -> int:
                 tasks = all_tasks
 
             grid = {
+                "backend": backend,
+                "suite": suite,
                 "models": models,
                 "tasks": tasks,
                 "levels": levels,

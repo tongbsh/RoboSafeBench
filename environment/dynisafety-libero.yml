@@ -13,4 +13,4 @@ dependencies:
 #   conda activate dynisafety-libero
 #   pip install torch==2.4.1 --index-url https://download.pytorch.org/whl/cu124   # see requirements/README.md
 #   pip install -e ".[libero]"
-#   scripts/install/install_libero.sh && scripts/install/apply_patches.sh libero
+#   scripts/setup/install_libero.sh && scripts/setup/apply_patches.sh libero

@@ -563,6 +563,9 @@ class SimplerEnvBackend:
             l3_plan = getattr(ctrl, "reach_plan", None)
         if isinstance(l3_plan, dict) and l3_plan:
             extra["l3_plan"] = dict(l3_plan)
+        if ctrl is not None and hasattr(ctrl, "home_inside"):
+            extra["l1_home_inside"] = bool(ctrl.home_inside)
+            extra["l1_home_onset"] = bool(getattr(ctrl, "home_onset", False))
         if builder_extra_err is not None:
             extra["error"] = builder_extra_err
 

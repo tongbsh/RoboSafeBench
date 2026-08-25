@@ -4,7 +4,7 @@
 #
 #   bash scripts/debug/libero/run_pi05_libero_spatial.sh
 #   bash scripts/debug/libero/run_pi05_libero_spatial.sh 1 --dry-run
-#   DYNI_SUITE=debug_pi05_libero_spatial bash scripts/run/30_sweep.sh --dry-run
+#   DYNI_SUITE=debug_pi05_libero_spatial bash scripts/eval/sweep.sh --dry-run
 name: debug_pi05_libero_spatial
 episodes_per_task: 10
 seeds: [7]

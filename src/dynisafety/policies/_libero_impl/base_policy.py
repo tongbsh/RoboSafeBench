@@ -19,7 +19,7 @@ class VLAPolicy(ABC):
     This is the legacy LIBERO-side interface, kept only for the two
     implementations still reached through ``dynisafety.policies.adapters``.
     New models must implement the ``Policy`` protocol in
-    ``dynisafety.policies.base`` instead — see ``docs/adding_a_model.md``.
+    ``dynisafety.policies.base`` instead — see ``docs/user/adding_a_model.md``.
     """
 
     @abstractmethod

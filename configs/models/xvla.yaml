@@ -28,8 +28,9 @@ checkpoint:
   # Paper LIBERO weight (not the parent xVLA/ directory).
   default: "${env:XVLA_CKPT|${workspace}/external/checkpoints/xVLA/xvla-libero-full}"
 resources:
-  # Single job: dual EGL/MuJoCo clients on one GPU hit "Cannot place all objects".
-  max_jobs_per_gpu: 1
+  # Dual eval clients share one serve (same as xvla_official). If MuJoCo
+  # reports "Cannot place all objects", drop back to 1.
+  max_jobs_per_gpu: 2
 backends: [libero]
 extra:
   variant: default

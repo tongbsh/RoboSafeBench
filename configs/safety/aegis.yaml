@@ -2,7 +2,7 @@
 # Plug-and-play safety constraint layer extracted from third_party/vlsa-aegis.
 # Iron law 1: all numeric / mode defaults live here (not in Python).
 # Default OFF: disabled path must be bit-identical to the nominal 7D action.
-# This layer does NOT modify VLA weights (see docs/experiment_upgrade/oracle_baseline_design.md).
+# This layer does NOT modify VLA weights (see docs/paper/experiment_upgrade/oracle_baseline_design.md).
 
 aegis:
   # Master switch. When false, filter() returns nominal unchanged (bit-identical).

@@ -18,6 +18,6 @@ Meshes are Google Scanned Objects via
 Regenerate meshes:
 
 ```
-python scripts/libero/materialize_obstacle_pack_gso.py \
+python scripts/extra/libero/materialize_obstacle_pack_gso.py \
   --gso-root /tmp/gso_full/mujoco_scanned_objects
 ```

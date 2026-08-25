@@ -14,7 +14,7 @@ dependencies:
 # After create:
 #   conda activate dynisafety-robocasa
 #   export MUJOCO_GL=egl
-#   scripts/install/install_backend.sh robocasa
+#   scripts/setup/install_backend.sh robocasa
 # DyniSafety pip step is: pip install -e . --no-deps && pip install -r requirements/robocasa.txt
 # Do NOT: pip install -e .   (would pull numpy<2 from pyproject.toml)
 # Do NOT install into dynisafety-libero / simplerenv / robotwin.

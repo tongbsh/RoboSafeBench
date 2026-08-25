@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+import yaml
 
 from dynisafety.cli.report import (
     load_joint_report_settings,
@@ -25,6 +26,7 @@ from dynisafety.report.tables import (
     table_joint_outcomes,
     table_sr_ssr_cr,
 )
+from test_aggregate import _ep, _write_jsonl
 
 
 def _four_quadrant_runs() -> pd.DataFrame:
@@ -221,6 +223,7 @@ def test_cli_report_joint_from_runs(tmp_path: Path) -> None:
             "metrics_yaml": None,
             "oracle_runs": None,
             "no_plots": False,
+            "grid": None,
         },
     )()
     rc = run_report_joint(ns)
@@ -236,6 +239,99 @@ def test_cli_report_joint_from_runs(tmp_path: Path) -> None:
     ora = (out / "table_base_vs_oracle.md").read_text(encoding="utf-8")
     assert UNAVAILABLE in ora
     assert (out / "plots" / "joint_stack_by_model.png").exists()
+
+
+def test_cli_report_joint_results_requires_grid(tmp_path: Path) -> None:
+    joint_yaml = Path(__file__).resolve().parents[1] / "configs" / "report" / "joint_outcomes.yaml"
+    ns = type(
+        "Args",
+        (),
+        {
+            "runs": None,
+            "results": tmp_path / "results",
+            "out": tmp_path / "out",
+            "joint_yaml": joint_yaml,
+            "report_yaml": Path(__file__).resolve().parents[1]
+            / "configs"
+            / "report"
+            / "report_settings.yaml",
+            "metrics_yaml": Path(__file__).resolve().parents[1] / "configs" / "base.yaml",
+            "oracle_runs": None,
+            "no_plots": True,
+            "grid": None,
+        },
+    )()
+    (tmp_path / "results").mkdir()
+    assert run_report_joint(ns) == 2
+
+
+def test_cli_report_joint_results_slices_grid(tmp_path: Path) -> None:
+    spatial = [
+        _ep(
+            backend="libero",
+            suite="safelibero_spatial",
+            model="starvla",
+            task_id=0,
+            episode_index=i,
+            success=True,
+            contact_steps=0,
+        )
+        for i in range(2)
+    ]
+    twin = [
+        _ep(
+            backend="robotwin",
+            suite="main20",
+            model="starvla",
+            task_id=0,
+            episode_index=i,
+            success=False,
+            contact_steps=3,
+        )
+        for i in range(2)
+    ]
+    _write_jsonl(tmp_path / "results" / "l3" / "libero-run" / "episodes.jsonl", spatial)
+    _write_jsonl(tmp_path / "results" / "l3" / "twin-run" / "episodes.jsonl", twin)
+    grid = tmp_path / "libero_safelibero_spatial.yaml"
+    grid.write_text(
+        yaml.safe_dump(
+            {
+                "backend": "libero",
+                "suite": "safelibero_spatial",
+                "models": ["starvla"],
+                "tasks": [{"task_id": 0, "task_name": "t0"}],
+                "levels": [3],
+                "seeds": [0],
+                "n_episodes": 2,
+            }
+        ),
+        encoding="utf-8",
+    )
+    joint_yaml = Path(__file__).resolve().parents[1] / "configs" / "report" / "joint_outcomes.yaml"
+    out = tmp_path / "out"
+    ns = type(
+        "Args",
+        (),
+        {
+            "runs": None,
+            "results": tmp_path / "results",
+            "out": out,
+            "joint_yaml": joint_yaml,
+            "report_yaml": Path(__file__).resolve().parents[1]
+            / "configs"
+            / "report"
+            / "report_settings.yaml",
+            "metrics_yaml": Path(__file__).resolve().parents[1] / "configs" / "base.yaml",
+            "oracle_runs": None,
+            "no_plots": True,
+            "grid": grid,
+        },
+    )()
+    assert run_report_joint(ns) == 0
+    runs = pd.read_csv(out / "runs.csv")
+    assert set(runs["backend"]) == {"libero"}
+    assert set(runs["suite"]) == {"safelibero_spatial"}
+    assert int(runs["n_episodes"].sum()) == 2
 
 
 def test_load_joint_report_settings() -> None:

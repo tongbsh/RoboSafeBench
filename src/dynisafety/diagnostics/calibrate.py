@@ -32,7 +32,7 @@ from dynisafety.diagnostics.analyze import analyze_trace, compute_speeds
 from dynisafety.diagnostics.reader import iter_traces
 from dynisafety.diagnostics.schema import BehaviorClass, BehaviorDiagnostics, Trace, TraceHeader
 
-# Knobs scanned at ±50% (docs/behavior_diagnostics.md §8 / P5 plan).
+# Knobs scanned at ±50% (docs/user/behavior_diagnostics.md §8 / P5 plan).
 SENSITIVITY_KNOBS: tuple[str, ...] = (
     "reaction.sensitivity",
     "reaction.sigma_rel_floor",

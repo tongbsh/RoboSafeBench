@@ -94,6 +94,8 @@ disturbance:
 # Temporary open map until M1 expands DisturbanceL2/L3 / Hand schema (D6=A).
 extra:
   robotwin:
+    # Debug / DYNI_SAVE_VIDEO mp4 clock (capture default is also 30).
+    video_fps: 30
     hand_color: [0.78, 0.60, 0.48]
     hand_mesh_base_quat: [1.0, 0.0, 0.0, 0.0]
     hand_mesh_auto_orient: true
@@ -119,6 +121,8 @@ extra:
     debug_l3_spawn: false
     # Expert-check / prompt (live Args → future schema or keep here)
     expert_check: true
+    # Shared across level / model jobs: (task, task_config, start_seed, episode).
+    expert_check_cache: true
     expert_check_max_attempts: 200
     expert_check_timeout_s: 900.0
     expert_check_log_every: 10

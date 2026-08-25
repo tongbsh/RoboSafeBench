@@ -10,7 +10,7 @@ LIBERO / dyniSafety_libero, robosuite, RoboCasa, and MANO/SMPL+H. Nested license
 if you vendor or redistribute them.
 
 Operational pins, patches, and install commands:
-[`docs/third_party.md`](docs/third_party.md).
+[`docs/user/third_party.md`](docs/user/third_party.md).
 
 ---
 
@@ -111,7 +111,7 @@ SOFTWARE.
 ## 4. LIBERO / dyniSafety_libero (SafeLIBERO)
 
 - **Location (install):** `third_party/dyniSafety_libero` (created by
-  `scripts/install/install_libero.sh`; **not** a git submodule)
+  `scripts/setup/install_libero.sh`; **not** a git submodule)
 - **Upstream:** `https://github.com/Lifelong-Robot-Learning/LIBERO.git`
 - **Reference commit:** `8f1084e3132a39270c3a13ebe37270a43ece2a01`
 - **License file:** `LICENSE` in the installed / upstream tree
@@ -164,7 +164,7 @@ rebuild if you already hold MPI models.
   `<workspace>/assets/mano_v1_2/`. Print guidance with:
 
   ```bash
-  python scripts/install/download_assets.py --mano-notice
+  python scripts/setup/download_assets.py --mano-notice
   ```
 
 ### License grant (summary)
@@ -288,7 +288,7 @@ under CC BY 4.0 and are **not** committed to this repository.
 - **Location:** `src/dynisafety/backends/libero/assets/obstacle_pack_gso/`
 - **Upstream meshes:** [kevinzakka/mujoco_scanned_objects](https://github.com/kevinzakka/mujoco_scanned_objects)
   (Google Scanned Objects, CC BY 4.0)
-- **Generator:** `scripts/libero/materialize_obstacle_pack_gso.py`
+- **Generator:** `scripts/extra/libero/materialize_obstacle_pack_gso.py`
 - **Use:** Optional remesh of **unused** SafeLIBERO obstacle slots onto
   similar-sized GSO scans. Official on-stage types keep stock meshes.
   Off by default (`extra.libero.obstacle_pack.enabled=false`). Does not
@@ -305,3 +305,28 @@ The CC BY 4.0 text is not restated in full here; obtain it from Creative Commons
 Nothing in this file grants rights beyond those in the cited upstream licenses.
 If you redistribute DyniSafety with bundled third-party source trees, you must
 preserve the corresponding `LICENSE` files and any required notices.
+
+---
+
+## 6. X-VLA `generate_actions` (excerpt)
+
+- **Location (excerpt):** `src/dynisafety/parallel_eval/xvla_local.py`
+  (`generate_actions_with_noise`)
+- **Upstream:** `external/model_repos/X-VLA/models/modeling_xvla.py`
+  (`XVLA.generate_actions`)
+- **License:** Apache License, Version 2.0
+- **Copyright:** Copyright 2025 2toINF (https://github.com/2toINF)
+
+The denoising loop (`action_space.preprocess` / `transformer` /
+`action_space.postprocess`) is copied so the initial noise `x1` can be
+supplied by the caller. Upstream draws `x1 = torch.randn(B, ...)` internally,
+which makes results depend on batch size under dynamic batching.
+
+You may obtain a copy of the License at
+http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.

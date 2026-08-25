@@ -13,4 +13,4 @@ dependencies:
 #   conda activate dynisafety-robotwin
 #   pip install torch==2.4.1 --index-url https://download.pytorch.org/whl/cu121   # see requirements/README.md
 #   pip install -e ".[robotwin]"
-#   scripts/install/install_robotwin.sh && scripts/install/apply_patches.sh robotwin
+#   scripts/setup/install_robotwin.sh && scripts/setup/apply_patches.sh robotwin

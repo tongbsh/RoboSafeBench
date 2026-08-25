@@ -22,6 +22,7 @@ from dynisafety.backends.libero.disturbance._support import (
     get_robot_base_pos,
     get_table_center_pos,
     named_object_geom_ids,
+    object_subtree_geom_ids,
 )
 from dynisafety.backends.libero.disturbance.l2_spawn import (
     LEGACY_MODE,
@@ -429,15 +430,7 @@ class DynamicObstacleController:
         self.released = True
 
     def _collect_geom_ids(self):
-        gids = set()
-        model = self.inner_env.sim.model
-        for gid in range(model.ngeom):
-            bid = model.geom_bodyid[gid]
-            if bid == self._body_id:
-                gids.add(gid)
-            elif model.body_parentid[bid] == self._body_id:
-                gids.add(gid)
-        return gids
+        return object_subtree_geom_ids(self.inner_env.sim, self._body_id)
 
     def _collect_robot_like_geom_ids(self):
         """Best-effort robot geom mask used during offline trajectory planning."""

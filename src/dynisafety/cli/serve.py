@@ -184,7 +184,7 @@ def run_serve(
     print(f"[serve] exited rc={rc}")
     if stopping["done"]:
         # Operator asked for the shutdown; the child's non-zero rc is our own
-        # SIGTERM, not a failure. `scripts/run/20_serve.sh` runs under `set -e`.
+        # SIGTERM, not a failure. `scripts/eval/serve.sh` runs under `set -e`.
         return 0
     return 0 if rc == 0 else 1
 

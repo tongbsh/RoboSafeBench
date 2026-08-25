@@ -20,6 +20,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 DEFAULT_PACK_ROOT = Path(__file__).resolve().parent / "assets" / "obstacle_pack_gso"
 _OFFICIAL_JSON = DEFAULT_PACK_ROOT / "official_identities.json"
 
@@ -90,6 +92,91 @@ def default_pack_root() -> Path:
 
 def instance_to_type(name: str) -> str:
     return name[:-2] if name.endswith("_1") else name
+
+
+# Local axis that should map to world +Z when the object stands.
+# Milk XML is Y-up; everything else in the SafeLIBERO obstacle set is Z-up.
+_LOCAL_UP: dict[str, tuple[float, float, float]] = {
+    "wine_bottle_obstacle": (0.0, 0.0, 1.0),
+    "wine_bottle_small_obstacle": (0.0, 0.0, 1.0),
+    "red_coffee_mug_obstacle": (0.0, 0.0, 1.0),
+    "yellow_book_obstacle": (0.0, 0.0, 1.0),
+    "moka_pot_obstacle": (0.0, 0.0, 1.0),
+    "moka_pot_small_obstacle": (0.0, 0.0, 1.0),
+    "white_storage_box_obstacle": (0.0, 0.0, 1.0),
+    "milk_obstacle": (0.0, 1.0, 0.0),
+    "milk_small_obstacle": (0.0, 1.0, 0.0),
+}
+
+
+def local_up_axis(name: str) -> np.ndarray:
+    typ = instance_to_type(name)
+    return np.asarray(_LOCAL_UP.get(typ, (0.0, 0.0, 1.0)), dtype=np.float64)
+
+
+def _quat_from_two_vectors(v_from: np.ndarray, v_to: np.ndarray) -> np.ndarray:
+    """Shortest wxyz rotation taking ``v_from`` onto ``v_to``."""
+    a = np.asarray(v_from, dtype=np.float64).reshape(3)
+    b = np.asarray(v_to, dtype=np.float64).reshape(3)
+    na, nb = float(np.linalg.norm(a)), float(np.linalg.norm(b))
+    if na < 1e-9 or nb < 1e-9:
+        return np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float64)
+    a = a / na
+    b = b / nb
+    c = float(np.dot(a, b))
+    if c > 0.999999:
+        return np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float64)
+    if c < -0.999999:
+        axis = np.cross(a, np.array([1.0, 0.0, 0.0]))
+        if float(np.linalg.norm(axis)) < 1e-6:
+            axis = np.cross(a, np.array([0.0, 1.0, 0.0]))
+        axis = axis / float(np.linalg.norm(axis))
+        return np.array([0.0, axis[0], axis[1], axis[2]], dtype=np.float64)
+    axis = np.cross(a, b)
+    s = float(np.sqrt((1.0 + c) * 2.0))
+    return np.array(
+        [s * 0.5, axis[0] / s, axis[1] / s, axis[2] / s],
+        dtype=np.float64,
+    )
+
+
+def align_carrier_quat(
+    official_name: str,
+    extra_name: str,
+    official_quat: np.ndarray,
+) -> np.ndarray:
+    """Rewrite an official free-joint quat so ``extra`` stands the same way.
+
+    Milk slots are Y-up. Copying a Z-up book/wine/mug quat onto them lays
+    the extra on its side. Compose a local-up correction in the official
+    frame: ``q_extra = q_official * q(extra_up → official_up)``.
+    """
+    from dynisafety.core.disturbance import quat_mul
+
+    q = np.asarray(official_quat, dtype=np.float64).reshape(4)
+    up_official = local_up_axis(official_name)
+    up_extra = local_up_axis(extra_name)
+    if float(np.dot(up_official, up_extra)) > 0.999:
+        return q
+    aligned = quat_mul(q, _quat_from_two_vectors(up_extra, up_official))
+    norm = float(np.linalg.norm(aligned))
+    return aligned / norm if norm > 0 else q
+
+
+def attach_obstacle_pack_reset(env: Any, pack: ObstaclePack | None) -> None:
+    """Keep remesh active across robosuite ``hard_reset`` (re-loads object XML)."""
+    if pack is None or not pack.enabled or not pack.remesh:
+        return
+    if getattr(env, "_obstacle_pack_reset_wrapped", False):
+        return
+    original = env.reset
+
+    def _reset(*args: Any, **kwargs: Any) -> Any:
+        with overlay_obstacle_pack(pack):
+            return original(*args, **kwargs)
+
+    env.reset = _reset  # type: ignore[method-assign]
+    env._obstacle_pack_reset_wrapped = True
 
 
 def similar_standing(
@@ -252,6 +339,9 @@ def assign_task_extras(
         else:
             leftover.append(inst)
 
+    official_ups = {tuple(local_up_axis(name)) for name in used}
+    leftover.sort(key=lambda inst: 0 if tuple(local_up_axis(inst)) in official_ups else 1)
+
     similar_gso = [
         asset
         for asset in pack.assets
@@ -360,7 +450,7 @@ def _require_mesh_assets(pack: ObstaclePack) -> None:
     if missing:
         raise FileNotFoundError(
             "obstacle pack enabled but GSO meshes missing for "
-            f"{missing}; run scripts/libero/materialize_obstacle_pack_gso.py"
+            f"{missing}; run scripts/extra/libero/materialize_obstacle_pack_gso.py"
         )
 
 

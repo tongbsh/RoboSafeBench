@@ -31,6 +31,7 @@ from dynisafety.backends.robotwin.env import (
     save_episode_video,
     select_instruction,
 )
+from dynisafety.backends.robotwin.expert_cache import resolve_expert_check_cache_dir
 from dynisafety.backends.robotwin.hooks import (
     disable_dynamic_disturbance,
     enable_dynamic_disturbance,
@@ -396,9 +397,16 @@ class RoboTwinBackend:
         )
         expert_timeout_s = float(_require_robotwin_key(extra_robotwin, "expert_check_timeout_s"))
         expert_log_every = int(_require_robotwin_key(extra_robotwin, "expert_check_log_every"))
+        expert_cache_enabled = bool(
+            _require_robotwin_key(extra_robotwin, "expert_check_cache")
+        )
+        cache_dir = None
+        if expert_enabled and expert_cache_enabled:
+            workspace = self._workspace or _find_workspace_root()
+            cache_dir = resolve_expert_check_cache_dir(workspace)
 
         t0 = time.perf_counter()
-        accepted_seed, episode_info = expert_check_setup(
+        expert_outcome = expert_check_setup(
             handle,
             seed=candidate_seed,
             episode_index=episode_index,
@@ -406,7 +414,10 @@ class RoboTwinBackend:
             max_attempts=expert_max_attempts,
             timeout_s=expert_timeout_s,
             log_every=expert_log_every,
+            cache_dir=cache_dir,
         )
+        accepted_seed = expert_outcome.accepted_seed
+        episode_info = expert_outcome.episode_info
 
         task_env = handle.task_env
         task_env.setup_demo(
@@ -490,6 +501,7 @@ class RoboTwinBackend:
                     instruction=instruction,
                     step=task_step,
                     needs_state=self._needs_state,
+                    raw_obs=raw_obs,
                 )
                 if save_video:
                     frames.append(observation.images["primary"].copy())
@@ -649,6 +661,7 @@ class RoboTwinBackend:
         extra: dict[str, Any] = {
             "accepted_seed": accepted_seed,
             "candidate_seed_start": candidate_seed,
+            "expert_check_cache_hit": bool(expert_outcome.cache_hit),
             "contact_without_force": bool(contact_without_force_any),
             "contact_without_force_steps": int(
                 dyn_final.get("contact_without_force_steps", 0) or 0
@@ -696,7 +709,8 @@ class RoboTwinBackend:
             task_id=handle.task.task_id,
             task_name=handle.task.task_name,
             instruction=instruction,
-            seed=accepted_seed,
+            # Job/grid seed. Expert-check accepted seed stays in extra.accepted_seed.
+            seed=int(cfg.seed),
             max_steps=max_steps,
             steps=int(metrics["steps"]),
             termination=termination,

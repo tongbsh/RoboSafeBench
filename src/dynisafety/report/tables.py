@@ -32,6 +32,8 @@ DISPLAY_NAMES: dict[str, str] = {
     "cif_rate": "CIF_rate",
     "safety_score": "SafetyScore",
     "n_episodes": "N",
+    "n_valid_episodes": "N_valid",
+    "setup_invalid_episodes": "SetupInvalidEps",
     "force_anomaly_episodes": "ForceAnomalyEps",
     "oracle_sr": "Oracle_SR",
     "oracle_ssr": "Oracle_SSR",
@@ -100,6 +102,8 @@ _PER_TASK_METRICS = (
     "f_peak_max",
     "sasr",
     "force_anomaly_episodes",
+    "setup_invalid_episodes",
+    "n_valid_episodes",
     "n_episodes",
 )
 
@@ -254,6 +258,8 @@ def _aggregate_metric_mean(runs_df: pd.DataFrame, group_cols: list[str]) -> pd.D
         not in set(group_cols)
         | {
             "n_episodes",
+            "n_valid_episodes",
+            "setup_invalid_episodes",
             "force_anomaly_episodes",
             "injury_dist",
             "sr_ci_lo",
@@ -297,11 +303,20 @@ def _aggregate_metric_mean(runs_df: pd.DataFrame, group_cols: list[str]) -> pd.D
         if not isinstance(key, tuple):
             key = (key,)
         row = {group_cols[i]: key[i] for i in range(len(group_cols))}
-        weights = grp["n_episodes"].astype(float)
-        wsum = float(weights.sum())
+        written = grp["n_episodes"].astype(float)
+        wsum = float(written.sum())
         row["n_episodes"] = int(wsum) if wsum == int(wsum) else wsum
+        if "n_valid_episodes" in grp.columns:
+            row["n_valid_episodes"] = int(grp["n_valid_episodes"].fillna(0).sum())
+        if "setup_invalid_episodes" in grp.columns:
+            row["setup_invalid_episodes"] = int(grp["setup_invalid_episodes"].fillna(0).sum())
         if "force_anomaly_episodes" in grp.columns:
             row["force_anomaly_episodes"] = int(grp["force_anomaly_episodes"].fillna(0).sum())
+        weights = (
+            grp["n_valid_episodes"].astype(float)
+            if "n_valid_episodes" in grp.columns
+            else written
+        )
         for col in metric_cols:
             series = grp[col]
             mask = series.notna()
@@ -315,12 +330,13 @@ def _aggregate_metric_mean(runs_df: pd.DataFrame, group_cols: list[str]) -> pd.D
             v = series[mask].astype(float)
             row[col] = float((v * w).sum() / w.sum()) if float(w.sum()) > 0 else None
         # Recompute joint rates from summed counts when all four are present
-        if all(c in row and row[c] is not None for c in _JOINT_COUNT_IDS) and wsum > 0:
+        denom = float(row["n_valid_episodes"]) if "n_valid_episodes" in row else wsum
+        if all(c in row and row[c] is not None for c in _JOINT_COUNT_IDS) and denom > 0:
             ss_i = int(row["ss"])
             us_i = int(row["us"])
             cff_i = int(row["cff"])
             cif_i = int(row["cif"])
-            inv = 1.0 / float(wsum)
+            inv = 1.0 / float(denom)
             row["ssr"] = ss_i * inv
             row["us_rate"] = us_i * inv
             row["cff_rate"] = cff_i * inv
@@ -541,12 +557,18 @@ def check_joint_table_consistency(
         vals = {c: row.get(c) for c in _JOINT_COUNT_IDS}
         if any(v is None or (isinstance(v, float) and pd.isna(v)) for v in vals.values()):
             continue
-        n = row.get("n_episodes")
+        n = row.get("n_valid_episodes")
+        if n is None or (isinstance(n, float) and pd.isna(n)):
+            n = row.get("n_episodes")
         if n is None or (isinstance(n, float) and pd.isna(n)):
             continue
         total = int(vals["ss"]) + int(vals["us"]) + int(vals["cff"]) + int(vals["cif"])
+        if int(n) == 0:
+            if total != 0:
+                issues.append(f"row {idx}: ss+us+cff+cif={total} != N_valid=0")
+            continue
         if total != int(n):
-            issues.append(f"row {idx}: ss+us+cff+cif={total} != N={n}")
+            issues.append(f"row {idx}: ss+us+cff+cif={total} != N_valid={n}")
         inv = 1.0 / float(n) if float(n) else None
         if inv is None:
             continue

@@ -7,7 +7,7 @@
 # Do NOT: pip install -e .
 # Do:     pip install -e . --no-deps && pip install -r requirements/robocasa.txt
 #
-# Trees: scripts/install/install_robocasa.sh → pip install -e third_party/robosuite
+# Trees: scripts/setup/install_robocasa.sh → pip install -e third_party/robosuite
 #        and pip install -e third_party/robocasa (official pins live in those setup.py).
 # Headless: export MUJOCO_GL=egl
 #

@@ -35,7 +35,7 @@ BACKEND_ENV_NAME = {
 }
 
 # RoboCasa kitchen assets (lightweight set). Missing → FAIL + install_robocasa.sh.
-# Paths match scripts/install/install_robocasa.sh / robocasa DOWNLOAD_ASSET_REGISTRY.
+# Paths match scripts/setup/install_robocasa.sh / robocasa DOWNLOAD_ASSET_REGISTRY.
 _ROBOCASA_LIGHT_ASSET_SPECS: tuple[tuple[str, str, str], ...] = (
     ("asset_robocasa_tex", "textures", "tex"),
     ("asset_robocasa_tex_generative", "generative_textures", "tex_generative"),
@@ -232,7 +232,7 @@ def check_submodule_pins(
                     fix=(
                         None
                         if ok
-                        else f"bash {workspace}/scripts/install/install_simplerenv.sh"
+                        else f"bash {workspace}/scripts/setup/install_simplerenv.sh"
                     ),
                     severity="fail",
                 )
@@ -252,7 +252,7 @@ def check_submodule_pins(
                         None
                         if ms_ok
                         else (
-                            f"bash {workspace}/scripts/install/apply_patches.sh simplerenv"
+                            f"bash {workspace}/scripts/setup/apply_patches.sh simplerenv"
                         )
                     ),
                     severity="fail",
@@ -273,7 +273,7 @@ def check_submodule_pins(
                     fix=(
                         None
                         if ok
-                        else f"bash {workspace}/scripts/install/install_robotwin.sh"
+                        else f"bash {workspace}/scripts/setup/install_robotwin.sh"
                     ),
                     severity="fail",
                 )
@@ -299,7 +299,7 @@ def check_submodule_pins(
                     fix=(
                         None
                         if present
-                        else f"bash {workspace}/scripts/install/install_libero.sh"
+                        else f"bash {workspace}/scripts/setup/install_libero.sh"
                     ),
                     severity="fail",
                 )
@@ -319,7 +319,7 @@ def check_submodule_pins(
                     fix=(
                         None
                         if present
-                        else f"bash {workspace}/scripts/install/install_robocasa.sh"
+                        else f"bash {workspace}/scripts/setup/install_robocasa.sh"
                     ),
                     severity="fail",
                 )
@@ -338,7 +338,7 @@ def check_submodule_pins(
                     fix=(
                         None
                         if rs_ok
-                        else f"bash {workspace}/scripts/install/install_robocasa.sh"
+                        else f"bash {workspace}/scripts/setup/install_robocasa.sh"
                     ),
                     severity="fail",
                 )
@@ -358,7 +358,7 @@ def check_robotwin_mirror(workspace: Path, *, strict: bool) -> DoctorCheck:
             None
             if ok
             else (
-                f"bash {workspace}/scripts/install/install_robotwin.sh  "
+                f"bash {workspace}/scripts/setup/install_robotwin.sh  "
                 "# rebuilds mirror if vendored tree exists"
             )
         ),
@@ -377,7 +377,7 @@ def check_patches(
                 name="patches",
                 ok=False,
                 detail=f"missing {script}",
-                fix="git checkout HEAD -- scripts/install/apply_patches.sh",
+                fix="git checkout HEAD -- scripts/setup/apply_patches.sh",
                 severity="fail",
             )
         ]
@@ -422,7 +422,7 @@ def check_patches(
             name="patches",
             ok=False,
             detail=f"exit={proc.returncode}; {snippet}",
-            fix=f"bash {workspace}/scripts/install/apply_patches.sh {target}",
+            fix=f"bash {workspace}/scripts/setup/apply_patches.sh {target}",
             severity="fail",
         )
     ]
@@ -514,8 +514,8 @@ def check_simulator_imports(backend: BackendName | None) -> list[DoctorCheck]:
                         ok=False,
                         detail=f"import mani_skill2 failed: {exc}",
                         fix=(
-                            "bash scripts/install/install_simplerenv.sh && "
-                            "bash scripts/install/apply_patches.sh simplerenv && "
+                            "bash scripts/setup/install_simplerenv.sh && "
+                            "bash scripts/setup/apply_patches.sh simplerenv && "
                             "pip install -e "
                             "third_party/SimplerEnv-OpenVLA/ManiSkill2_real2sim"
                         ),
@@ -560,7 +560,7 @@ def check_simulator_imports(backend: BackendName | None) -> list[DoctorCheck]:
                 )
         elif b == "robocasa":
             install_fix = (
-                f"bash {find_workspace_root()}/scripts/install/install_robocasa.sh  "
+                f"bash {find_workspace_root()}/scripts/setup/install_robocasa.sh  "
                 "# env: dynisafety-robocasa (numpy 2)"
             )
             try:
@@ -702,7 +702,7 @@ def check_numpy_mutex(backend: BackendName | None) -> DoctorCheck:
                 if ok
                 else (
                     "bash "
-                    f"{find_workspace_root()}/scripts/install/install_robocasa.sh  "
+                    f"{find_workspace_root()}/scripts/setup/install_robocasa.sh  "
                     "# env: dynisafety-robocasa; numpy 2; "
                     "do not pip install -e . without --no-deps"
                 )
@@ -736,7 +736,7 @@ def check_assets(
             fix=(
                 None
                 if mano_ok
-                else f"python {workspace}/scripts/install/download_assets.py --mano-notice"
+                else f"python {workspace}/scripts/setup/download_assets.py --mano-notice"
             ),
             severity=sev_opt,
         )
@@ -784,8 +784,8 @@ def check_assets(
                         None
                         if big_ok
                         else (
-                            f"bash {workspace}/scripts/install/install_robotwin.sh  "
-                            "# then place upstream assets (~16GB); see docs/third_party.md"
+                            f"bash {workspace}/scripts/setup/install_robotwin.sh  "
+                            "# then place upstream assets (~16GB); see docs/user/third_party.md"
                         )
                     ),
                     severity=sev_opt,
@@ -807,7 +807,7 @@ def check_assets(
                     fix=(
                         None
                         if ok
-                        else f"bash {workspace}/scripts/install/install_libero.sh"
+                        else f"bash {workspace}/scripts/setup/install_libero.sh"
                     ),
                     severity="fail",
                 )
@@ -823,7 +823,7 @@ def check_assets(
                     fix=(
                         None
                         if ok
-                        else f"bash {workspace}/scripts/install/install_simplerenv.sh"
+                        else f"bash {workspace}/scripts/setup/install_simplerenv.sh"
                     ),
                     severity="fail",
                 )
@@ -832,7 +832,7 @@ def check_assets(
             tree = workspace / "third_party" / "robocasa"
             pkg = tree / "robocasa"
             ok = pkg.is_dir()
-            install_fix = f"bash {workspace}/scripts/install/install_robocasa.sh"
+            install_fix = f"bash {workspace}/scripts/setup/install_robocasa.sh"
             checks.append(
                 DoctorCheck(
                     name="asset_robocasa_tree",
@@ -946,7 +946,7 @@ def check_checkpoints(
                     detail=f"unresolved env placeholder in checkpoint: {raw}",
                     fix=(
                         f"export the env var used in {path.name} or "
-                        f"python {workspace}/scripts/install/download_assets.py --list"
+                        f"python {workspace}/scripts/setup/download_assets.py --list"
                     ),
                     severity=sev_opt,
                 )
@@ -968,7 +968,7 @@ def check_checkpoints(
                             None
                             if ok
                             else (
-                                f"python {workspace}/scripts/install/download_assets.py "
+                                f"python {workspace}/scripts/setup/download_assets.py "
                                 f"--list  # or fix network / repo id {expanded}"
                             )
                         ),
@@ -1000,8 +1000,8 @@ def check_checkpoints(
                     None
                     if ok
                     else (
-                        f"python {workspace}/scripts/install/download_assets.py --list && "
-                        f"python {workspace}/scripts/install/download_assets.py --asset <name>"
+                        f"python {workspace}/scripts/setup/download_assets.py --list && "
+                        f"python {workspace}/scripts/setup/download_assets.py --asset <name>"
                     )
                 ),
                 severity=sev_opt,

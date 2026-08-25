@@ -79,6 +79,20 @@ from dynisafety.core.disturbance import interpolate_toward, perpendicular_2d, qu
 _REPO_ROOT = Path(__file__).resolve().parents[5]
 
 
+def require_hand_mesh_path(raw: str, *, repo_root: Path | None = None) -> Path:
+    """Resolve a required L3 hand mesh. Empty/missing paths fail (no box fallback)."""
+    text = str(raw or "").strip()
+    if not text:
+        raise FileNotFoundError("hand.mesh_path is empty; cannot load mesh/mano_mesh geometry")
+    path = Path(text)
+    if not path.is_absolute():
+        root = _REPO_ROOT if repo_root is None else Path(repo_root)
+        path = (root / path).resolve()
+    if not path.exists():
+        raise FileNotFoundError(f"hand mesh not found: {path}")
+    return path
+
+
 def _sapien():
     import sapien.core as sapien
 
@@ -1085,19 +1099,19 @@ class DisturbanceManager:
     def _create_level3_hand_actor(self):
         """Build the Level 3 'shared workspace hand'.
 
-        Returns an Actor regardless of geometry choice; falls back to the
-        legacy box if mesh loading fails so an episode never crashes due
-        to a missing asset.
+        ``box`` uses the YAML half-size brick. ``mesh`` / ``mano_mesh`` must
+        load the configured file; missing assets fail instead of silently
+        changing contact geometry.
         """
         actor_name = "dynisafety_shared_hand"
         geometry = str(_require_attr(self.config, "hand_geometry")).lower()
 
-        if geometry == "mano_mesh":
-            mesh_actor = self._build_hand_mesh_actor(actor_name)
-            if mesh_actor is not None:
-                return mesh_actor
-            # Asset missing or load failed: silently fall back to box so the
-            # benchmark still runs end-to-end.
+        if geometry in ("mano_mesh", "mesh"):
+            return self._build_hand_mesh_actor(actor_name)
+        if geometry != "box":
+            raise ValueError(
+                f"hand.geometry must be 'box', 'mesh', or 'mano_mesh', got {geometry!r}"
+            )
 
         return _create_actor_api()[1](
             scene=self.task,
@@ -1108,16 +1122,7 @@ class DisturbanceManager:
         )
 
     def _build_hand_mesh_actor(self, actor_name: str):
-        mesh_path_str = str(_require_attr(self.config, "hand_mesh_path") or "")
-        if not mesh_path_str:
-            return None
-
-        mesh_path = Path(mesh_path_str)
-        if not mesh_path.is_absolute():
-            mesh_path = (_REPO_ROOT / mesh_path).resolve()
-        if not mesh_path.exists():
-            print(f"[dynisafety] hand mesh not found: {mesh_path}; falling back to box")
-            return None
+        mesh_path = require_hand_mesh_path(str(_require_attr(self.config, "hand_mesh_path") or ""))
 
         try:
             scene = self.task.scene
@@ -1144,9 +1149,10 @@ class DisturbanceManager:
                 entity = builder.build(name=actor_name)
             entity.set_name(actor_name)
             entity.set_pose(sapien.Pose(HIDDEN_POS))
+        except FileNotFoundError:
+            raise
         except Exception as exc:
-            print(f"[dynisafety] failed to build hand mesh actor: {exc}; falling back to box")
-            return None
+            raise RuntimeError(f"failed to build hand mesh actor from {mesh_path}: {exc}") from exc
 
         # Minimal model_data so downstream code that probes Actor.config (e.g.
         # the obstacle-overlap helper) does not crash. Only Level 1/2 actually

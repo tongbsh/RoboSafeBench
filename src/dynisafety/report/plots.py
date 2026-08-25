@@ -31,7 +31,7 @@ _STACK_LABELS = {
     "cif": "CIF",
 }
 
-# 9-class palette / labels (docs/behavior_diagnostics.md §3). Shared by both
+# 9-class palette / labels (docs/user/behavior_diagnostics.md §3). Shared by both
 # new figures so the CFF split in failure_decomposition.png matches the
 # distribution figure.
 _BC_ORDER = (

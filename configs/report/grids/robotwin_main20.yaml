@@ -2,6 +2,8 @@
 # Source: configs/suites/paper_main.yaml (backend=robotwin, suite=main20)
 # Regenerate: python tools/make_report_grids.py --suite paper_main
 # Expected rows: 5 models x 20 tasks x 4 levels x 1 seeds = 400 runs x 20 episodes
+backend: robotwin
+suite: main20
 models:
 - internvla_a1
 - fastwam

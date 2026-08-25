@@ -39,7 +39,7 @@ extra:
   # Wrapper sets LINGBOT_VA_MODEL_ROOT from {checkpoint}.
   serve_command:
     - bash
-    - "${workspace}/scripts/models/lingbot_va/serve.sh"
+    - "${workspace}/scripts/extra/models/lingbot_va/serve.sh"
     - "{port}"
     - "{checkpoint}"
   health_url_template: "http://127.0.0.1:{port}/healthz"

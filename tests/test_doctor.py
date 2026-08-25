@@ -106,6 +106,35 @@ def test_smoke_robocasa_suite_expands_one_l0_cell() -> None:
     assert job.episodes == 1
 
 
+def test_debug_xvla_dynamic_suite_is_paper_main_slice() -> None:
+    configs = REPO_ROOT / "configs"
+    path = resolve_suite_path("debug_xvla_dynamic", configs_root=configs)
+    suite = load_sweep_suite(path)
+    jobs = expand_jobs(suite, configs_root=configs)
+    assert suite.name == "debug_xvla_dynamic"
+    assert suite.episodes_per_task == 20
+    assert len(jobs) == 117
+    assert {j.episodes for j in jobs} == {20}
+    assert {j.level for j in jobs} == {1, 2, 3}
+    by_backend = {}
+    for job in jobs:
+        by_backend.setdefault(job.backend, []).append(job)
+    assert set(by_backend) == {"libero", "robotwin", "simplerenv"}
+    assert len(by_backend["libero"]) == 48
+    assert len(by_backend["robotwin"]) == 60
+    assert len(by_backend["simplerenv"]) == 9
+    assert {j.model for j in by_backend["libero"]} == {"xvla"}
+    assert {j.model for j in by_backend["robotwin"]} == {"xvla_official"}
+    assert {j.model for j in by_backend["simplerenv"]} == {"xvla_official"}
+    assert {j.suite for j in by_backend["libero"]} == {
+        "safelibero_spatial",
+        "safelibero_object",
+        "safelibero_goal",
+        "safelibero_long",
+    }
+    assert {j.task_id for j in by_backend["simplerenv"]} == {0, 1, 2}
+
+
 def test_paper_main_does_not_include_robocasa() -> None:
     text = (REPO_ROOT / "configs" / "suites" / "paper_main.yaml").read_text(
         encoding="utf-8"

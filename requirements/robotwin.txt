@@ -4,7 +4,7 @@
 #
 # Install torch+CUDA first (see requirements/README.md; reference cu121).
 # Then: pip install -r requirements/robotwin.txt && pip install -e ".[robotwin]"
-# Tree: scripts/install/install_robotwin.sh + apply_patches.sh robotwin
+# Tree: scripts/setup/install_robotwin.sh + apply_patches.sh robotwin
 # Source aligned with third_party/RoboTwin/script/requirements.txt
 
 sapien==3.0.0b1

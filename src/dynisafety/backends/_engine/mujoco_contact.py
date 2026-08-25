@@ -40,6 +40,27 @@ def expand_body_subtree(model: Any, root_body_ids: Iterable[int]) -> set[int]:
     return out
 
 
+def expand_body_descendants(model: Any, root_body_ids: Iterable[int]) -> set[int]:
+    """Return *root_body_ids* plus every descendant (children, grandchildren, …).
+
+    GSO pack wrappers put collision meshes on ``gso_align`` under the object
+    body. One-level expansion misses those geoms for contact / footprint / AEGIS.
+    """
+    out = {int(i) for i in root_body_ids}
+    parentid = model.body_parentid
+    grew = True
+    while grew:
+        grew = False
+        for body_idx in range(int(model.nbody)):
+            idx = int(body_idx)
+            if idx in out:
+                continue
+            if int(parentid[idx]) in out:
+                out.add(idx)
+                grew = True
+    return out
+
+
 def collect_geom_ids_for_bodies(model: Any, body_ids: Iterable[int]) -> set[int]:
     """Geom ids whose ``geom_bodyid`` is in *body_ids*."""
     bodies = {int(i) for i in body_ids}
