@@ -260,7 +260,7 @@ def test_resolve_cache_dir_env_override(tmp_path: Any) -> None:
 def test_resolve_cache_dir_workspace_layout(tmp_path: Any) -> None:
     ws = tmp_path / "ws"
     resolved = resolve_expert_check_cache_dir(ws, env={})
-    assert resolved == ws / "results" / "_cache" / "robotwin_expert_check"
+    assert resolved == ws / "old_cache" / "results_legacy" / "_cache" / "robotwin_expert_check"
 
 
 def test_expert_check_requires_task_config(tmp_path: Any) -> None:

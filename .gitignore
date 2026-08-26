@@ -38,11 +38,13 @@ wandb_api_key*
 .ipynb_checkpoints/
 .claude/
 
-# M9 hygiene: canonical run output (see docs/contracts.md §6)
+# Canonical I/O root (configs/paths.yaml → roots.out). Legacy results/ still
+# scanned for resume / DYNI_RESULTS=results.
+/out/
 results/
 legacy/outputs*
 
-# Local debug / feasibility / calibration dumps (not paper release artifacts)
+# Pre-paths.yaml process dumps (keep ignored; new logs live under out/logs/)
 artifacts/
 
 # Non-submodule scratch and install-script clones under third_party/.

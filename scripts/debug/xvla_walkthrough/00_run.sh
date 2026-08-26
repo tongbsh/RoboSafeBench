@@ -26,8 +26,8 @@ SUITE_SRC="$ROOT/configs/suites/debug_xvla_dynamic.yaml"
 export DYNI_SAVE_VIDEO="${DYNI_SAVE_VIDEO:-1}"
 export DYNI_DIVERSITY="${DYNI_DIVERSITY:-1}"
 export DYNI_OBSTACLE_PACK="${DYNI_OBSTACLE_PACK:-1}"
-# One loaded X-VLA per eval slot (two instances on a 48G card).
-export DYNI_SERVERS_PER_GPU="${DYNI_SERVERS_PER_GPU:-2}"
+# One loaded X-VLA shared by both eval slots (set 2 to pin a copy per eval).
+export DYNI_SERVERS_PER_GPU="${DYNI_SERVERS_PER_GPU:-1}"
 
 BACKENDS=""
 LEVELS=""
@@ -64,7 +64,7 @@ usage() {
   --dry-run / --resume / --retry-failed
   其余参数原样传给 dynisafety sweep
 
-默认 20 条轨迹/格（117 job × 20 ep），单卡双路。LIBERO/SimplerEnv 要论文 50 条用 --full。
+默认 20 条轨迹/格（117 job × 20 ep），单卡一份权重 + 两个 eval。LIBERO/SimplerEnv 要论文 50 条用 --full。
 EOF
 }
 
@@ -198,7 +198,7 @@ elif [[ "$FULL" -eq 1 ]]; then
 fi
 
 SUITE_ARG="$SUITE_NAME"
-USED_YAML="$ROOT/results/_sweep/${SUITE_NAME}/suite.used.yaml"
+USED_YAML="$(dyni_paths sweep-root "$SUITE_NAME")/suite.used.yaml"
 mkdir -p "$(dirname "$USED_YAML")"
 if [[ "$SUITE_NAME" != "debug_xvla_dynamic" || "$EP_DEFAULT" != "20" ]]; then
   SUITE_ARG="$USED_YAML"
@@ -239,6 +239,9 @@ if [[ ${#ONLY_PARTS[@]} -gt 0 ]]; then
 fi
 
 export DYNI_SUITE="$SUITE_ARG"
+LOG_DIR="$(dyni_artifacts_dir debug xvla_walkthrough)"
+dyni_tee_logs "$LOG_DIR/sweep.screen.log"
+info "process log: $LOG_DIR/sweep.screen.log"
 info "X-VLA walkthrough  suite=$SUITE_NAME  episodes=L/SE:${EP_DEFAULT} RT:${EP_ROBOTWIN}"
 info "save_video=${DYNI_SAVE_VIDEO}  diversity=${DYNI_DIVERSITY}  obstacle_pack=${DYNI_OBSTACLE_PACK}  servers_per_gpu=${DYNI_SERVERS_PER_GPU}${ONLY:+  only=$ONLY}"
 warn "X-VLA 是服务型：sweep 会按 backend 切 checkpoint（LIBERO=xvla，RT/SE=xvla_official）并自己起 serve。"
@@ -263,11 +266,10 @@ set -e
 
 if [[ "$DRY" -eq 0 && "$SKIP_CHECK" -eq 0 ]]; then
   info "sweep exit=$sweep_rc；接着扫指标 / 动态痕迹 / 视频"
-  bash "$SCRIPT_DIR/01_check.sh" --suite "$USED_YAML" || warn "01_check 发现问题，看 artifacts/debug/xvla_walkthrough/"
+  bash "$SCRIPT_DIR/01_check.sh" --suite "$USED_YAML" || warn "01_check 发现问题，看 $(dyni_artifacts_dir debug xvla_walkthrough)/"
 fi
 
-ok "视频: $ROOT/results/videos/<suite>_level{1,2,3}/"
-ok "run:  $ROOT/results/l{1,2,3}/<backend>-xvla*-t*-l*-s7-*/"
-ok "失败: $ROOT/results/_sweep/${SUITE_NAME}/failures.jsonl"
+dyni_print_output_roots debug xvla_walkthrough
+ok "失败: $(dyni_results_root)/_sweep/${SUITE_NAME}/failures.jsonl"
 ok "检查: bash scripts/debug/xvla_walkthrough/01_check.sh --suite $USED_YAML"
 exit "$sweep_rc"

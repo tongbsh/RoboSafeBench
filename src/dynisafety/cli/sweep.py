@@ -45,7 +45,7 @@ def register_sweep_parser(subparsers: argparse._SubParsersAction) -> None:
     p.add_argument(
         "--retry-failed",
         action="store_true",
-        help="Only (re)run jobs listed in results/_sweep/<suite>/failures.jsonl",
+        help="Only (re)run jobs listed in {out}/_sweep/<suite>/failures.jsonl",
     )
     p.add_argument(
         "--only",
@@ -93,8 +93,11 @@ def run_sweep(
         return 2
 
     jobs = expand_jobs(sweep_suite, configs_root=configs_root)
-    root = workspace / "results"
-    sweep_dir = root / "_sweep" / sweep_suite.name
+    from dynisafety.config.paths import load_paths
+
+    paths = load_paths(workspace=workspace)
+    root = paths.out
+    sweep_dir = paths.sweep_dir(sweep_suite.name)
 
     # Operational timeout (not a sim hyperparameter); env override only.
     health_raw = os.environ.get("DYNISAFETY_SERVER_WAIT_TIMEOUT")

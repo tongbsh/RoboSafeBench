@@ -13,6 +13,9 @@ disturbance:
 # Primary-arm slots + linear/trapezoid. Default off: L2 stays head_on +
 # analytic arc. path_num_samples is the validation/sha1 discretization;
 # execution still evaluates the same curve at every sim step.
+# Layer B is spawn-origin only (robotwin_l2_origin_is_valid): a 0.85 m
+# head_on corridor is supposed to cross table actors; do not reintroduce
+# LIBERO's full-path XY sweep here.
 extra:
   robotwin:
     l2:

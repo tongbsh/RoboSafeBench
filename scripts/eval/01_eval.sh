@@ -122,6 +122,9 @@ if [[ ${#ONLY_PARTS[@]} -gt 0 ]]; then
 fi
 
 export DYNI_SUITE="$SUITE"
+LOG_DIR="$(dyni_artifacts_dir eval "01_${SUITE}")"
+dyni_tee_logs "$LOG_DIR/eval.screen.log"
+info "process log: $LOG_DIR/eval.screen.log"
 info "suite=$SUITE${ONLY:+  only=$ONLY}"
 if [[ ${#ONLY_PARTS[@]} -eq 0 && "$SUITE" == "paper_main" ]]; then
   warn "未指定 --backend/--level/--model：将跑 paper_main 全量。先加 --dry-run 看计划。"

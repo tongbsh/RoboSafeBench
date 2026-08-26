@@ -54,13 +54,26 @@ def make_run_id(
     return f"{backend}-{model}-{suite}-t{int(task_id)}-l{level}-s{seed}-{stamp}"
 
 
-def make_run_dir(results_root: Path | str, *, level: int, run_id: str) -> Path:
-    """``results/l{level}/<run_id>/`` — level bucket under the results root.
+def make_run_dir(
+    results_root: Path | str,
+    *,
+    backend: str,
+    suite: str,
+    level: int,
+    run_id: str,
+) -> Path:
+    """``{out}/eval/{backend}/{suite}/l{level}/{run_id}`` from ``configs/paths.yaml``.
 
     Delegates to ``core.rollout.run_dir_layout`` so backends writing diagnostics
     traces into the same directory cannot drift from the runner's layout.
     """
-    return run_dir_layout(results_root, level=level, run_id=run_id)
+    return run_dir_layout(
+        results_root,
+        backend=backend,
+        suite=suite,
+        level=level,
+        run_id=run_id,
+    )
 
 
 def build_run_summary(
@@ -530,7 +543,13 @@ def run_dummy_smoke(run_root: Path, *, n_episodes: int = 2, seed: int = 0) -> Lo
         cfg=cfg,
         resolved=resolved,
         task=task,
-        run_dir=make_run_dir(run_root, level=0, run_id=run_id),
+        run_dir=make_run_dir(
+            run_root,
+            backend="dummy",
+            suite="dummy_suite",
+            level=0,
+            run_id=run_id,
+        ),
         n_episodes=n_episodes,
         save_video=False,
     )

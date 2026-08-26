@@ -164,24 +164,26 @@ class Policy(Protocol):
 ## 6. 输出布局
 
 ```text
-results/l{level}/<run_id>/
+${out}/eval/{backend}/{suite}/l{level}/{run_id}/
 ├── resolved_config.yaml
 ├── manifest.json
 ├── episodes.jsonl          # 每行一个 EpisodeRecord；逐条 flush+fsync（崩溃安全）
 ├── summary.json
 ├── run.log
+├── traces/                 # diagnostics（可选）
 └── videos/ep{idx:04d}_{success|fail}.mp4
 ```
 
+`${out}` 见 [`configs/paths.yaml`](../../configs/paths.yaml)（`DYNI_OUT` / `DYNI_RESULTS` / `{workspace}/out`）。  
 `run_id = {backend}-{model}-{suite}-t{task}-l{level}-s{seed}-{YYYYmmddTHHMMSS}`
 
-Level 桶（`l0`/`l1`/`l2`/`l3`）把不同 disturbance level 的 run 分开，避免 `results/` 根目录平铺过多。  
-Sweep resume（`is_job_complete`）仍兼容历史平铺路径 `results/<run_id>/`（不自动迁移旧目录）。  
-`dynisafety report` / `discover_episode_files` 只读取 `summary.status==completed` 的 run；崩溃残留或 `incomplete` JSONL 不进主表。
+Sweep resume（`is_job_complete`）先扫新布局，再扫同一 `results_root` 下的旧 `l{level}/<run_id>/` 与平铺 `<run_id>/`（不自动迁移）。  
+`dynisafety report` / `discover_episode_files` 只读取 `summary.status==completed` 的 run；崩溃残留或 `incomplete` JSONL 不进主表。  
+读旧树做报告：`DYNI_RESULTS=results bash scripts/eval/02_report.sh`。
 
 **manifest.json 冻结键**：`git_sha`, `git_dirty`, `submodules`, `python_version`, `packages`, `gpu_name`, `config_hash`, `schema_version`。
 
-`reports/` 由 `dynisafety report` 生成（M2/M3）：`episodes.parquet`, `runs.csv`, `table_main.*`, `table_per_task.csv`, `table_ablation.csv`, `coverage.csv`。
+`${out}/reports/{grid}/` 由 `dynisafety report` 生成（M2/M3）：`episodes.parquet`, `runs.csv`, `table_main.*`, `table_per_task.csv`, `table_ablation.csv`, `coverage.csv`。
 
 ---
 

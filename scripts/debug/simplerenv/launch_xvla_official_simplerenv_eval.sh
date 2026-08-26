@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # xvla_official × SimplerEnv bridge：等 serve ready 后按 task × level 循环 eval。
+# 日志：out/logs/debug/xvla_official_simplerenv/  结果/视频：out/eval/simplerenv/
 # --task all = 论文 0,1,2（carrot / stack / spoon；eggplant=3 需显式传入）
 #
 #   screen -S xvla_se_eval

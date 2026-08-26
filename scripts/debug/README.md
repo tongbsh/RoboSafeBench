@@ -1,6 +1,6 @@
 # `scripts/debug/` — 自己调参
 
-非正式矩阵。产物默认进 `artifacts/debug/`。正式表走 [`../eval/`](../eval/README.md)。
+非正式矩阵。评测进 `out/eval/{backend}/{suite}/l{level}/`，过程日志进 `out/logs/debug/`（见 [`configs/paths.yaml`](../../configs/paths.yaml)）。正式表走 [`../eval/`](../eval/README.md)。
 
 ```bash
 bash scripts/debug/eval_debug.sh --help

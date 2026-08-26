@@ -15,4 +15,6 @@ AUTHORIZE_GPU=1 bash scripts/extra/feasibility/run_authorized_aegis_feasibility.
 bash scripts/extra/models/lingbot_va/serve.sh <port> <checkpoint_dir>
 ```
 
+过程日志进 `out/logs/feasibility/`；评测 JSONL 和视频进 `out/eval/`（`DYNI_OUT` 改整棵树；读旧 `results/` 设 `DYNI_RESULTS=results`）。
+
 设计说明：`docs/paper/experiment_upgrade/`。

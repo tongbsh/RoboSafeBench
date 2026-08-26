@@ -5,9 +5,9 @@ and different models with the same ``(task, task_config, start_seed,
 episode_index)`` used to each replay ``play_once``. This module stores the
 first successful search so later jobs skip that demo.
 
-Layout: ``{workspace}/results/_cache/robotwin_expert_check/`` unless
-``DYNI_EXPERT_CHECK_CACHE_DIR`` is set. One JSON file per key; writers take
-an exclusive flock so a parallel job waits and then hits instead of
+Layout: ``{workspace}/old_cache/results_legacy/_cache/robotwin_expert_check/``
+unless ``DYNI_EXPERT_CHECK_CACHE_DIR`` is set. One JSON file per key; writers
+take an exclusive flock so a parallel job waits and then hits instead of
 re-running the demo.
 """
 
@@ -45,7 +45,7 @@ def resolve_expert_check_cache_dir(
     raw = str(env_map.get("DYNI_EXPERT_CHECK_CACHE_DIR", "")).strip()
     if raw:
         return Path(raw)
-    return Path(workspace) / "results" / "_cache" / "robotwin_expert_check"
+    return Path(workspace) / "old_cache" / "results_legacy" / "_cache" / "robotwin_expert_check"
 
 
 def cache_key(

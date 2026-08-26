@@ -1,7 +1,10 @@
 # `scripts/`
 
 权威入口仍是 CLI：`dynisafety eval` / `sweep` / `report` / `analysis`。  
-这里的 shell 只负责切 conda、拼参数。按用途分成四类：
+这里的 shell 只负责切 conda、拼参数。按用途分成四类。
+
+输出约定见 [`configs/paths.yaml`](../configs/paths.yaml)：一个根 `out/`（`DYNI_OUT`），评测在 `eval/{backend}/{suite}/l{level}/`。  
+覆盖整棵树：`DYNI_OUT` 或 `--output-root`。只读旧 `results/` 做报告时设 `DYNI_RESULTS=results`。
 
 ```text
 scripts/

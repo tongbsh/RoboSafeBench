@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # xvla_official × SimplerEnv：tool env 起 dynisafety serve，权重 xvla-simpler-widowx。
-# 日志：artifacts/debug/xvla_official_simplerenv/serve.screen.log
+# 日志：out/logs/debug/xvla_official_simplerenv/serve.screen.log
 #
 #   screen -S xvla_se_serve
 #   bash scripts/debug/simplerenv/launch_xvla_official_simplerenv_serve.sh

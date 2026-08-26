@@ -19,6 +19,12 @@ if ! dyni_needs_server "$MODEL"; then
   die "model '$MODEL' is local (transport: local); no server needed — just use scripts/eval/cell.sh"
 fi
 
+LOG_DIR="$(dyni_artifacts_dir eval "serve_${MODEL}")"
+mkdir -p "$LOG_DIR"
+export DYNI_SERVE_LOG_DIR="$LOG_DIR"
+dyni_tee_logs "$LOG_DIR/serve.screen.log"
+info "process log: $LOG_DIR/"
+
 dyni_activate_for "$MODEL" serve
 info "serving $MODEL $*  (Ctrl-C to stop)"
 dyni_cli serve --model "$MODEL" "$@"

@@ -52,6 +52,7 @@ from dynisafety.backends.robotwin.disturbance.l2_spawn import (
     robotwin_l2_build_path,
     robotwin_l2_candidate_start_xy,
     robotwin_l2_lateral_axis,
+    robotwin_l2_origin_is_valid,
     robotwin_l2_path_num_samples,
     robotwin_l2_path_sha1,
     robotwin_l2_select_mode,
@@ -65,6 +66,7 @@ from dynisafety.backends.robotwin.disturbance.l3_reach import (
     robotwin_l3_build_path,
     robotwin_l3_execution_anchors,
     robotwin_l3_lateral_axis,
+    robotwin_l3_origin_is_valid,
     robotwin_l3_path_intercept_target,
     robotwin_l3_path_num_samples,
     robotwin_l3_path_sha1,
@@ -1974,12 +1976,10 @@ class DisturbanceManager:
             return float("nan") if best is None else float(best)
 
         def validate(start, path) -> bool:
-            arr = np.asarray(path, dtype=np.float64)
-            judged_end = max(0, int(arr.shape[0]) - tail_n)
-            if self._xy_overlaps_avoid(np.asarray(start, dtype=np.float64)[:2], radius=radius):
-                return False
-            return all(
-                not self._xy_overlaps_avoid(arr[i][:2], radius=radius) for i in range(judged_end)
+            return robotwin_l2_origin_is_valid(
+                start,
+                path,
+                origin_blocked=lambda xy: self._xy_overlaps_avoid(xy, radius=radius),
             )
 
         def make_candidate(mode: str) -> dict[str, Any] | None:
@@ -2144,12 +2144,11 @@ class DisturbanceManager:
         radius = float(max(self.config.hand_half_size[0], self.config.hand_half_size[1]))
 
         def validate(start, path) -> bool:
-            arr = np.asarray(path, dtype=np.float64)
-            samples = max(1, min(int(arr.shape[0]), int(cfg["clearance_samples"])))
-            idxs = np.linspace(0, int(arr.shape[0]) - 1, samples, dtype=int)
-            if self._xy_overlaps_avoid(np.asarray(start, dtype=np.float64)[:2], radius=radius):
-                return False
-            return all(not self._xy_overlaps_avoid(arr[int(i)][:2], radius=radius) for i in idxs)
+            return robotwin_l3_origin_is_valid(
+                start,
+                path,
+                origin_blocked=lambda xy: self._xy_overlaps_avoid(xy, radius=radius),
+            )
 
         def make_candidate(mode: str, path_style: str) -> dict[str, Any] | None:
             if mode == L3_LEGACY_MODE:

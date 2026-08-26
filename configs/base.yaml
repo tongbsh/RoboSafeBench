@@ -85,5 +85,6 @@ contact:
   force_report_window_s: 0.05
 
 output:
-  results_dir: ${workspace}/results
+  # Same expression as configs/paths.yaml roots.out (the one I/O root).
+  results_dir: ${env:DYNI_OUT|${env:DYNI_RESULTS|${workspace}/out}}
   save_video: false

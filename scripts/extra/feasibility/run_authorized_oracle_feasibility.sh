@@ -8,7 +8,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "$ROOT"
 source "$ROOT/scripts/lib/env.sh"
 
-LOG_DIR="$ROOT/artifacts/feasibility/authorized_run"
+LOG_DIR="$(dyni_artifacts_dir feasibility authorized_run)"
 mkdir -p "$LOG_DIR"
 MAIN_LOG="$LOG_DIR/run_$(date +%Y%m%dT%H%M%S).log"
 exec > >(tee -a "$MAIN_LOG") 2>&1
@@ -80,3 +80,4 @@ python tools/feasibility_runner.py \
   --out "$LOG_DIR/analyze" || warn "analyze failed"
 
 ok "authorized run finished — see $LOG_DIR and $MAIN_LOG"
+dyni_print_output_roots feasibility authorized_run

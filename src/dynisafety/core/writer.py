@@ -28,7 +28,7 @@ _MANIFEST_KEYS = (
 
 
 class RunWriter:
-    """Write `results/l{level}/<run_id>/` artifacts with crash-safe episode appends."""
+    """Write `{out}/eval/{backend}/{suite}/l{level}/{run_id}/` with crash-safe JSONL."""
 
     def __init__(self, run_dir: Path | str) -> None:
         self.run_dir = Path(run_dir)
@@ -38,7 +38,7 @@ class RunWriter:
 
     def create(self) -> None:
         self.run_dir.mkdir(parents=True, exist_ok=True)
-        (self.run_dir / "videos").mkdir(exist_ok=True)
+        # Videos live under ``{results_dir}/videos/``, not ``{run_dir}/videos/``.
         # Ensure JSONL exists; do not truncate an existing recoverable file.
         if not self._episodes_path.exists():
             self._episodes_path.touch()

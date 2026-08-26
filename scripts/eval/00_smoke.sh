@@ -9,6 +9,10 @@ source "$(dirname "${BASH_SOURCE[0]}")/../lib/env.sh"
 OFFLINE=0
 [[ "${1:-}" == "--offline" ]] && OFFLINE=1
 
+LOG_DIR="$(dyni_artifacts_dir eval smoke)"
+dyni_tee_logs "$LOG_DIR/smoke.screen.log"
+info "process log: $LOG_DIR/smoke.screen.log"
+
 dyni_activate "$DYNI_TOOL_ENV"
 
 info "1/4 unit tests (simulator-free)"
@@ -38,4 +42,5 @@ info "4/4 live rollout: simplerenv x random x bridge_carrot x L2 x 1 episode"
 bash scripts/eval/cell.sh simplerenv random bridge 2 --task 0 --episodes 1 --no-video \
   || die "live rollout failed — check that the 'simpler_env' conda env has ManiSkill2 installed"
 
-ok "smoke passed. Results: $DYNI_ROOT/results/"
+ok "smoke passed."
+dyni_print_output_roots eval smoke

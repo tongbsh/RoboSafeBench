@@ -9,7 +9,7 @@
 #
 # Paper eval sets dump_artifacts=false → client sends save_visualization=false.
 # patches/save_visualization_gate.patch makes the server honor that (no .pt dumps).
-# When dumps are enabled, --save_root stays on the data disk under results/.
+# When dumps are enabled, --save_root stays under out/logs/debug/lingbot_va_vis.
 #
 # Usage: bash scripts/extra/models/lingbot_va/serve.sh <port> <checkpoint_dir>
 set -euo pipefail
@@ -48,7 +48,10 @@ fi
 export LINGBOT_VA_MODEL_ROOT="$CKPT"
 # Fallback path when save_visualization=true (debug). Not used for paper dumps-off.
 # Override with LINGBOT_VA_SAVE_ROOT. Never default to system /tmp.
-SAVE_ROOT="${LINGBOT_VA_SAVE_ROOT:-${REPO_ROOT}/results/_lingbot_va_vis}"
+SAVE_ROOT="${LINGBOT_VA_SAVE_ROOT:-$(
+  PYTHONPATH="${REPO_ROOT}/src${PYTHONPATH:+:$PYTHONPATH}" \
+    python -m dynisafety.config.paths logs debug lingbot_va_vis
+)}"
 mkdir -p "$SAVE_ROOT"
 
 # Websocket listens on PORT; torchrun needs a distinct master port.

@@ -26,6 +26,8 @@ hand:
 
 # path_intercept + primary-arm reach slots. target_mode=current keeps
 # today's l3_alpha interpolate. All keys required.
+# Layer B is reach-origin only (robotwin_l3_origin_is_valid), same reason
+# as L2: the approach is supposed to cross the table.
 extra:
   robotwin:
     l3:

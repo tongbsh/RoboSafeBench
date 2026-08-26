@@ -119,6 +119,7 @@ def test_run_writer_crash_safe_jsonl(tmp_path: Path) -> None:
     for i, line in enumerate(lines):
         rec = EpisodeRecord.from_json_dict(json.loads(line))
         assert rec.episode_index == i
+    assert not (run_dir / "videos").exists()
 
 
 def test_build_manifest_has_frozen_keys() -> None:

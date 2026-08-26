@@ -22,6 +22,7 @@ from dynisafety.config.schema import (
     RunConfig,
     RuntimeConfig,
 )
+from dynisafety.core.rollout import run_dir_layout
 from dynisafety.diagnostics import DiagnosticsSession, copy_vec
 from dynisafety.diagnostics.schema import BehaviorDiagnostics
 
@@ -72,6 +73,7 @@ def _run_cfg(
     diag = _diag_cfg(enabled=enabled, save=save) if diagnostics is None else diagnostics
     return RunConfig(
         backend=backend,
+        suite="robocasa_nav",
         level=level,
         seed=seed,
         run_id=run_id,  # type: ignore[arg-type]
@@ -258,7 +260,17 @@ def test_fake_rollout_persists_latched_base_xy_yaw(tmp_path: Path) -> None:
     assert diag is not None
     BehaviorDiagnostics.from_json_dict(diag)
 
-    trace = read_trace(tmp_path / "l0" / "run-x" / "traces" / "ep0000.jsonl.gz")
+    trace = read_trace(
+        run_dir_layout(
+            tmp_path,
+            backend="robocasa",
+            suite="robocasa_nav",
+            level=0,
+            run_id="run-x",
+        )
+        / "traces"
+        / "ep0000.jsonl.gz"
+    )
     assert trace.steps[0].eef_pos == (0.10, 0.20, 0.80)
     assert trace.steps[0].base_xy_yaw == (1.50, 2.50, 0.40)
     assert trace.steps[1].base_xy_yaw == (1.80, 2.50, 0.40)
@@ -387,8 +399,11 @@ def test_probe_snapshot_raises_does_not_escape(tmp_path: Path) -> None:
 
 def test_unwritable_run_dir_still_analyzes(tmp_path: Path) -> None:
     """Root ignores chmod, so occupy the run path with a file instead."""
-    (tmp_path / "l0").mkdir()
-    (tmp_path / "l0" / "run-x").write_text("not-a-directory\n", encoding="utf-8")
+    blocked = run_dir_layout(
+        tmp_path, backend="robocasa", suite="robocasa_nav", level=0, run_id="run-x"
+    )
+    blocked.parent.mkdir(parents=True, exist_ok=True)
+    blocked.write_text("not-a-directory\n", encoding="utf-8")
     session = DiagnosticsSession.create(
         _run_cfg(tmp_path, level=0),
         episode_index=0,
@@ -408,4 +423,4 @@ def test_unwritable_run_dir_still_analyzes(tmp_path: Path) -> None:
     diag = session.episode_diagnostics()
     assert diag is not None
     assert diag["trace_path"] is None
-    assert (tmp_path / "l0" / "run-x").is_file()
+    assert blocked.is_file()

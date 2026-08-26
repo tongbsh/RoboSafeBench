@@ -29,6 +29,7 @@ from dynisafety.config.schema import (
     RuntimeConfig,
 )
 from dynisafety.core.protocols import TaskSpec
+from dynisafety.core.rollout import run_dir_from_cfg, run_dir_layout
 from dynisafety.diagnostics import DiagnosticsSession, copy_vec
 from dynisafety.diagnostics.reader import read_trace
 from dynisafety.diagnostics.schema import BehaviorDiagnostics
@@ -76,6 +77,7 @@ def _run_cfg(
         output = OutputConfig(results_dir=str(tmp_path), save_video=False)
     return RunConfig(
         backend=backend,
+        suite="bridge",
         level=level,
         seed=7,
         run_id="run-se",
@@ -319,7 +321,17 @@ def test_fake_session_rollout_yields_valid_diagnostics(tmp_path: Path) -> None:
     assert diag is not None
     parsed = BehaviorDiagnostics.from_json_dict(diag)
     assert parsed.disturbance_triggered is False
-    trace = read_trace(tmp_path / "l0" / "run-se" / "traces" / "ep0000.jsonl.gz")
+    trace = read_trace(
+        run_dir_layout(
+            tmp_path,
+            backend="simplerenv",
+            suite="bridge",
+            level=0,
+            run_id="run-se",
+        )
+        / "traces"
+        / "ep0000.jsonl.gz"
+    )
     assert trace.steps[0].eef_pos == (0.11, 0.22, 0.33)
     assert all(step.base_xy_yaw is None for step in trace.steps)
 
@@ -480,7 +492,8 @@ def test_fake_rollout_l0_zero_contact_and_eef_latch(tmp_path: Path, _sim_free: N
     assert record.contact_steps == 0
     assert record.first_contact_step is None
 
-    run_dir = Path(str(resolved.run.output.results_dir)) / "l0" / str(resolved.run.run_id)
+    run_dir = run_dir_from_cfg(resolved.run)
+    assert run_dir is not None
     trace = read_trace(run_dir / "traces" / "ep0000.jsonl.gz")
     assert len(trace.steps) == 3
     assert trace.steps[0].eef_pos == (0.11, 0.22, 0.33)
@@ -506,7 +519,8 @@ def test_fake_rollout_l1_records_dyn_contact(tmp_path: Path, _sim_free: None) ->
     assert record.diagnostics is not None
     BehaviorDiagnostics.from_json_dict(record.diagnostics)
     assert record.contact_steps == 4
-    run_dir = Path(str(resolved.run.output.results_dir)) / "l1" / str(resolved.run.run_id)
+    run_dir = run_dir_from_cfg(resolved.run)
+    assert run_dir is not None
     trace = read_trace(run_dir / "traces" / "ep0001.jsonl.gz")
     assert all(step.in_contact is True for step in trace.steps)
     assert trace.header.disturbance_triggered is True
@@ -537,7 +551,8 @@ def test_probe_raise_does_not_abort_rollout(tmp_path: Path, _sim_free: None, mon
 def test_unwritable_run_dir_does_not_abort_rollout(tmp_path: Path, _sim_free: None) -> None:
     del _sim_free
     resolved = _load_se_cfg(tmp_path, level=0, max_steps=3)
-    run_dir = Path(str(resolved.run.output.results_dir)) / "l0" / str(resolved.run.run_id)
+    run_dir = run_dir_from_cfg(resolved.run)
+    assert run_dir is not None
     run_dir.parent.mkdir(parents=True, exist_ok=True)
     run_dir.write_text("not-a-directory\n", encoding="utf-8")
     backend = SimplerEnvBackend()
@@ -581,8 +596,11 @@ def test_session_probe_and_unwritable_do_not_raise(tmp_path: Path) -> None:
 
     blocked = tmp_path / "blocked"
     blocked.mkdir()
-    (blocked / "l0").mkdir()
-    (blocked / "l0" / "run-se").write_text("blocked\n", encoding="utf-8")
+    occupied = run_dir_layout(
+        blocked, backend="simplerenv", suite="bridge", level=0, run_id="run-se"
+    )
+    occupied.parent.mkdir(parents=True, exist_ok=True)
+    occupied.write_text("blocked\n", encoding="utf-8")
     session2 = DiagnosticsSession.create(
         _run_cfg(blocked, level=0),
         episode_index=0,

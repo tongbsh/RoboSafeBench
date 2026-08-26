@@ -493,8 +493,10 @@ def _maybe_write_video(slot: EpisodeSlot) -> str | None:
     results_dir = Path(str(slot.cfg.output.results_dir))
     vid_dir = episode_video_dir(
         results_dir=results_dir,
+        backend=str(slot.cfg.backend),
         suite=str(slot.cfg.suite),
         level=slot.level,
+        run_id=str(slot.cfg.run_id),
         task_id=slot.handle.task.task_id,
         task_name=slot.handle.task.task_name,
     )

@@ -23,7 +23,8 @@ SEED="7"
 RNG_SEED=""
 HOST="${HOST:-127.0.0.1}"
 PORT="${PORT:-8010}"
-OUT_DIR="${OUT_DIR:-$ROOT/artifacts/debug/parallel_eval}"
+OUT_DIR="${OUT_DIR:-$(dyni_artifacts_dir debug parallel_eval)}"
+RESULTS_ROOT="${RESULTS_ROOT:-$(dyni_results_root)}"
 HTTP_MODEL="xvla_official"
 PAR_MODEL="xvla_official_parallel"
 WAIT_SERVE=1
@@ -41,7 +42,7 @@ Flags:
   --rng-seed N      extra.parallel_eval.rng_seed (per-slot x1). Omit to use YAML.
   --suite NAME      default main20
   --host / --port   HTTP serve (default 127.0.0.1:8010)
-  --out DIR         artifacts (default artifacts/debug/parallel_eval)
+  --out DIR         过程日志目录（默认 out/logs/debug/parallel_eval）
   --no-wait         do not wait for HTTP serve
   --skip-http       only warm + parallel (no baseline)
   -h | --help
@@ -108,7 +109,7 @@ conda run --no-capture-output -n "$ENV_CONDA" python -m dynisafety.cli parallel-
   "${RNG_ARGS[@]}" \
   --seed-warm "$WARM_JSON" --warm-only \
   --set "$PROMPT_SET" \
-  --output-root "$ROOT/results"
+  --output-root "$RESULTS_ROOT"
 ok "warm file $WARM_JSON"
 
 if [[ "$SKIP_HTTP" -eq 0 ]]; then
@@ -121,7 +122,7 @@ if [[ "$SKIP_HTTP" -eq 0 ]]; then
     --backend "$BACKEND" --model "$HTTP_MODEL" --suite "$SUITE" --level "$LEVEL" \
     --task "$TASK" --episodes "$EPISODES" --seed "$SEED" \
     --set "$PROMPT_SET" \
-    --output-root "$ROOT/results" | tee "$OUT_DIR/http_eval.log"
+    --output-root "$RESULTS_ROOT" | tee "$OUT_DIR/http_eval.log"
   python - "$OUT_DIR/http_eval.log" "$HTTP_DIR_FILE" <<'PY'
 import pathlib
 import re
@@ -148,7 +149,7 @@ conda run --no-capture-output -n "$ENV_CONDA" python -m dynisafety.cli parallel-
   --set extra.parallel_eval.num_envs=1 \
   --set extra.parallel_eval.pipeline_stage_num=1 \
   --set extra.parallel_eval.deterministic_rng=true \
-  --output-root "$ROOT/results" | tee "$OUT_DIR/parallel_eval.log"
+  --output-root "$RESULTS_ROOT" | tee "$OUT_DIR/parallel_eval.log"
 python - "$OUT_DIR/parallel_eval.log" "$PAR_DIR_FILE" <<'PY'
 import pathlib
 import re
@@ -256,3 +257,4 @@ print("P0 alignment passed")
 PY
 
 ok "compare written to $OUT_DIR/p0_compare.txt"
+dyni_print_output_roots debug parallel_eval

@@ -157,21 +157,29 @@ def test_resolve_save_video_four_cases() -> None:
 
 def test_episode_video_dir_joins_shared_layout() -> None:
     path = episode_video_dir(
-        results_dir="/tmp/results",
+        results_dir="/tmp/out",
+        backend="robocasa",
         suite="robocasa_nav",
         level=2,
+        run_id="random_mobile-t0-s7-stamp",
         task_id=0,
         task_name="navigate_to_the_sink.",
     )
-    assert path == Path("/tmp/results/videos/robocasa_nav_level2/task0_navigate_to_the_sink.")
+    assert path == Path(
+        "/tmp/out/eval/robocasa/robocasa_nav/l2/random_mobile-t0-s7-stamp/videos"
+    )
     via_path = episode_video_dir(
         results_dir=Path("artifacts/out"),
+        backend="simplerenv",
         suite="bridge",
         level=0,
+        run_id="xvla-t3-s7-stamp",
         task_id=3,
         task_name="bridge_carrot",
     )
-    assert via_path == Path("artifacts/out/videos/bridge_level0/task3_bridge_carrot")
+    assert via_path == Path(
+        "artifacts/out/eval/simplerenv/bridge/l0/xvla-t3-s7-stamp/videos"
+    )
 
 
 def _metrics(**overrides: object) -> dict[str, object]:

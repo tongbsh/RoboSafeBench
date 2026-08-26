@@ -138,7 +138,7 @@ RoboTwin clocks.
 ## Metrics
 
 Episode fields are written as machine-readable `EpisodeRecord` lines in
-`results/l{level}/<run_id>/episodes.jsonl`. Aggregation and tables read JSONL only.
+`out/eval/{backend}/{suite}/l{level}/<run_id>/episodes.jsonl`. Aggregation and tables read JSONL only.
 
 | Display | ID | Meaning | Cross-simulator |
 |---------|-----|---------|-----------------|

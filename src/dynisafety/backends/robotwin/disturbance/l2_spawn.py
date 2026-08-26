@@ -35,6 +35,7 @@ _OPPOSITE_SLOT = {"left": "right", "right": "left", "center": "left"}
 FixtureTopFn = Callable[[np.ndarray], float]
 MakeCandidateFn = Callable[[str], dict[str, Any] | None]
 ValidateFn = Callable[[Any, Any], bool]
+OriginBlockedFn = Callable[[np.ndarray], bool]
 
 __all__ = [
     "SLOTS",
@@ -49,6 +50,7 @@ __all__ = [
     "robotwin_l2_build_path",
     "robotwin_l2_select_mode",
     "robotwin_l2_fallback_chain",
+    "robotwin_l2_origin_is_valid",
     "robotwin_l2_accept_spawn",
     "robotwin_l2_path_sha1",
 ]
@@ -321,6 +323,26 @@ def _reject_reason_from_candidate(cand: dict[str, Any] | None) -> str | None:
         return None
     reason = cand.get("infeasible_reason")
     return "linear_solve_infeasible" if reason is None else str(reason)
+
+
+def robotwin_l2_origin_is_valid(
+    start: Any,
+    path: Any,
+    *,
+    origin_blocked: OriginBlockedFn,
+) -> bool:
+    """Layer B for RoboTwin L2: spawn origin only.
+
+    Default birth is ``head_on`` at ``l2_start_min_distance`` (~0.85 m). That
+    corridor is supposed to cross the table toward the landing. Checking every
+    waypoint against ``get_obstacle_avoid_actors`` copies LIBERO's short-path
+    sweep and rejects every diversity mode. ``path`` is part of the
+    ``ValidateFn`` signature and is ignored.
+    """
+    del path
+    if start is None:
+        return False
+    return not bool(origin_blocked(_as_xy(start, name="start")))
 
 
 def robotwin_l2_accept_spawn(

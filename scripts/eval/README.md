@@ -36,3 +36,15 @@ bash scripts/eval/sweep.sh --only backend=libero,level=2 --dry-run
 ```
 
 调参不要走这里，用 [`../debug/`](../debug/)。
+
+输出（[`configs/paths.yaml`](../../configs/paths.yaml)）：
+
+```text
+out/eval/{backend}/{suite}/l{level}/{run_id}/   # JSONL / summary / videos
+out/logs/eval/<name>/                           # 过程日志
+out/reports/{grid}/                             # 02_report
+out/analysis/                                   # 03_analysis
+out/_sweep/{suite}/                             # sweep 失败表
+```
+
+整棵树：`DYNI_OUT` 或 `--output-root`。只读旧 `results/` 做 02/03 时设 `DYNI_RESULTS=results`（报告仍写新树再加 `DYNI_OUT` / `DYNI_REPORTS`）。

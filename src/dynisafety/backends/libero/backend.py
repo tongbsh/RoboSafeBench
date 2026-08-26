@@ -645,30 +645,38 @@ class LiberoBackend:
                 step_eef_pos = copy_vec(obs["robot0_eef_pos"])
                 step_eef_quat = copy_vec(obs["robot0_eef_quat"])
 
-                observation = _build_observation(
-                    obs,
-                    instruction=handle.task_description,
-                    step=task_step,
-                    needs_wrist=self._needs_wrist,
-                    needs_state=self._needs_state,
-                    handle=handle,
-                )
-                observation = oracle_session.inject_observation(
-                    observation,
-                    controller=controller,
-                    task_step=task_step,
-                )
-                budget_exempt = oracle_session.exempts_vla_budget(observation)
+                observation: Observation | None = None
+                if oracle_session.enabled or len(action_queue) == 0:
+                    observation = _build_observation(
+                        obs,
+                        instruction=handle.task_description,
+                        step=task_step,
+                        needs_wrist=self._needs_wrist,
+                        needs_state=self._needs_state,
+                        handle=handle,
+                    )
+                    observation = oracle_session.inject_observation(
+                        observation,
+                        controller=controller,
+                        task_step=task_step,
+                    )
+                    budget_exempt = oracle_session.exempts_vla_budget(observation)
+                else:
+                    budget_exempt = False
                 if not budget_exempt and vla_budget_used >= max_steps:
                     termination = "max_steps"
                     break
                 if save_video:
                     frames.append(get_primary_image(obs))
 
-                if oracle_session.should_clear_action_queue(observation):
+                if observation is not None and oracle_session.should_clear_action_queue(
+                    observation
+                ):
                     action_queue.clear()
 
                 if len(action_queue) == 0:
+                    if observation is None:
+                        raise RuntimeError("LIBERO act requested without Observation")
                     chunk = act_policy.act(observation)
                     oracle_session.note_after_act()
                     converted = _apply_action_chunk(
@@ -807,8 +815,10 @@ class LiberoBackend:
             task_slug = handle.task_description.lower().replace(" ", "_").replace("\n", "_")[:40]
             vid_dir = episode_video_dir(
                 results_dir=str(cfg.output.results_dir),
+                backend=str(cfg.backend),
                 suite=str(cfg.suite),
                 level=level,
+                run_id=str(cfg.run_id),
                 task_id=handle.task_id,
                 task_name=task_slug,
             )

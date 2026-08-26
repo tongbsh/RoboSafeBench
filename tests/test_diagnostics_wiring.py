@@ -24,6 +24,7 @@ from dynisafety.config.schema import (
     RunConfig,
     RuntimeConfig,
 )
+from dynisafety.core.rollout import run_dir_layout
 from dynisafety.diagnostics import DiagnosticsSession, copy_vec
 from dynisafety.diagnostics.schema import BehaviorDiagnostics
 from dynisafety.diagnostics.wiring import DiagnosticsSession as WiringSession
@@ -54,6 +55,19 @@ def _diag_cfg(*, enabled: bool = True, save: bool = True, stride: int = 1) -> Di
     )
 
 
+def _expected_run_dir(
+    tmp_path: Path,
+    *,
+    level: int = 0,
+    run_id: str = "run-x",
+    backend: str = "libero",
+    suite: str = "safelibero_spatial",
+) -> Path:
+    return run_dir_layout(
+        tmp_path, backend=backend, suite=suite, level=level, run_id=run_id
+    )
+
+
 def _run_cfg(
     tmp_path: Path | None = None,
     *,
@@ -62,6 +76,7 @@ def _run_cfg(
     run_id: object = "run-x",
     level: int = 0,
     backend: str = "libero",
+    suite: str = "safelibero_spatial",
     seed: int = 7,
     control_freq: object = 20,
     diagnostics: object = None,
@@ -75,6 +90,7 @@ def _run_cfg(
     diag = _diag_cfg(enabled=enabled, save=save) if diagnostics is None else diagnostics
     return RunConfig(
         backend=backend,
+        suite=suite,
         level=level,
         seed=seed,
         run_id=run_id,  # type: ignore[arg-type]
@@ -219,7 +235,7 @@ def test_enabled_l0_yields_valid_diagnostics_dict(tmp_path: Path) -> None:
     assert parsed.disturbance_triggered is False
     assert parsed.t_onset is None
     assert parsed.trace_path == "traces/ep0003.jsonl.gz"
-    run_dir = tmp_path / "l0" / "run-x"
+    run_dir = _expected_run_dir(tmp_path, level=0)
     assert (run_dir / "traces" / "ep0003.jsonl.gz").is_file()
     assert (run_dir / "traces" / "index.json").is_file()
     assert actions[0] == [0.01, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0]
@@ -259,7 +275,7 @@ def test_save_false_still_analyzes_without_creating_traces(tmp_path: Path) -> No
     diag = _finalize(session, success=False)
     assert diag is not None
     assert diag["trace_path"] is None
-    assert not (tmp_path / "l0" / "run-x" / "traces").exists()
+    assert not (_expected_run_dir(tmp_path, level=0) / "traces").exists()
 
 
 def test_run_dir_from_cfg_none_still_analyzes() -> None:
@@ -302,7 +318,7 @@ def test_eef_stash_survives_in_place_obs_reuse(tmp_path: Path) -> None:
     _finalize(session, success=False)
     from dynisafety.diagnostics.reader import read_trace
 
-    trace = read_trace(tmp_path / "l0" / "run-x" / "traces" / "ep0000.jsonl.gz")
+    trace = read_trace(_expected_run_dir(tmp_path, level=0) / "traces" / "ep0000.jsonl.gz")
     assert trace.steps[0].eef_pos == (0.11, 0.22, 0.33)
 
 
@@ -337,8 +353,9 @@ def test_probe_snapshot_raises_does_not_escape(tmp_path: Path) -> None:
 
 def test_unwritable_run_dir_still_analyzes(tmp_path: Path) -> None:
     """Root ignores chmod, so occupy the run path with a file instead."""
-    (tmp_path / "l0").mkdir()
-    (tmp_path / "l0" / "run-x").write_text("not-a-directory\n", encoding="utf-8")
+    blocked = _expected_run_dir(tmp_path, level=0)
+    blocked.parent.mkdir(parents=True, exist_ok=True)
+    blocked.write_text("not-a-directory\n", encoding="utf-8")
     session = DiagnosticsSession.create(
         _run_cfg(tmp_path, level=0),
         episode_index=0,
@@ -349,7 +366,7 @@ def test_unwritable_run_dir_still_analyzes(tmp_path: Path) -> None:
     diag = _finalize(session, success=False)
     assert diag is not None
     assert diag["trace_path"] is None
-    assert (tmp_path / "l0" / "run-x").is_file()
+    assert blocked.is_file()
 
 
 def test_analyze_failure_returns_none(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -416,8 +433,9 @@ def test_warnings_are_one_shot(tmp_path: Path, caplog: pytest.LogCaptureFixture)
 
 def test_fake_rollout_keeps_caller_state_on_degrade(tmp_path: Path) -> None:
     """Sidecar failures must not rewrite the caller's action / success flag."""
-    (tmp_path / "l0").mkdir()
-    (tmp_path / "l0" / "run-x").write_text("blocked\n", encoding="utf-8")
+    blocked = _expected_run_dir(tmp_path, level=0)
+    blocked.parent.mkdir(parents=True, exist_ok=True)
+    blocked.write_text("blocked\n", encoding="utf-8")
     session = DiagnosticsSession.create(
         _run_cfg(tmp_path, level=0),
         episode_index=0,
@@ -672,7 +690,11 @@ def test_robotwin_shaped_manager_unwraps_and_records(tmp_path: Path) -> None:
     assert diag["t_hazard_end"] == 14
     assert stashed_right == (0.41, 0.52, 0.63)
 
-    trace = read_trace(tmp_path / "l1" / "run-x" / "traces" / "ep0000.jsonl.gz")
+    trace = read_trace(
+        _expected_run_dir(tmp_path, level=1, backend="robotwin")
+        / "traces"
+        / "ep0000.jsonl.gz"
+    )
     assert trace.steps[0].eef_pos == (0.11, 0.22, 0.33)
     assert trace.steps[0].eef_pos_secondary == (0.41, 0.52, 0.63)
 

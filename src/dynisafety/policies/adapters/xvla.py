@@ -20,6 +20,7 @@ from __future__ import annotations
 import base64
 import json
 from collections import deque
+from collections.abc import Callable
 from typing import Any
 
 import numpy as np
@@ -40,6 +41,18 @@ from dynisafety.policies.base import (
 )
 from dynisafety.policies.transports import Transport
 
+_JSON_NUMPY_DUMPS: Callable[[np.ndarray], str] | None = None
+
+
+def _fallback_json_numpy_dumps(arr: np.ndarray) -> str:
+    return json.dumps(
+        {
+            "__numpy__": base64.b64encode(arr.tobytes()).decode("ascii"),
+            "dtype": arr.dtype.str,
+            "shape": list(arr.shape),
+        }
+    )
+
 
 def json_numpy_dumps(array: np.ndarray) -> str:
     """Encode an ndarray in the json_numpy wire format expected by X-VLA ``/act``.
@@ -48,19 +61,18 @@ def json_numpy_dumps(array: np.ndarray) -> str:
     envs); otherwise emit the same schema used by the RoboTwin client so
     ``internvla_a1`` (no json_numpy install) still works.
     """
+    global _JSON_NUMPY_DUMPS
     arr = np.asarray(array)
-    try:
-        import json_numpy  # noqa: PLC0415
+    fn = _JSON_NUMPY_DUMPS
+    if fn is None:
+        try:
+            import json_numpy  # noqa: PLC0415
 
-        return json_numpy.dumps(arr)
-    except ImportError:
-        return json.dumps(
-            {
-                "__numpy__": base64.b64encode(arr.tobytes()).decode("ascii"),
-                "dtype": arr.dtype.str,
-                "shape": list(arr.shape),
-            }
-        )
+            fn = json_numpy.dumps
+        except ImportError:
+            fn = _fallback_json_numpy_dumps
+        _JSON_NUMPY_DUMPS = fn
+    return fn(arr)
 
 
 def _axangle_to_rot6d(axangle: np.ndarray) -> np.ndarray:
@@ -295,6 +307,16 @@ class XVLAAdapter:
         self._bridge_task_name = None
         self._transport.reset({})
 
+    def needs_visual_observation(self) -> bool:
+        """Whether the next ``act`` must include camera images.
+
+        Bridge drains a local plan with current EEF only; images are required
+        solely on the HTTP fill. Other variants query once per empty chunk.
+        """
+        if self._variant == "official" and self._bridge_plan:
+            return False
+        return True
+
     def _bridge_gripper_threshold(self, obs: Observation) -> float:
         """Prefer upstream per-task WidowX thresholds when task_name is known."""
         name = None
@@ -305,6 +327,7 @@ class XVLAAdapter:
         if name and name in self._gripper_threshold_by_task:
             return float(self._gripper_threshold_by_task[name])
         return float(self._gripper_threshold)
+
     def act(self, obs: Observation) -> ActionChunk:
         if self._variant == "official":
             return self._act_official(obs)
@@ -367,20 +390,23 @@ class XVLAAdapter:
 
     def _act_official(self, obs: Observation) -> ActionChunk:
         # RoboTwin: image0/1/2. Bridge WidowX: image0 only (archived client).
-        images: list[np.ndarray] = [
-            np.asarray(require_image(obs, "primary"), dtype=np.uint8)
-        ]
-        bridge_single_view = False
+        # Drain steps may omit cameras; HTTP fill still requires primary.
         if "left" in obs.images and "right" in obs.images:
-            images.append(np.asarray(require_image(obs, "left"), dtype=np.uint8))
-            images.append(np.asarray(require_image(obs, "right"), dtype=np.uint8))
+            images = [
+                np.asarray(require_image(obs, "primary"), dtype=np.uint8),
+                np.asarray(require_image(obs, "left"), dtype=np.uint8),
+                np.asarray(require_image(obs, "right"), dtype=np.uint8),
+            ]
         elif "wrist" in obs.images:
-            images.append(np.asarray(require_image(obs, "wrist"), dtype=np.uint8))
+            images = [
+                np.asarray(require_image(obs, "primary"), dtype=np.uint8),
+                np.asarray(require_image(obs, "wrist"), dtype=np.uint8),
+            ]
         else:
-            bridge_single_view = True
-
-        if bridge_single_view:
-            return self._act_official_bridge(obs, images[0])
+            primary = None
+            if "primary" in obs.images:
+                primary = np.asarray(require_image(obs, "primary"), dtype=np.uint8)
+            return self._act_official_bridge(obs, primary)
 
         # Dual-arm RoboTwin official protocol (abs EE 16-D).
         if self._cfg.action_space == "abs_ee_16d":
@@ -479,7 +505,9 @@ class XVLAAdapter:
         self._right_endpose_override = np.asarray(last[8:15], dtype=np.float32).copy()
         return actions_to_chunk(actions, space="abs_ee_16d")
 
-    def _act_official_bridge(self, obs: Observation, primary: np.ndarray) -> ActionChunk:
+    def _act_official_bridge(
+        self, obs: Observation, primary: np.ndarray | None = None
+    ) -> ActionChunk:
         """Archived ``simpler_delta``: one HTTP chunk, one env step per ``act``.
 
         Abs→delta must use the *current* 8D ``eef_pos`` each step (not the eef
@@ -503,6 +531,8 @@ class XVLAAdapter:
                 self._proprio = np.zeros(20, dtype=np.float32)
 
         if not self._bridge_plan:
+            if primary is None:
+                primary = np.asarray(require_image(obs, "primary"), dtype=np.uint8)
             payload: dict[str, Any] = {
                 "proprio": json_numpy_dumps(self._proprio),
                 "language_instruction": obs.instruction,

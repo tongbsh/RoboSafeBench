@@ -28,6 +28,7 @@ SEED="7"
 HOST="127.0.0.1"
 PORT=""
 OUT_DIR=""
+OUTPUT_ROOT=""
 WAIT_SERVE=1
 SAVE_VIDEO=1
 ORACLE=0
@@ -65,7 +66,8 @@ Debug VLA eval 矩阵（写 eval.screen.log / progress.log，适合 screen）
   --seed N           基种子（默认: 7）
   --host HOST        默认: 127.0.0.1
   --port N           默认: xvla* → 8010，其它 → 8011
-  --out DIR          默认: artifacts/debug/<model>_<backend>
+  --out DIR          过程日志目录（默认: out/logs/debug/<model>_<backend>）
+  --output-root DIR  整棵 out 根（默认: out/；评测在 eval/{backend}/{suite}/l{level}/）
   --no-wait          不等 [serve] ready
   --no-video         不存视频
   --oracle / --aegis 仅 libero
@@ -150,6 +152,7 @@ while [[ $# -gt 0 ]]; do
     --host)    HOST="${2:?}"; shift 2 ;;
     --port)    PORT="${2:?}"; shift 2 ;;
     --out)     OUT_DIR="${2:?}"; shift 2 ;;
+    --output-root) OUTPUT_ROOT="${2:?}"; shift 2 ;;
     --no-wait) WAIT_SERVE=0; shift ;;
     --no-video) SAVE_VIDEO=0; shift ;;
     --oracle)  ORACLE=1; shift ;;
@@ -175,8 +178,8 @@ if [[ "$ORACLE" -eq 1 || "$AEGIS" -eq 1 || "$OBSTACLE_PACK" -eq 1 ]] && [[ "$BAC
   die_usage "--oracle / --aegis / --obstacle-pack 仅 libero 有意义"
 fi
 
-OUT_DIR="${OUT_DIR:-$ROOT/artifacts/debug/${MODEL}_${BACKEND}}"
-RESULTS_ROOT="${RESULTS_ROOT:-$OUT_DIR/results}"
+OUT_DIR="${OUT_DIR:-$(dyni_artifacts_dir debug "${MODEL}_${BACKEND}")}"
+RESULTS_ROOT="${OUTPUT_ROOT:-${RESULTS_ROOT:-$(dyni_results_root)}}"
 HOST="${HOST:-127.0.0.1}"
 if [[ -z "$PORT" ]]; then
   case "$MODEL" in
@@ -225,7 +228,7 @@ if [[ "$MODEL" == "xvla" && "$BACKEND" != "libero" ]]; then
 fi
 
 mkdir -p "$OUT_DIR" "$RESULTS_ROOT"
-exec > >(tee -a "$OUT_DIR/eval.screen.log") 2>&1
+dyni_tee_logs "$OUT_DIR/eval.screen.log"
 
 PROGRESS="${PROGRESS:-$OUT_DIR/progress.log}"
 
@@ -349,3 +352,4 @@ done
 
 echo "$(date -Is) ALL_JOBS_FINISHED" | tee -a "$PROGRESS"
 ok "debug VLA eval finished → $RESULTS_ROOT"
+dyni_print_output_roots debug "${MODEL}_${BACKEND}"

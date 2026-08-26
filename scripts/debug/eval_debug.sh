@@ -90,7 +90,9 @@ DyniSafety debug eval — 单机调试不同 VLA / benchmark / level
   bash scripts/debug/eval_debug.sh \
     --model pi05 --level 1 --episodes 1 --oracle --aegis
 
-结果目录: results/l{level}/<run_id>/
+结果: out/eval/{backend}/{suite}/l{level}/<run_id>/
+视频: 同上 /videos/
+日志: out/logs/debug/eval_debug_<backend>_<model>/
 正式大规模跑: bash scripts/eval/sweep.sh --dry-run
 EOF
 }
@@ -183,6 +185,9 @@ if [[ "$AEGIS" -eq 1 ]]; then
 fi
 COMMON+=("${EXTRA_ARGS[@]}")
 
+LOG_DIR="$(dyni_artifacts_dir debug "eval_debug_${BACKEND}_${MODEL}")"
+dyni_tee_logs "$LOG_DIR/eval.screen.log"
+info "process log: $LOG_DIR/eval.screen.log"
 info "debug eval plan"
 echo "  backend=$BACKEND  model=$MODEL  suite=$SUITE"
 echo "  levels=${LEVEL_LIST[*]}  tasks=${TASK_MODE}:${TASKS}  episodes=$EPISODES  seed=$SEED"
@@ -215,6 +220,7 @@ else
 fi
 
 if [[ "$fail" -ne 0 ]]; then
-  die "debug eval finished with failures ($n_jobs jobs). See results/ and stderr above."
+  die "debug eval finished with failures ($n_jobs jobs). See $(dyni_eval_root)/ and $LOG_DIR/"
 fi
-ok "debug eval done ($n_jobs jobs). results under $ROOT/results/"
+ok "debug eval done ($n_jobs jobs)."
+dyni_print_output_roots debug "eval_debug_${BACKEND}_${MODEL}"

@@ -19,9 +19,11 @@ ARGS=(--suite "$SUITE")
 [[ -n "${DYNI_JOBS_PER_GPU:-}" ]] && ARGS+=(--jobs-per-gpu "$DYNI_JOBS_PER_GPU")
 
 warn "sweep launches per-model conda envs itself; server lifecycle is handled by the scheduler."
-warn "This is a long job. Consider: nohup bash scripts/eval/sweep.sh > sweep.log 2>&1 &"
+SWEEP_LOG="$(dyni_artifacts_dir eval sweep)/sweep.log"
+warn "This is a long job. Consider: nohup bash scripts/eval/sweep.sh > $SWEEP_LOG 2>&1 &"
 info "dynisafety sweep ${ARGS[*]} $*"
 dyni_cli sweep "${ARGS[@]}" "$@"
 
-ok "sweep done. Failures (if any): results/_sweep/$SUITE/failures.jsonl"
-ok "Next: bash scripts/eval/02_report.sh  (or bash scripts/eval/02_report.sh)"
+ok "sweep done. Failures (if any): $(dyni_paths sweep-root "$(basename "$SUITE" .yaml)")/failures.jsonl"
+dyni_print_output_roots eval sweep
+ok "Next: bash scripts/eval/02_report.sh"

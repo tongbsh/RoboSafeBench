@@ -420,8 +420,16 @@ def _write_completed_summary(run_dir: Path, *, task_id: int, episodes: int) -> N
 
 
 def test_make_run_dir_uses_level_bucket(tmp_path: Path) -> None:
-    path = make_run_dir(tmp_path / "results", level=2, run_id="demo-run")
-    assert path == tmp_path / "results" / "l2" / "demo-run"
+    path = make_run_dir(
+        tmp_path / "out",
+        backend="libero",
+        suite="safelibero_spatial",
+        level=2,
+        run_id="demo-run",
+    )
+    assert path == (
+        tmp_path / "out" / "eval" / "libero" / "safelibero_spatial" / "l2" / "demo-run"
+    )
 
 
 def test_is_job_complete_level_bucket_and_legacy_flat(tmp_path: Path) -> None:
@@ -448,6 +456,8 @@ def test_is_job_complete_level_bucket_and_legacy_flat(tmp_path: Path) -> None:
     # Level-bucket layout is also discovered (alongside legacy flat).
     bucket = make_run_dir(
         results,
+        backend="libero",
+        suite="safelibero_spatial",
         level=1,
         run_id="libero-openvla_oft-safelibero_spatial-t0-l1-s7-20260811T010000",
     )

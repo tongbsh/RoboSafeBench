@@ -315,7 +315,7 @@ def _print_dry_run(
         "config_hash": resolved.config_hash,
         "task_id": task_id if task_id is not None else "(all from Backend.list_tasks)",
         "run_id_pattern": "{backend}-{model}-{suite}-t{task}-l{level}-s{seed}-{YYYYmmddTHHMMSS}",
-        "run_dir_pattern": "results/l{level}/{run_id}",
+        "run_dir_pattern": "eval/{backend}/{suite}/l{level}/{run_id}",
         "overrides": list(overrides),
         "warnings": list(resolved.warnings),
     }
@@ -467,7 +467,13 @@ def run_eval(
             task_id=int(task_spec.task_id),
         )
         run_cfg = replace(task_cfg, run_id=run_id)
-        run_dir = make_run_dir(results_root, level=int(task_cfg.level), run_id=run_id)
+        run_dir = make_run_dir(
+            results_root,
+            backend=str(task_cfg.backend),
+            suite=str(task_cfg.suite),
+            level=int(task_cfg.level),
+            run_id=run_id,
+        )
         try:
             result = run_episodes(
                 backend=backend_obj,

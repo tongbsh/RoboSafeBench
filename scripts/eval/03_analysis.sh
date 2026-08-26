@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 傻瓜评测 03：一键离线分析（src/dynisafety/analysis）。
-# 只读 results/，写到 reports/analysis/（可用 DYNI_ANALYSIS 改）。
+# 只读 out/eval/，写到 out/analysis/（可用 DYNI_ANALYSIS 改）。
 #
 #   bash scripts/eval/03_analysis.sh
 #   bash scripts/eval/03_analysis.sh termination
@@ -9,8 +9,8 @@
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/env.sh"
 
 CMD="all"
-RESULTS="${DYNI_RESULTS:-$DYNI_ROOT/results}"
-OUT="${DYNI_ANALYSIS:-$DYNI_ROOT/reports/analysis}"
+RESULTS="${DYNI_RESULTS:-$(dyni_paths eval-root)}"
+OUT="${DYNI_ANALYSIS:-$(dyni_paths analysis-root)}"
 EXTRA=()
 
 while [[ $# -gt 0 ]]; do

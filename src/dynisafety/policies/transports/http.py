@@ -56,6 +56,8 @@ class HttpTransport:
         self._act_url = urljoin(self._base_url, act_path.lstrip("/"))
         self._startup_timeout_s = startup_timeout_s
         self._act_timeout_s = act_timeout_s
+        self._session = requests.Session()
+        self._reset_unsupported = False
         self._closed = False
 
     def wait_until_ready(self) -> None:
@@ -77,7 +79,7 @@ class HttpTransport:
         self._ensure_open()
         try:
             # Probe timeout reuses act_timeout_s (no separate default literal).
-            resp = requests.get(self._health_url, timeout=self._act_timeout_s)
+            resp = self._session.get(self._health_url, timeout=self._act_timeout_s)
             return resp.status_code == 200
         except requests.RequestException:
             return False
@@ -85,9 +87,14 @@ class HttpTransport:
     def reset(self, payload: Mapping[str, Any] | None = None) -> None:
         """POST reset; treat 404/405 as no-op (some servers e.g. X-VLA have no /reset)."""
         self._ensure_open()
+        if self._reset_unsupported:
+            return
         body: Mapping[str, Any] = {} if payload is None else payload
-        resp = requests.post(self._reset_url, json=dict(body), timeout=self._act_timeout_s)
+        resp = self._session.post(
+            self._reset_url, json=dict(body), timeout=self._act_timeout_s
+        )
         if resp.status_code in (404, 405):
+            self._reset_unsupported = True
             logger.info(
                 "HttpTransport: reset endpoint %s returned %s; treating as no-op",
                 self._reset_url,
@@ -100,7 +107,9 @@ class HttpTransport:
         self._ensure_open()
         if not isinstance(payload, Mapping):
             raise TypeError(f"payload must be a mapping, got {type(payload)!r}")
-        resp = requests.post(self._act_url, json=dict(payload), timeout=self._act_timeout_s)
+        resp = self._session.post(
+            self._act_url, json=dict(payload), timeout=self._act_timeout_s
+        )
         resp.raise_for_status()
         data = resp.json()
         if not isinstance(data, Mapping):
@@ -110,6 +119,8 @@ class HttpTransport:
         return dict(data)
 
     def close(self) -> None:
+        if not self._closed:
+            self._session.close()
         self._closed = True
 
     def _ensure_open(self) -> None:

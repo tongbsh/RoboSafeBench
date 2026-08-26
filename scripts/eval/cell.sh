@@ -24,5 +24,6 @@ if dyni_needs_server "$MODEL"; then
 fi
 
 info "eval: backend=$BACKEND model=$MODEL suite=$SUITE level=$LEVEL $*"
-dyni_cli eval --backend "$BACKEND" --model "$MODEL" --suite "$SUITE" --level "$LEVEL" "$@"
-ok "results under $DYNI_ROOT/results/"
+dyni_cli eval --backend "$BACKEND" --model "$MODEL" --suite "$SUITE" --level "$LEVEL" \
+  --output-root "$(dyni_results_root)" "$@"
+dyni_print_output_roots

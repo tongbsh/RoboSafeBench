@@ -812,8 +812,10 @@ class RoboCasaBackend:
             task_slug = handle.task_description.lower().replace(" ", "_").replace("\n", "_")[:40]
             vid_dir = episode_video_dir(
                 results_dir=str(cfg.output.results_dir),
+                backend=str(cfg.backend),
                 suite=str(cfg.suite),
                 level=level,
+                run_id=str(cfg.run_id),
                 task_id=handle.task_id,
                 task_name=task_slug,
             )
@@ -907,13 +909,14 @@ def _save_spawn_snapshot(
     try:
         import imageio
 
-        results_dir = Path(str(cfg.output.results_dir))
-        task_slug = str(handle.task_name).lower().replace(" ", "_")[:40]
-        out_dir = (
-            results_dir
-            / "videos"
-            / f"{cfg.suite}_level{level}"
-            / f"task{handle.task_id}_{task_slug}"
+        out_dir = episode_video_dir(
+            results_dir=str(cfg.output.results_dir),
+            backend=str(cfg.backend),
+            suite=str(cfg.suite),
+            level=level,
+            run_id=str(cfg.run_id),
+            task_id=handle.task_id,
+            task_name=str(handle.task_name).lower().replace(" ", "_")[:40],
         )
         out_dir.mkdir(parents=True, exist_ok=True)
         # Keep agentview for debugging only — never use it to judge floor spawn.

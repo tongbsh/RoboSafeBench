@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # xvla_official × RoboTwin main20：等 serve ready 后按 task × level 循环 eval。
+# 日志：out/logs/debug/xvla_official_robotwin/  结果/视频：out/eval/robotwin/
 # --task all = catalog ids（不是 0..19），见 configs/backends/robotwin/suites/main20.yaml
 #
 #   screen -S xvla_rt_eval

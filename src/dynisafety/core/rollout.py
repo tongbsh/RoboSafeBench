@@ -124,15 +124,28 @@ def resolve_save_video(cfg: RunConfig) -> bool:
     )
 
 
-def run_dir_layout(results_root: Path | str, *, level: int, run_id: str) -> Path:
-    """``{results_root}/l{level}/{run_id}`` — the single source of run-dir layout.
+def run_dir_layout(
+    results_root: Path | str,
+    *,
+    backend: str,
+    suite: str,
+    level: int,
+    run_id: str,
+) -> Path:
+    """``{out}/eval/{backend}/{suite}/l{level}/{run_id}`` from ``configs/paths.yaml``.
 
-    ``runner.loop.make_run_dir`` delegates here, and backends reconstruct the
-    same path from ``cfg`` when they need to write alongside ``episodes.jsonl``
-    (behavior-diagnostics traces). Keeping one definition prevents the runner
-    and the backends from drifting into two different directory trees.
+    ``results_root`` is the one I/O root (``paths.out`` / ``--output-root``).
+    ``runner.loop.make_run_dir`` delegates here so backends reconstructing the
+    path from ``cfg`` cannot drift from the runner.
     """
-    return Path(results_root) / f"l{int(level)}" / str(run_id)
+    from dynisafety.config.paths import load_paths
+
+    return load_paths().with_out(results_root).eval_dir(
+        backend=str(backend),
+        suite=str(suite),
+        level=int(level),
+        run_id=str(run_id),
+    )
 
 
 def run_dir_from_cfg(cfg: RunConfig) -> Path | None:
@@ -147,23 +160,40 @@ def run_dir_from_cfg(cfg: RunConfig) -> Path | None:
         return None
     if cfg.level is MISSING:
         return None
-    return run_dir_layout(str(cfg.output.results_dir), level=int(cfg.level), run_id=str(cfg.run_id))
+    if cfg.backend is MISSING or cfg.suite is MISSING:
+        return None
+    return run_dir_layout(
+        str(cfg.output.results_dir),
+        backend=str(cfg.backend),
+        suite=str(cfg.suite),
+        level=int(cfg.level),
+        run_id=str(cfg.run_id),
+    )
 
 
 def episode_video_dir(
     *,
     results_dir: str | Path,
+    backend: str,
     suite: str,
     level: int,
-    task_id: int,
-    task_name: str,
+    run_id: str,
+    task_id: int = 0,
+    task_name: str = "",
 ) -> Path:
-    """``results_dir/videos/{suite}_level{level}/task{task_id}_{task_name}``.
+    """``{out}/eval/{backend}/{suite}/l{level}/{run_id}/videos``.
 
-    ``task_name`` is used as given. Slug rules differ across backends and
-    are the caller's job. Filenames are not assembled here.
+    ``task_id`` / ``task_name`` are unused (filenames stay the caller's job).
     """
-    return Path(results_dir) / "videos" / f"{suite}_level{level}" / f"task{task_id}_{task_name}"
+    del task_id, task_name
+    from dynisafety.config.paths import load_paths
+
+    return load_paths().with_out(results_dir).videos_dir(
+        backend=str(backend),
+        suite=str(suite),
+        level=int(level),
+        run_id=str(run_id),
+    )
 
 
 def build_episode_record(

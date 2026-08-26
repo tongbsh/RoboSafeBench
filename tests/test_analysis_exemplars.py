@@ -199,6 +199,11 @@ def test_plot_and_write_do_not_mutate_results(tmp_path: Path) -> None:
         __import__("json").dumps(ep.to_json_dict(), ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
+    (run_dir / "summary.json").write_text(
+        __import__("json").dumps({"status": "completed", "n_episodes_written": 1})
+        + "\n",
+        encoding="utf-8",
+    )
     before = fingerprint_results(results)
     out = tmp_path / "out"
     rc = analysis_main(["exemplars", "--results", str(results), "--out", str(out)])

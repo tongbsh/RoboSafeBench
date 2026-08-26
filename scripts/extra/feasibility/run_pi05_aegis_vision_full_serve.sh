@@ -6,9 +6,11 @@ cd "$ROOT"
 # shellcheck disable=SC1091
 source "$ROOT/scripts/lib/env.sh"
 
-OUT_DIR="${OUT_DIR:-$ROOT/artifacts/feasibility/pi05_aegis_vision_full}"
+OUT_DIR="${OUT_DIR:-$(dyni_artifacts_dir feasibility pi05_aegis_vision_full)}"
 PORT="${PORT:-8011}"
 mkdir -p "$OUT_DIR"
+export DYNI_SERVE_LOG_DIR="$OUT_DIR"
+dyni_tee_logs "$OUT_DIR/serve.screen.log"
 
 dyni_activate "$DYNI_TOOL_ENV"
 export PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}"

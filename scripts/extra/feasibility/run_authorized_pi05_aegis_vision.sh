@@ -16,8 +16,8 @@ fi
 # shellcheck disable=SC1091
 source "$ROOT/scripts/lib/env.sh"
 
-OUT_DIR="${OUT_DIR:-$ROOT/artifacts/feasibility/pi05_aegis_vision_authorized}"
-RESULTS_ROOT="$OUT_DIR/results"
+OUT_DIR="${OUT_DIR:-$(dyni_artifacts_dir feasibility pi05_aegis_vision_authorized)}"
+RESULTS_ROOT="${RESULTS_ROOT:-$(dyni_results_root)}"
 PORT="${PI05_SERVE_PORT:-8010}"
 DINO_CFG="${DINO_CFG:-$ROOT/artifacts/feasibility/aegis_vision_gpu_smoke/GroundingDINO_SwinT_OGC.py}"
 MATRIX="$ROOT/configs/feasibility/libero_pi05_aegis_vision_small.yaml"
@@ -44,6 +44,7 @@ fi
 # Do not use scripts/eval/serve.sh here: it activates openpi first, then
 # `python -m dynisafety.cli` fails (openpi env has no matplotlib).
 SERVE_LOG="$OUT_DIR/serve.log"
+export DYNI_SERVE_LOG_DIR="$OUT_DIR"
 info "starting pi05 serve on port $PORT (cli from $DYNI_TOOL_ENV)"
 dyni_activate "$DYNI_TOOL_ENV"
 export PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
@@ -113,7 +114,7 @@ MAP_JSONL="$OUT_DIR/episodes_merged.jsonl"
 : > "$MAP_JSONL"
 while IFS= read -r ep; do
   cat "$ep" >> "$MAP_JSONL"
-done < <(find "$RESULTS_ROOT" -name episodes.jsonl | sort)
+done < <(find "$RESULTS_ROOT" -name episodes.jsonl -newer "$MAIN_LOG" | sort)
 info "merged episode lines: $(wc -l < "$MAP_JSONL" | tr -d ' ')"
 
 python tools/feasibility_runner.py \
@@ -122,3 +123,4 @@ python tools/feasibility_runner.py \
   --out "$OUT_DIR/analyze"
 
 ok "pi05 AEGIS vision run finished — see $OUT_DIR"
+dyni_print_output_roots feasibility pi05_aegis_vision_authorized

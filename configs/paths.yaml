@@ -1,0 +1,165 @@
+# Workspace I/O contract. One root; backend / suite / level branch underneath.
+#
+# Status: loaded by dynisafety.config.paths. Writers and 02/03/check read this
+# file. Legacy `results/l{level}/` is still scanned for resume.
+#
+# Placeholders:
+#   ${workspace}  ${env:VAR}  ${env:VAR|default}   — resolved when the file is loaded
+#   {backend} {suite} {level} {run_id} {kind} {name} {model} {task_id} {grid}
+#       — filled at runtime; not ${} config placeholders
+#
+# config_hash: only `roots.out` + `layout.eval` + `layout.videos` + `flags.save_video`
+# belong in the eval identity. logs / reports / analysis do not.
+
+# --- single root -----------------------------------------------------------
+# Change disks / machines here (or set DYNI_OUT). Everything else is relative.
+roots:
+  out: ${env:DYNI_OUT|${env:DYNI_RESULTS|${workspace}/out}}
+
+# --- layouts (relative to roots.out) ---------------------------------------
+layout:
+  eval: "eval/{backend}/{suite}/l{level}/{run_id}"
+  videos: "eval/{backend}/{suite}/l{level}/{run_id}/videos"
+  sweep: "_sweep/{suite}"
+  logs: "logs/{kind}/{name}"
+  reports: "reports/{grid}"
+  analysis: "analysis"
+
+# run_id lives under layout.eval. Directory already has backend / suite / level,
+# so the id only needs model, task, seed, stamp:
+#   {model}-t{task_id}-s{seed}-{YYYYmmddTHHMMSS}
+
+flags:
+  save_video: false
+
+# --- consumers (read / write are layout keys or layout/subdir) -------------
+consumers:
+  eval:
+    read: eval
+    write: eval
+  report:
+    read: eval
+    write: reports
+  analysis:
+    read: eval
+    write: analysis
+  xvla_check:
+    read: eval
+    write: logs/debug/xvla_walkthrough
+
+# --- kinds (process-log partition; name is computed, not enumerated) -------
+# Path: {out}/logs/{kind}/{name}/
+kinds:
+  eval: eval
+  debug: debug
+  feasibility: feasibility
+  serve: serve
+
+# --- script catalog (documentation; loaders must ignore this block) --------
+# name patterns use the same { } runtime slots as layout.
+catalog:
+  - script: scripts/eval/cell.sh
+    kind: eval
+    name: null  # subroutine; no tee
+    writes: [eval]
+  - script: scripts/eval/00_smoke.sh
+    kind: eval
+    name: smoke
+    writes: [eval, logs]
+  - script: scripts/eval/01_eval.sh
+    kind: eval
+    name: "01_{suite}"
+    writes: [eval, logs]
+  - script: scripts/eval/sweep.sh
+    kind: eval
+    name: sweep
+    writes: [eval, sweep, logs]
+  - script: scripts/eval/serve.sh
+    kind: eval
+    name: "serve_{model}"
+    writes: [logs]
+  - script: scripts/eval/02_report.sh
+    consumer: report
+    writes: [reports]
+  - script: scripts/eval/03_analysis.sh
+    consumer: analysis
+    writes: [analysis]
+  - script: scripts/debug/eval_debug.sh
+    kind: debug
+    name: "eval_debug_{backend}_{model}"
+    writes: [eval, logs]
+  - script: scripts/debug/launch_vla_eval.sh
+    kind: debug
+    name: "{model}_{backend}"
+    writes: [eval, logs]
+  - script: scripts/debug/launch_vla_serve.sh
+    kind: debug
+    name: "{model}_{backend}"
+    writes: [logs]
+  - script: scripts/debug/robotwin/launch_xvla_official_robotwin_eval.sh
+    kind: debug
+    name: xvla_official_robotwin
+    writes: [eval, logs]
+  - script: scripts/debug/robotwin/launch_xvla_official_robotwin_serve.sh
+    kind: debug
+    name: xvla_official_robotwin
+    writes: [logs]
+  - script: scripts/debug/simplerenv/launch_xvla_official_simplerenv_eval.sh
+    kind: debug
+    name: xvla_official_simplerenv
+    writes: [eval, logs]
+  - script: scripts/debug/simplerenv/launch_xvla_official_simplerenv_serve.sh
+    kind: debug
+    name: xvla_official_simplerenv
+    writes: [logs]
+  - script: scripts/debug/robotwin/launch_random_robotwin_eval.sh
+    kind: debug
+    name: eval_debug_robotwin_random
+    writes: [eval, logs]
+  - script: scripts/debug/xvla_walkthrough/00_run.sh
+    kind: debug
+    name: xvla_walkthrough
+    writes: [eval, sweep, logs]
+  - script: scripts/debug/xvla_walkthrough/01_check.sh
+    consumer: xvla_check
+    writes: [logs]
+  - script: scripts/debug/libero/run_pi05_libero_spatial.sh
+    kind: debug
+    name: debug_pi05_libero_spatial
+    writes: [eval, sweep, logs]
+  - script: scripts/debug/libero/run_pi0_libero_spatial.sh
+    kind: debug
+    name: debug_pi0_libero_spatial
+    writes: [eval, sweep, logs]
+  - script: scripts/debug/parallel_eval/p0_align.sh
+    kind: debug
+    name: parallel_eval
+    writes: [eval, logs]
+  - script: scripts/extra/feasibility/run_pi05_base_full_eval.sh
+    kind: feasibility
+    name: pi05_base_full_alignv2
+    writes: [eval, logs]
+  - script: scripts/extra/feasibility/run_pi05_aegis_vision_full_eval.sh
+    kind: feasibility
+    name: pi05_aegis_vision_full
+    writes: [eval, logs]
+  - script: scripts/extra/feasibility/run_pi05_aegis_vision_full_serve.sh
+    kind: feasibility
+    name: pi05_aegis_vision_full
+    writes: [logs]
+  - script: scripts/extra/feasibility/run_authorized_pi05_aegis_vision.sh
+    kind: feasibility
+    name: pi05_aegis_vision_authorized
+    writes: [eval, logs]
+  - script: scripts/extra/feasibility/run_authorized_aegis_feasibility.sh
+    kind: feasibility
+    name: aegis_authorized_run
+    writes: [eval, logs]
+  - script: scripts/extra/feasibility/run_authorized_oracle_feasibility.sh
+    kind: feasibility
+    name: authorized_run
+    writes: [eval, logs]
+  - script: scripts/extra/models/lingbot_va/serve.sh
+    kind: debug
+    name: lingbot_va_vis
+    writes: [logs]

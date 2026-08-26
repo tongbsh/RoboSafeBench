@@ -40,6 +40,43 @@ dyni_backend_env() {
 # archived golden logs used by 50_verify_golden.sh
 DYNI_GOLDEN_TAR="${DYNI_GOLDEN_TAR:-${HOME}/autodl-tmp/dynisafety_archive/golden_logs_20260805.tar.gz}"
 
+# --- output roots (configs/paths.yaml) ------------------------------------
+# One root: ${out}/  (DYNI_OUT or DYNI_RESULTS). Layout: eval/{backend}/{suite}/l{level}/
+dyni_paths() {
+  PYTHONPATH="$DYNI_ROOT/src${PYTHONPATH:+:$PYTHONPATH}" \
+    "${DYNI_PY:-python}" -m dynisafety.config.paths "$@"
+}
+
+dyni_results_root() {
+  dyni_paths out
+}
+
+dyni_eval_root() {
+  dyni_paths eval-root
+}
+
+dyni_artifacts_dir() {
+  local kind="${1:?kind}" name="${2:?name}"
+  dyni_paths logs "$kind" "$name"
+}
+
+dyni_tee_logs() {
+  local log="${1:?logfile}"
+  mkdir -p "$(dirname "$log")"
+  exec > >(tee -a "$log") 2>&1
+}
+
+dyni_print_output_roots() {
+  local kind name
+  kind="${1:-}"
+  name="${2:-}"
+  ok "eval:    $(dyni_eval_root)/{backend}/{suite}/l{level}/{run_id}/"
+  ok "videos:  …/{run_id}/videos/"
+  if [[ -n "$kind" && -n "$name" ]]; then
+    ok "logs:    $(dyni_artifacts_dir "$kind" "$name")/"
+  fi
+}
+
 # --- pretty logging --------------------------------------------------------
 if [[ -t 1 ]]; then
   _C_R=$'\033[31m'; _C_G=$'\033[32m'; _C_Y=$'\033[33m'; _C_B=$'\033[36m'; _C_0=$'\033[0m'

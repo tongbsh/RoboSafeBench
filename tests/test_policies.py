@@ -382,9 +382,7 @@ def test_http_transport_infer_with_mock_server() -> None:
     mock_resp.raise_for_status = MagicMock()
     mock_resp.json.return_value = {"action": [[0.0] * 7]}
 
-    with patch(
-        "dynisafety.policies.transports.http.requests.post", return_value=mock_resp
-    ) as post:
+    with patch.object(transport._session, "post", return_value=mock_resp) as post:
         out = transport.infer({"image": [0], "instruction": "x"})
     assert out["action"] == [[0.0] * 7]
     assert post.call_args.args[0].endswith("/act")
@@ -406,10 +404,30 @@ def test_http_transport_reset_404_is_noop() -> None:
     mock_resp.raise_for_status = MagicMock(
         side_effect=AssertionError("404 must not raise_for_status")
     )
-    with patch(
-        "dynisafety.policies.transports.http.requests.post", return_value=mock_resp
-    ):
+    with patch.object(transport._session, "post", return_value=mock_resp):
         transport.reset({})  # must not raise
+    transport.close()
+
+
+def test_http_transport_reset_404_is_cached() -> None:
+    """X-VLA has no /reset — probe once, then skip the dead POST each episode."""
+    transport = HttpTransport(
+        base_url="http://127.0.0.1:9",
+        health_path="/openapi.json",
+        startup_timeout_s=1,
+        act_timeout_s=5,
+        reset_path="/reset",
+        act_path="/act",
+    )
+    mock_resp = MagicMock()
+    mock_resp.status_code = 404
+    mock_resp.raise_for_status = MagicMock(
+        side_effect=AssertionError("404 must not raise_for_status")
+    )
+    with patch.object(transport._session, "post", return_value=mock_resp) as post:
+        transport.reset({})
+        transport.reset({})
+    assert post.call_count == 1
     transport.close()
 
 
@@ -816,6 +834,73 @@ def test_xvla_official_bridge_drains_plan_with_current_eef() -> None:
     assert chunk1.actions.shape == (1, 7)
     np.testing.assert_allclose(chunk0.actions[0, :3], [0.10, 0.0, 0.0], atol=1e-5)
     # Second step must subtract *current* eef (0.05), not the query-time eef (0.0).
+    np.testing.assert_allclose(chunk1.actions[0, :3], [0.15, 0.0, 0.0], atol=1e-5)
+    adapter.close()
+
+
+def test_xvla_official_bridge_drain_can_omit_images() -> None:
+    """HTTP fill needs primary; subsequent abs→delta steps only need current eef."""
+    from dynisafety.policies.adapters.xvla import XVLAAdapter
+
+    class _FakeTransport:
+        def __init__(self) -> None:
+            self.n_infer = 0
+
+        def reset(self, payload=None) -> None:
+            return None
+
+        def infer(self, payload):
+            self.n_infer += 1
+            return {
+                "action": [
+                    [0.10, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.2],
+                    [0.20, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.2],
+                ]
+            }
+
+        def close(self) -> None:
+            return None
+
+    transport = _FakeTransport()
+    adapter = XVLAAdapter(_xvla_official_bridge_cfg(), transport)  # type: ignore[arg-type]
+    adapter.reset(
+        EpisodeContext(
+            instruction="put carrot on plate",
+            task_id=0,
+            task_name="bridge_carrot",
+            episode_index=0,
+            seed=7,
+            level=0,
+            backend="simplerenv",
+            suite="bridge",
+            extra={},
+        )
+    )
+    img = np.zeros((48, 48, 3), dtype=np.uint8)
+    eef_a = np.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0], dtype=np.float64)
+    eef_b = np.array([0.05, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0], dtype=np.float64)
+    assert adapter.needs_visual_observation() is True
+    chunk0 = adapter.act(
+        Observation(
+            images={"primary": img},
+            state=eef_a[:7].astype(np.float32),
+            instruction="put carrot on plate",
+            step=0,
+            extra={"eef_pos": eef_a},
+        )
+    )
+    assert adapter.needs_visual_observation() is False
+    chunk1 = adapter.act(
+        Observation(
+            images={},
+            state=eef_b[:7].astype(np.float32),
+            instruction="put carrot on plate",
+            step=1,
+            extra={"eef_pos": eef_b},
+        )
+    )
+    assert transport.n_infer == 1
+    np.testing.assert_allclose(chunk0.actions[0, :3], [0.10, 0.0, 0.0], atol=1e-5)
     np.testing.assert_allclose(chunk1.actions[0, :3], [0.15, 0.0, 0.0], atol=1e-5)
     adapter.close()
 

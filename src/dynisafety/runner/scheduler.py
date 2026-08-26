@@ -824,9 +824,19 @@ def _is_level_bucket_name(name: str) -> bool:
 
 
 def _iter_run_dir_candidates(results_root: Path, job: JobSpec) -> list[Path]:
-    """Match run dirs in ``results/l{level}/`` and legacy flat ``results/``."""
+    """Match new ``eval/{backend}/{suite}/l{level}/`` plus legacy ``l{level}/`` / flat."""
     prefixes = (_run_id_prefix(job), _legacy_run_id_prefix(job))
     search_roots: list[Path] = []
+    try:
+        from dynisafety.config.paths import load_paths
+
+        search_roots.append(
+            load_paths()
+            .with_out(results_root)
+            .eval_parent(backend=job.backend, suite=job.suite, level=int(job.level))
+        )
+    except (OSError, ValueError, KeyError):
+        pass
     level_dir = results_root / f"l{int(job.level)}"
     if level_dir.is_dir():
         search_roots.append(level_dir)

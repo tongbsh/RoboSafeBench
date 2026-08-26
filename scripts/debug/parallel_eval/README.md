@@ -37,8 +37,8 @@ bash scripts/debug/parallel_eval/p0_align.sh --task 21 --level 0 --episodes 1 --
 # optional: --rng-seed N  (only if you want to override YAML x1 seed)
 ```
 
-Overrides: `--host` / `--port` (default `127.0.0.1:8010`), `--out`,
-`--skip-http` (warm + parallel only), `--no-wait`, `--rng-seed`.
+Overrides: `--host` / `--port` (default `127.0.0.1:8010`), `--out`（过程日志，默认 `out/logs/debug/parallel_eval`）、
+`--skip-http` (warm + parallel only), `--no-wait`, `--rng-seed`。评测产物写 `out/eval/`。
 
 The script:
 

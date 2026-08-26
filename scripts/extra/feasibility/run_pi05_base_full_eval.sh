@@ -7,8 +7,8 @@ cd "$ROOT"
 # shellcheck disable=SC1091
 source "$ROOT/scripts/lib/env.sh"
 
-OUT_DIR="${OUT_DIR:-$ROOT/artifacts/feasibility/pi05_base_full_alignv2}"
-RESULTS_ROOT="${RESULTS_ROOT:-$OUT_DIR/results}"
+OUT_DIR="${OUT_DIR:-$(dyni_artifacts_dir feasibility pi05_base_full_alignv2)}"
+RESULTS_ROOT="${RESULTS_ROOT:-$(dyni_results_root)}"
 HOST="${HOST:-127.0.0.1}"
 PORT="${PORT:-8011}"
 EPISODES="${EPISODES:-50}"
@@ -85,3 +85,4 @@ done
 
 echo "$(date -Is) ALL_JOBS_FINISHED" | tee -a "$PROGRESS"
 ok "full pi05 base eval finished → $RESULTS_ROOT"
+dyni_print_output_roots feasibility pi05_base_full_alignv2

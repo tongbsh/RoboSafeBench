@@ -40,7 +40,7 @@ Debug VLA serve（写 serve.screen.log，适合 screen）
   --suite ID       按 suite 加载权重时必填（univla / xvla_official）
   --port  N        默认: xvla* → 8010，其它 → 8011
   --gpu   N        CUDA_VISIBLE_DEVICES（默认: 0）
-  --out   DIR      日志目录（默认: artifacts/debug/<model>[_<backend>]_serve）
+  --out   DIR      过程日志目录（默认: out/logs/debug/<model>_<backend>；未传 --backend 时 backend=libero）
   -h | --help
 
 一个 serve 只对应一套权重。xvla_official：
@@ -102,13 +102,14 @@ fi
 
 # 与 launch_vla_eval.sh 共用目录，方便 eval 读本目录的 serve.screen.log
 if [[ -n "$BACKEND" ]]; then
-  OUT_DIR="${OUT_DIR:-$ROOT/artifacts/debug/${MODEL}_${BACKEND}}"
+  OUT_DIR="${OUT_DIR:-$(dyni_artifacts_dir debug "${MODEL}_${BACKEND}")}"
 else
-  OUT_DIR="${OUT_DIR:-$ROOT/artifacts/debug/${MODEL}_libero}"
+  OUT_DIR="${OUT_DIR:-$(dyni_artifacts_dir debug "${MODEL}_libero")}"
 fi
 
 mkdir -p "$OUT_DIR"
-exec > >(tee -a "$OUT_DIR/serve.screen.log") 2>&1
+export DYNI_SERVE_LOG_DIR="$OUT_DIR"
+dyni_tee_logs "$OUT_DIR/serve.screen.log"
 
 if ! dyni_needs_server "$MODEL"; then
   die "model '$MODEL' is local (transport: local); no server — just run scripts/debug/launch_vla_eval.sh"

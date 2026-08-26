@@ -496,17 +496,17 @@ class RoboTwinBackend:
                 # dual-arm reaction is not lost from the trace.
                 step_eef_pos = _copy_endpose_xyz(raw_obs, "left_endpose")
                 step_eef_pos_secondary = _copy_endpose_xyz(raw_obs, "right_endpose")
-                observation = build_observation(
-                    handle,
-                    instruction=instruction,
-                    step=task_step,
-                    needs_state=self._needs_state,
-                    raw_obs=raw_obs,
-                )
                 if save_video:
-                    frames.append(observation.images["primary"].copy())
+                    frames.append(np.asarray(extract_head_rgb(raw_obs)).copy())
 
                 if len(action_queue) == 0:
+                    observation = build_observation(
+                        handle,
+                        instruction=instruction,
+                        step=task_step,
+                        needs_state=self._needs_state,
+                        raw_obs=raw_obs,
+                    )
                     chunk = policy.act(observation)
                     converted = _apply_action_chunk(
                         handle,
@@ -647,8 +647,10 @@ class RoboTwinBackend:
             results_dir = Path(str(cfg.output.results_dir))
             vid_dir = episode_video_dir(
                 results_dir=results_dir,
+                backend=str(cfg.backend),
                 suite=str(cfg.suite),
                 level=level,
+                run_id=str(cfg.run_id),
                 task_id=handle.task.task_id,
                 task_name=handle.task.task_name,
             )

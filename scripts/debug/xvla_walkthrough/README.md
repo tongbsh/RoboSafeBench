@@ -36,12 +36,10 @@ bash scripts/debug/xvla_walkthrough/01_check.sh
 
 | 位置 | 内容 |
 |------|------|
-| `results/l{1,2,3}/<run_id>/` | `episodes.jsonl` `summary.json` |
-| `results/videos/<suite>_level{1,2,3}/` | 录像 |
-| `results/_sweep/debug_xvla_dynamic/` | sweep 失败表、实际用的 suite |
-| `artifacts/debug/xvla_walkthrough/check.md` | 汇总 |
-| `artifacts/debug/xvla_walkthrough/videos.txt` | 视频路径清单 |
+| `out/eval/{backend}/{suite}/l{level}/<run_id>/` | `episodes.jsonl` `summary.json` `videos/` |
+| `out/_sweep/debug_xvla_dynamic/` | sweep 失败表、实际用的 suite |
+| `out/logs/debug/xvla_walkthrough/` | 过程日志、`check.md`、`videos.txt` |
 
 矩阵定义：[`configs/suites/debug_xvla_dynamic.yaml`](../../../configs/suites/debug_xvla_dynamic.yaml)。  
 Sweep 自己管 X-VLA serve（不要只跑 `cell.sh` 却忘了起服务）。  
-`xvla` / `xvla_official` 都是 `max_jobs_per_gpu: 2`。走查默认 `DYNI_SERVERS_PER_GPU=2`：单卡两份权重 + 两个 eval。只要一份 serve 时设 `DYNI_SERVERS_PER_GPU=1`。矩阵是 117 job（三 backend × 全部 paper 任务 × L1–L3），调度器按双槽排队，不是只跑一个 task。
+`xvla` / `xvla_official` 都是 `max_jobs_per_gpu: 2`。走查默认 `DYNI_SERVERS_PER_GPU=1`：单卡一份权重 + 两个 eval 共用。要每槽一份权重时设 `DYNI_SERVERS_PER_GPU=2`。矩阵是 117 job（三 backend × 全部 paper 任务 × L1–L3），调度器按双槽排队，不是只跑一个 task。

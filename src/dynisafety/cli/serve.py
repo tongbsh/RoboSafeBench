@@ -6,7 +6,6 @@ import argparse
 import os
 import signal
 import sys
-import tempfile
 import time
 from pathlib import Path
 
@@ -49,6 +48,32 @@ def register_serve_parser(subparsers: argparse._SubParsersAction) -> None:
         help="GPU index for CUDA_VISIBLE_DEVICES (omit → first discovered GPU)",
     )
     p.set_defaults(serve_handler=dispatch_serve)
+
+
+def resolve_serve_log_path(
+    *,
+    workspace: Path,
+    model: str,
+    port: int,
+    log_dir: str | None = None,
+) -> Path:
+    """Process log for a standalone ``dynisafety serve``.
+
+    ``DYNI_SERVE_LOG_DIR`` (or ``log_dir``) pins the directory; otherwise
+    ``{out}/logs/serve/{model}/port{port}.log``. Sweep still writes server
+    logs under ``{out}/_sweep/`` via an explicit path.
+    """
+    raw = log_dir if log_dir is not None else os.environ.get("DYNI_SERVE_LOG_DIR", "")
+    raw = str(raw or "").strip()
+    if raw:
+        path = Path(raw).expanduser()
+        if path.suffix == ".log":
+            return path
+        return path / "server.log"
+    from dynisafety.config.paths import load_paths
+
+    del workspace
+    return load_paths().logs_dir("serve", model) / f"port{int(port)}.log"
 
 
 def run_serve(
@@ -114,8 +139,10 @@ def run_serve(
     health_raw = os.environ.get("DYNISAFETY_SERVER_WAIT_TIMEOUT")
     health_timeout_s = float(health_raw) if health_raw else 600.0
 
-    log_dir = Path(tempfile.mkdtemp(prefix=f"dynisafety_serve_{model}_"))
-    log_path = log_dir / "server.log"
+    log_path = resolve_serve_log_path(
+        workspace=workspace, model=model, port=listen_port
+    )
+    log_path.parent.mkdir(parents=True, exist_ok=True)
 
     print(f"[serve] model      = {spec.name}")
     print(f"[serve] suite      = {spec.suite or '(none — using checkpoint.default)'}")

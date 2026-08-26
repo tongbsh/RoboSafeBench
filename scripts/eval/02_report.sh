@@ -8,8 +8,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/../lib/env.sh"
 
 dyni_activate "$DYNI_TOOL_ENV"
 
-RESULTS="${DYNI_RESULTS:-$DYNI_ROOT/results}"
-OUT="${DYNI_REPORTS:-$DYNI_ROOT/reports}"
+RESULTS="${DYNI_RESULTS:-$(dyni_paths eval-root)}"
+OUT="${DYNI_REPORTS:-$(dyni_paths reports-root)}"
 
 SETTINGS="${DYNI_REPORT_SETTINGS:-$DYNI_ROOT/configs/report/report_settings.yaml}"
 METRICS="${DYNI_METRICS_YAML:-$DYNI_ROOT/configs/base.yaml}"

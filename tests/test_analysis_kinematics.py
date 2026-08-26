@@ -199,6 +199,13 @@ def _write_jsonl_run(root: Path, episodes: list[EpisodeRecord]) -> Path:
         ),
         encoding="utf-8",
     )
+    (run_dir / "summary.json").write_text(
+        __import__("json").dumps(
+            {"status": "completed", "n_episodes_written": len(episodes)}
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     return run_dir
 
 

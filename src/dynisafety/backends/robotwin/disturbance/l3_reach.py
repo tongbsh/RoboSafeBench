@@ -33,6 +33,7 @@ _ALPHA_DENOM_EPS = 1e-12
 
 MakeCandidateFn = Callable[[str, str], dict[str, Any] | None]
 ValidateFn = Callable[[Any, Any], bool]
+OriginBlockedFn = Callable[[np.ndarray], bool]
 
 __all__ = [
     "SLOTS",
@@ -49,6 +50,7 @@ __all__ = [
     "robotwin_l3_build_path",
     "robotwin_l3_select_mode",
     "robotwin_l3_fallback_chain",
+    "robotwin_l3_origin_is_valid",
     "robotwin_l3_accept_reach",
     "robotwin_l3_path_sha1",
     "robotwin_l3_execution_anchors",
@@ -375,6 +377,25 @@ def _reject_reason_from_candidate(cand: dict[str, Any] | None) -> str | None:
         return None
     reason = cand.get("infeasible_reason")
     return "candidate_rejected" if reason is None else str(reason)
+
+
+def robotwin_l3_origin_is_valid(
+    start: Any,
+    path: Any,
+    *,
+    origin_blocked: OriginBlockedFn,
+) -> bool:
+    """Layer B for RoboTwin L3: reach origin only.
+
+    The hand flies from an off-table spawn toward the dwell intercept. Mid-path
+    XY overlap with task actors is the approach, not a planning failure.
+    ``path`` is part of the ``ValidateFn`` signature and is ignored. Z clearance
+    stays in ``make_candidate``.
+    """
+    del path
+    if start is None:
+        return False
+    return not bool(origin_blocked(_as_xy(start, name="start")))
 
 
 def robotwin_l3_accept_reach(

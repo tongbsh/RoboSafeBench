@@ -10,7 +10,7 @@
 #   bash tests/run_paper_l0_smoke.sh --resume           # skip finished jobs
 #   bash tests/run_paper_l0_smoke.sh --only backend=libero
 #   bash tests/run_paper_l0_smoke.sh --only model=starvla
-#   bash tests/run_paper_l0_smoke.sh --summarize        # print SR table from results
+#   bash tests/run_paper_l0_smoke.sh --summarize        # print SR table from out/eval
 #   DYNI_GPUS=0 bash tests/run_paper_l0_smoke.sh
 #
 # Suite definition: tests/paper_l0_smoke.yaml
@@ -58,7 +58,7 @@ done
 
 summarize_l0() {
   dyni_activate "$DYNI_TOOL_ENV"
-  RESULTS="${DYNI_RESULTS:-$DYNI_ROOT/results}"
+  RESULTS="${DYNI_RESULTS:-$(dyni_eval_root)}"
   python - "$RESULTS" "$SUITE_YAML" <<'PY'
 import json
 import sys
@@ -85,7 +85,9 @@ if not results_root.is_dir():
     print(f"no results dir: {results_root}", file=sys.stderr)
     sys.exit(1)
 
-for summary_path in sorted(results_root.glob("*/summary.json")):
+for summary_path in sorted(results_root.rglob("summary.json")):
+    if "_sweep" in summary_path.parts:
+        continue
     try:
         summary = json.loads(summary_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -132,7 +134,7 @@ print(
 )
 print("-" * 88)
 if not stats:
-    print("(no paper-model L0 results found under results/)")
+    print(f"(no paper-model L0 results found under {results_root})")
 else:
     for key in sorted(stats):
         backend, model, suite = key
@@ -162,7 +164,7 @@ warn "Sweep starts/stops model servers itself. Prefer: nohup … > l0_smoke.log 
 info "dynisafety sweep ${ARGS[*]}"
 dyni_cli sweep "${ARGS[@]}"
 
-ok "sweep finished. Failures: results/_sweep/paper_l0_smoke/failures.jsonl"
+ok "sweep finished. Failures: $(dyni_paths sweep-root paper_l0_smoke)/failures.jsonl"
 info "Success-rate table:"
 summarize_l0
 ok "Done. Re-print table anytime: bash tests/run_paper_l0_smoke.sh --summarize"

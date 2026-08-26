@@ -3,7 +3,7 @@
 #
 #   bash scripts/debug/xvla_walkthrough/01_check.sh
 #   bash scripts/debug/xvla_walkthrough/01_check.sh --full
-#   bash scripts/debug/xvla_walkthrough/01_check.sh --suite results/_sweep/debug_xvla_dynamic/suite.used.yaml
+#   bash scripts/debug/xvla_walkthrough/01_check.sh --suite out/_sweep/debug_xvla_dynamic/suite.used.yaml
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

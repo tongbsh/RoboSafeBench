@@ -6,10 +6,12 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+from dynisafety.config.paths import load_paths
 from dynisafety.config.resolve import find_workspace_root
 from dynisafety.runner.scheduler import (
     JobSpec,
@@ -45,9 +47,12 @@ def _resolve_suite_arg(root: Path, raw: str | None, *, full: bool) -> Path:
     if raw:
         return resolve_suite_path(raw, configs_root=root / "configs")
     name = "debug_xvla_dynamic_full" if full else "debug_xvla_dynamic"
-    used = root / "results" / "_sweep" / name / "suite.used.yaml"
+    used = load_paths(workspace=root).sweep_dir(name) / "suite.used.yaml"
     if used.is_file():
         return used
+    legacy = root / "results" / "_sweep" / name / "suite.used.yaml"
+    if legacy.is_file():
+        return legacy
     return resolve_suite_path(name if full else "debug_xvla_dynamic", configs_root=root / "configs")
 
 
@@ -65,14 +70,25 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
 
 def _latest_run_dir(results_root: Path, job: JobSpec) -> Path | None:
     prefix = f"{job.backend}-{job.model}-{job.suite}-t{job.task_id}-l{job.level}-s{job.seed}-"
-    level_dir = results_root / f"l{int(job.level)}"
-    if not level_dir.is_dir():
-        return None
-    cands = [
-        path
-        for path in level_dir.iterdir()
-        if path.is_dir() and path.name.startswith(prefix)
-    ]
+    search: list[Path] = []
+    try:
+        search.append(
+            load_paths()
+            .with_out(results_root)
+            .eval_parent(backend=job.backend, suite=job.suite, level=int(job.level))
+        )
+    except (OSError, ValueError, KeyError):
+        pass
+    search.append(results_root / f"l{int(job.level)}")
+    cands: list[Path] = []
+    for level_dir in search:
+        if not level_dir.is_dir():
+            continue
+        cands.extend(
+            path
+            for path in level_dir.iterdir()
+            if path.is_dir() and path.name.startswith(prefix)
+        )
     if not cands:
         return None
     return max(cands, key=lambda p: p.stat().st_mtime)
@@ -125,8 +141,20 @@ def _video_ok(rec: dict[str, Any]) -> tuple[bool, str]:
 def main() -> int:
     args = _parse_args()
     root = find_workspace_root()
-    results_root = Path(args.results) if args.results else root / "results"
-    out_dir = Path(args.out) if args.out else root / "artifacts" / "debug" / "xvla_walkthrough"
+    paths = load_paths(workspace=root)
+    env_results = os.environ.get("DYNI_RESULTS", "").strip()
+    results_root = (
+        Path(args.results)
+        if args.results
+        else Path(env_results)
+        if env_results
+        else paths.out
+    )
+    out_dir = (
+        Path(args.out)
+        if args.out
+        else paths.logs_dir("debug", "xvla_walkthrough")
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
 
     suite_path = _resolve_suite_arg(root, args.suite, full=bool(args.full))

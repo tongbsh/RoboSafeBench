@@ -26,13 +26,15 @@ if [[ "${AUTHORIZE_GPU:-0}" != "1" ]]; then
 fi
 
 source "$ROOT/scripts/lib/env.sh"
+OUT_DIR="${OUT_DIR:-$(dyni_artifacts_dir feasibility aegis_authorized_run)}"
+RESULTS_ROOT="${RESULTS_ROOT:-$(dyni_results_root)}"
 dyni_activate_for openvla_oft eval libero
 export MUJOCO_GL="${MUJOCO_GL:-egl}"
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-8}"
 export MKL_NUM_THREADS="${MKL_NUM_THREADS:-8}"
 export PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
 
-mkdir -p "$OUT_DIR"
+mkdir -p "$OUT_DIR" "$RESULTS_ROOT"
 MAIN_LOG="$OUT_DIR/run_$(date +%Y%m%dT%H%M%S).log"
 exec > >(tee -a "$MAIN_LOG") 2>&1
 
@@ -48,10 +50,8 @@ if [[ ! -f "$CMDS" ]]; then
   exit 1
 fi
 
-RESULTS_ROOT="$OUT_DIR/results"
-mkdir -p "$RESULTS_ROOT"
-# Isolate from prior vision/debug runs under $ROOT/results, and bind the
-# active interpreter (do not use base's `dynisafety` console script).
+# Bind the active interpreter (do not use base's `dynisafety` console script).
+# Eval products go to results/; analyze later keeps this run via -newer MAIN_LOG.
 python - "$CMDS" "$RESULTS_ROOT" <<'PY'
 from pathlib import Path
 import sys
@@ -73,7 +73,7 @@ MAP_JSONL="$OUT_DIR/episodes_merged.jsonl"
 : > "$MAP_JSONL"
 while IFS= read -r ep; do
   cat "$ep" >> "$MAP_JSONL"
-done < <(find "$RESULTS_ROOT" -name episodes.jsonl | sort)
+done < <(find "$RESULTS_ROOT" -name episodes.jsonl -newer "$MAIN_LOG" | sort)
 
 n_lines="$(wc -l < "$MAP_JSONL" | tr -d ' ')"
 info "merged episode lines: $n_lines"
@@ -84,3 +84,4 @@ python tools/feasibility_runner.py \
   --out "$OUT_DIR/analyze" || warn "analyze failed"
 
 ok "authorized A2 run finished — see $OUT_DIR and $MAIN_LOG"
+dyni_print_output_roots feasibility aegis_authorized_run

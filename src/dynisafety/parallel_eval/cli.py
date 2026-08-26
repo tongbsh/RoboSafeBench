@@ -351,7 +351,13 @@ def run_parallel_eval(
             task_id=int(task_spec.task_id),
         )
         run_cfg = replace(task_cfg, run_id=run_id)
-        run_dir = make_run_dir(results_root, level=int(task_cfg.level), run_id=run_id)
+        run_dir = make_run_dir(
+            results_root,
+            backend=str(task_cfg.backend),
+            suite=str(task_cfg.suite),
+            level=int(task_cfg.level),
+            run_id=run_id,
+        )
         log_dir = run_dir / "parallel_eval_logs"
         infer_payload = {
             "parallel_eval": parallel_eval_block(pe_cfg),

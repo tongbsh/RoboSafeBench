@@ -143,8 +143,13 @@ def build_observation(
     instruction: str,
     step: int,
     needs_state: bool,
+    include_images: bool = True,
 ) -> Observation:
-    primary = get_primary_image(handle.env, obs, camera_name=handle.camera_name)
+    images: dict[str, np.ndarray] = {}
+    if include_images:
+        images["primary"] = get_primary_image(
+            handle.env, obs, camera_name=handle.camera_name
+        )
     state = None
     extra: dict[str, Any] = {}
     # Full WidowX eef_pos (8D) for policies that abs→delta like archive X-VLA;
@@ -161,7 +166,7 @@ def build_observation(
             eef = get_eef_pos(handle.env)
             state = np.concatenate([eef, np.zeros(4, dtype=np.float64)])
     return Observation(
-        images={"primary": primary},
+        images=images,
         state=state,
         instruction=instruction,
         step=int(step),
@@ -402,12 +407,17 @@ class SimplerEnvBackend:
                 step_eef_pos = copy_vec(get_eef_pos(handle.env))
                 eef_state = get_eef_state_7d(obs if isinstance(obs, Mapping) else {})
                 step_eef_quat = copy_vec(eef_state[3:7]) if eef_state is not None else None
+                include_images = True
+                needs_visual = getattr(policy, "needs_visual_observation", None)
+                if callable(needs_visual):
+                    include_images = bool(needs_visual())
                 observation = build_observation(
                     handle,
                     obs if isinstance(obs, Mapping) else {},
                     instruction=str(instruction),
                     step=task_step,
                     needs_state=self._needs_state,
+                    include_images=include_images,
                 )
                 if save_video:
                     frames.append(
@@ -536,8 +546,10 @@ class SimplerEnvBackend:
             results_dir = Path(str(cfg.output.results_dir))
             vid_dir = episode_video_dir(
                 results_dir=results_dir,
+                backend=str(cfg.backend),
                 suite=str(cfg.suite),
                 level=level,
+                run_id=str(cfg.run_id),
                 task_id=handle.task.task_id,
                 task_name=handle.task.task_name,
             )

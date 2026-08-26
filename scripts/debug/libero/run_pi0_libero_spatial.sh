@@ -34,14 +34,18 @@ SUITE_SRC="$ROOT/configs/suites/${SUITE_NAME}.yaml"
 
 SUITE_ARG="$SUITE_SRC"
 if [[ "$EPISODES" != "10" ]]; then
-  # Keep suite name so resume/failures stay under results/_sweep/<name>/.
-  SUITE_ARG="$ROOT/results/_sweep/${SUITE_NAME}/suite_ep${EPISODES}.yaml"
+  # Keep suite name so resume/failures stay under {out}/_sweep/<name>/.
+  SUITE_ARG="$(dyni_paths sweep-root "$SUITE_NAME")/suite_ep${EPISODES}.yaml"
   mkdir -p "$(dirname "$SUITE_ARG")"
   sed "s/^episodes_per_task: .*/episodes_per_task: ${EPISODES}/" \
     "$SUITE_SRC" >"$SUITE_ARG"
 fi
 
+LOG_DIR="$(dyni_artifacts_dir debug "$SUITE_NAME")"
+dyni_tee_logs "$LOG_DIR/sweep.screen.log"
+info "process log: $LOG_DIR/sweep.screen.log"
 info "debug sweep: pi0 × safelibero_spatial × task0 × L0–L3 × ${EPISODES} ep"
 info "suite=$SUITE_ARG  save_video=${DYNI_SAVE_VIDEO}  extra=[$*]"
 export DYNI_SUITE="$SUITE_ARG"
 bash "$ROOT/scripts/eval/sweep.sh" "$@"
+dyni_print_output_roots debug "$SUITE_NAME"
