@@ -30,6 +30,7 @@ from test_diagnostics_analyze import make_trace
 def _diag(**kw) -> dict:
     base = {
         "reacted": False,
+        "reacted_kinematic": False,
         "reaction_latency_steps": None,
         "reaction_latency_chunks": None,
         "reaction_post_contact": False,
@@ -208,8 +209,9 @@ def test_plot_and_write_do_not_mutate_results(tmp_path: Path) -> None:
     out = tmp_path / "out"
     rc = analysis_main(["exemplars", "--results", str(results), "--out", str(out)])
     assert rc == 0
-    assert (out / "exemplars.csv").is_file()
-    plots = list((out / "plots").glob("*.png"))
+    stage = out / "exemplars"
+    assert (stage / "exemplars.csv").is_file()
+    plots = list((stage / "plots").glob("*.png"))
     assert len(plots) == 1
     assert fingerprint_results(results) == before
 

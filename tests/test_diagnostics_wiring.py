@@ -35,7 +35,13 @@ LIBERO_BACKEND_SRC = REPO_ROOT / "src" / "dynisafety" / "backends" / "libero" / 
 ROBOTWIN_BACKEND_SRC = REPO_ROOT / "src" / "dynisafety" / "backends" / "robotwin" / "backend.py"
 
 
-def _diag_cfg(*, enabled: bool = True, save: bool = True, stride: int = 1) -> DiagnosticsConfig:
+def _diag_cfg(
+    *,
+    enabled: bool = True,
+    save: bool = True,
+    stride: int = 1,
+    min_latency_chunks: float = 1,
+) -> DiagnosticsConfig:
     return DiagnosticsConfig(
         enabled=enabled,
         trace=DiagnosticsTraceConfig(save=save, format="jsonl_gz", stride=stride),
@@ -45,6 +51,9 @@ def _diag_cfg(*, enabled: bool = True, save: bool = True, stride: int = 1) -> Di
             min_persist_steps=3,
             heading_change_deg=15.0,
             sigma_rel_floor=0.05,
+            min_latency_chunks=min_latency_chunks,
+            min_baseline_samples=5,
+            min_baseline_speed_frac=0.4,
         ),
         stop=DiagnosticsStopConfig(speed_frac=0.10, speed_floor_m_per_step=0.0005, min_steps=5),
         avoid=DiagnosticsAvoidConfig(
@@ -519,7 +528,7 @@ def test_record_step_ignores_unknown_fields(tmp_path: Path) -> None:
 
 
 def test_session_consumes_no_rng(tmp_path: Path) -> None:
-    """Determinism red line (docs/user/behavior_diagnostics.md §0.2).
+    """Determinism red line (docs/user/eval.md §0.2).
 
     Toggling diagnostics must not shift any rollout that draws from the global
     RNG streams, so the whole capture path has to leave both the legacy and the
@@ -823,7 +832,10 @@ def test_robotwin_must_pass_control_step_first_contact_not_sim_step() -> None:
         n_steps=len(steps),
     )
     trace = Trace(header=header, steps=steps)
-    cfg = _diag_cfg()
+    # Clock-unit trap: keep the kinematic pre-contact bit so a mismatched
+    # first_contact clock still flips reacted. The paper-default chunk gate
+    # (latency 6/8 < 1) would hide that bug.
+    cfg = _diag_cfg(min_latency_chunks=0)
     common = dict(success=False, success_step=None, contact_steps=2, trace_path=None)
 
     control_first = 25

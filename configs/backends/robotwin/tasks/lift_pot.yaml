@@ -1,7 +1,11 @@
 # main20 / task_id=11 — max_steps from _eval_step_limit.yml; primary_arm externalized for S3e registry (D3=B).
+# Dual-arm lift: primary EEF stays ~12–14 cm from the lerp drop. Shared 0.10
+# would miss almost all current onsets; keep 0.15 (see main20_11.yaml).
 runtime:
   max_steps: 400
 disturbance:
+  l1:
+    trigger_dist: 0.15
   obstacle:
     target_mode: source_object
 extra:

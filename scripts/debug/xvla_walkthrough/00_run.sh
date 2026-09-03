@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# X-VLA 流程走查：dynamic LIBERO + RoboTwin + SimplerEnv × 全部 paper 任务 × L1–L3。
-# 缩小版 scripts/eval/01_eval.sh：只跑 X-VLA，默认每格 20 条轨迹、录像、
-# L2/L3 diversity，以及 LIBERO obstacle pack。
+# X-VLA 流程走查：dynamic LIBERO + RoboTwin + SimplerEnv × 全部 paper 任务 × L0–L3。
+# 缩小版 scripts/eval/01_eval.sh：只跑 X-VLA，默认每格 20 条轨迹、录像。
+# L2/L3 diversity、LIBERO obstacle pack、人手质量与 paper_main 同一份
+# backend YAML；DYNI_* 默认再确认打开，--no-diversity / --no-obstacle-pack 可关。
 #
 #   bash scripts/debug/xvla_walkthrough/00_run.sh --dry-run
 #   bash scripts/debug/xvla_walkthrough/00_run.sh
 #   bash scripts/debug/xvla_walkthrough/00_run.sh --backend libero
+#   bash scripts/debug/xvla_walkthrough/00_run.sh --backend libero --suite safelibero_spatial --task 0 --level 0 --episodes 1 --capture
 #   bash scripts/debug/xvla_walkthrough/00_run.sh --backend robotwin,simplerenv
 #   bash scripts/debug/xvla_walkthrough/00_run.sh --episodes 3
 #   bash scripts/debug/xvla_walkthrough/00_run.sh --full          # 论文条数：L 50 / RT 20 / SE 50
@@ -13,6 +15,7 @@
 #   DYNI_GPUS=0 bash scripts/debug/xvla_walkthrough/00_run.sh
 #   DYNI_SAVE_VIDEO=0 bash scripts/debug/xvla_walkthrough/00_run.sh --no-video
 #   bash scripts/debug/xvla_walkthrough/00_run.sh --no-diversity --no-obstacle-pack
+#   DYNI_CAPTURE=1 bash scripts/debug/xvla_walkthrough/00_run.sh --backend libero --capture
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -28,15 +31,18 @@ export DYNI_DIVERSITY="${DYNI_DIVERSITY:-1}"
 export DYNI_OBSTACLE_PACK="${DYNI_OBSTACLE_PACK:-1}"
 # One loaded X-VLA shared by both eval slots (set 2 to pin a copy per eval).
 export DYNI_SERVERS_PER_GPU="${DYNI_SERVERS_PER_GPU:-1}"
+export DYNI_CAPTURE="${DYNI_CAPTURE:-0}"
 
 BACKENDS=""
 LEVELS=""
+SUITES=""
 TASKS=""
 EPISODES=""
 FULL=0
 NO_VIDEO=0
 SKIP_CHECK=0
 SKIP_FREE=0
+CAPTURE=0
 EXTRA=()
 
 _csv_to_pipe() {
@@ -52,19 +58,21 @@ usage() {
 
 标志:
   --backend     libero|robotwin|simplerenv（可逗号）
-  --level       1|2|3（可逗号；默认 suite 里的 1,2,3）
+  --level       0|1|2|3（可逗号；默认 suite 里的 0,1,2,3）
+  --suite       suite id（可逗号；默认 matrix 里全部）
   --task        任务 id（可逗号）
   --episodes N  每格轨迹数（三端相同；覆盖 --full）
   --full        论文条数：LIBERO/SimplerEnv 50，RoboTwin 20
   --no-video          不录像（默认录像）
   --no-diversity      关闭 L2 spawn / L3 reach diversity（默认开）
   --no-obstacle-pack  关闭 LIBERO GSO pack（默认开；仅 libero 生效）
+  --capture           同次 rollout 写 robosafe_capture 包（也可 DYNI_CAPTURE=1）
   --skip-check        跑完不自动 01_check
   --skip-free         开跑前不清理 8010/8011 与遗留 xvla_* screen
   --dry-run / --resume / --retry-failed
   其余参数原样传给 dynisafety sweep
 
-默认 20 条轨迹/格（117 job × 20 ep），单卡一份权重 + 两个 eval。LIBERO/SimplerEnv 要论文 50 条用 --full。
+默认 20 条轨迹/格（156 job × 20 ep），单卡一份权重 + 两个 eval。LIBERO/SimplerEnv 要论文 50 条用 --full。
 EOF
 }
 
@@ -96,6 +104,18 @@ while [[ $# -gt 0 ]]; do
       ;;
     --task=*)
       TASKS="${1#*=}"
+      shift
+      ;;
+    --suite)
+      SUITES="$2"
+      shift 2
+      ;;
+    --suite=*)
+      SUITES="${1#*=}"
+      shift
+      ;;
+    --capture)
+      CAPTURE=1
       shift
       ;;
     --episodes)
@@ -143,6 +163,24 @@ done
 
 if [[ "$NO_VIDEO" -eq 1 ]]; then
   export DYNI_SAVE_VIDEO=0
+fi
+
+_capture_on() {
+  case "${DYNI_CAPTURE,,}" in
+    1|true|yes|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+if [[ "$CAPTURE" -eq 1 ]]; then
+  export DYNI_CAPTURE=1
+fi
+if _capture_on; then
+  export DYNI_CAPTURE=1
+  export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
+  if [[ ! -f "$ROOT/A_robosafe_capture_datasets/writer/package.py" ]]; then
+    warn "DYNI_CAPTURE=1 but A_robosafe_capture_datasets/ is missing; writer fail-soft, no packages"
+  fi
 fi
 
 _free_gpu_and_ports() {
@@ -231,6 +269,7 @@ fi
 
 ONLY_PARTS=()
 [[ -n "$BACKENDS" ]] && ONLY_PARTS+=("backend=$(_csv_to_pipe "$BACKENDS")")
+[[ -n "$SUITES" ]] && ONLY_PARTS+=("suite=$(_csv_to_pipe "$SUITES")")
 [[ -n "$LEVELS" ]] && ONLY_PARTS+=("level=$(_csv_to_pipe "$LEVELS")")
 [[ -n "$TASKS" ]] && ONLY_PARTS+=("task=$(_csv_to_pipe "$TASKS")")
 ONLY=""
@@ -243,7 +282,7 @@ LOG_DIR="$(dyni_artifacts_dir debug xvla_walkthrough)"
 dyni_tee_logs "$LOG_DIR/sweep.screen.log"
 info "process log: $LOG_DIR/sweep.screen.log"
 info "X-VLA walkthrough  suite=$SUITE_NAME  episodes=L/SE:${EP_DEFAULT} RT:${EP_ROBOTWIN}"
-info "save_video=${DYNI_SAVE_VIDEO}  diversity=${DYNI_DIVERSITY}  obstacle_pack=${DYNI_OBSTACLE_PACK}  servers_per_gpu=${DYNI_SERVERS_PER_GPU}${ONLY:+  only=$ONLY}"
+info "save_video=${DYNI_SAVE_VIDEO}  diversity=${DYNI_DIVERSITY}  obstacle_pack=${DYNI_OBSTACLE_PACK}  capture=${DYNI_CAPTURE}  servers_per_gpu=${DYNI_SERVERS_PER_GPU}${ONLY:+  only=$ONLY}"
 warn "X-VLA 是服务型：sweep 会按 backend 切 checkpoint（LIBERO=xvla，RT/SE=xvla_official）并自己起 serve。"
 
 SWEEP_ARGS=()

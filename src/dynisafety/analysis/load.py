@@ -20,6 +20,28 @@ from dynisafety.diagnostics.schema import Trace
 from dynisafety.diagnostics.writer import TRACES_DIRNAME, episode_trace_filename
 
 _SWEEP_DIRNAME = "_sweep"
+# Safety-layer arms are named ``{base}_oracle_...``. Ranking them against the
+# bare VLA compares a filter to a policy. Their own pre-onset is also not a
+# counterfactual null: L2/L3 already show the parked obstacle, so a shield
+# that stops on sight inflates the fitted scale.
+_SAFETY_LAYER_MARKER = "_oracle_"
+
+
+def is_safety_layer_model(model: str) -> bool:
+    return _SAFETY_LAYER_MARKER in str(model)
+
+
+def null_parent_model(model: str) -> str | None:
+    """Bare VLA whose fitted null a safety-layer arm should inherit.
+
+    ``pi05_oracle_swr_aegis`` → ``pi05``. ``None`` means fit this model's own
+    pre-onset (it is not a safety-layer name).
+    """
+    name = str(model)
+    if _SAFETY_LAYER_MARKER not in name:
+        return None
+    parent = name.split(_SAFETY_LAYER_MARKER, 1)[0]
+    return parent or None
 
 
 @dataclass(frozen=True)
@@ -31,11 +53,28 @@ class BoundEpisode:
     jsonl_path: Path
 
 
-def load_bound_episodes(results_root: Path | str) -> list[BoundEpisode]:
+def load_bound_episodes(
+    results_root: Path | str,
+    *,
+    models: Sequence[str] | None = None,
+    exclude_models: Sequence[str] | None = None,
+) -> list[BoundEpisode]:
     """Load every ``episodes.jsonl`` under ``results_root``.
 
     Skips ``_sweep`` bookkeeping trees (same rule as the calibrator).
+
+    ``models`` / ``exclude_models`` filter on ``EpisodeRecord.model``. The
+    results tree is laid out by suite and level, not by model, so an unfiltered
+    load pools every arm that ever wrote into it — including safety-layer arms
+    such as ``pi05_oracle_swr_aegis``. Ranking those against the base policies
+    compares a policy with a filter bolted on against policies without one.
+    ``report`` does not need this because its coverage grid names the models.
     """
+    keep = None if models is None else {str(m) for m in models}
+    drop = set() if exclude_models is None else {str(m) for m in exclude_models}
+    if keep is not None and (keep & drop):
+        raise ValueError(f"models and exclude_models overlap: {sorted(keep & drop)}")
+
     root = Path(results_root)
     paths = [
         path
@@ -46,6 +85,11 @@ def load_bound_episodes(results_root: Path | str) -> list[BoundEpisode]:
     for path in paths:
         run_dir = path.parent
         for ep in load_episodes((path,)):
+            name = str(ep.model)
+            if keep is not None and name not in keep:
+                continue
+            if name in drop:
+                continue
             bound.append(BoundEpisode(episode=ep, run_dir=run_dir, jsonl_path=path))
     return bound
 
@@ -115,16 +159,21 @@ def resolve_video_path(bound: BoundEpisode) -> Path | None:
 
 
 def fingerprint_results(results_root: Path | str) -> str:
-    """SHA-256 of every ``episodes.jsonl`` and ``traces/`` file, sorted.
+    """SHA-256 of completed-run ``episodes.jsonl`` and ``traces/`` files.
 
+    Only completed cells enter analysis (same rule as ``discover_episode_files``).
+    A live incomplete sweep next door must not trip the mutation guard.
     Used by tests to prove this package never mutates the results tree.
     """
     root = Path(results_root)
     digest = hashlib.sha256()
     files: list[Path] = []
     if root.is_dir():
-        files.extend(root.rglob("episodes.jsonl"))
-        files.extend(p for p in root.rglob("*") if p.is_file() and "traces" in p.parts)
+        for jsonl in discover_episode_files(root):
+            files.append(jsonl)
+            traces = jsonl.parent / "traces"
+            if traces.is_dir():
+                files.extend(p for p in traces.rglob("*") if p.is_file())
     for path in sorted(files, key=lambda p: str(p)):
         digest.update(str(path.relative_to(root)).encode("utf-8"))
         digest.update(b"\0")

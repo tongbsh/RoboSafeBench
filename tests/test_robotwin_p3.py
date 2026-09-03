@@ -41,6 +41,28 @@ def test_nudge_xy_disk_and_aabb() -> None:
     assert abs(float(pushed[0])) >= 0.15 + 0.03 + 0.02 - 1e-9 or abs(float(pushed[1])) >= 0.10 + 0.03 + 0.02 - 1e-9
 
 
+def test_landing_push_only_when_xy_overlaps() -> None:
+    mgr = object.__new__(DisturbanceManager)
+    mgr.config = SimpleNamespace(l2_landing_push_m=0.10)
+    src = np.array([0.0, 0.0, 0.74])
+    mid = np.array([0.20, 0.0, 0.74])
+
+    mgr._resolve_target_xy_overlap = lambda pos: np.asarray(pos, dtype=np.float64).copy()
+    clear = DisturbanceManager._apply_landing_push(mgr, mid, src)
+    assert abs(float(clear[0]) - 0.20) < 1e-9
+    assert abs(float(clear[1])) < 1e-9
+
+    def _nudge(pos: np.ndarray) -> np.ndarray:
+        out = np.asarray(pos, dtype=np.float64).copy()
+        out[0] += 0.01
+        return out
+
+    mgr._resolve_target_xy_overlap = _nudge
+    pushed = DisturbanceManager._apply_landing_push(mgr, mid, src)
+    assert abs(float(pushed[0]) - 0.30) < 1e-9
+    assert abs(float(pushed[1])) < 1e-9
+
+
 def test_push_xy_away_and_world_aabb() -> None:
     moved = push_xy_away(np.array([0.2, 0.0]), np.array([0.0, 0.0]), 0.10)
     assert abs(float(moved[0]) - 0.30) < 1e-9
@@ -77,6 +99,32 @@ def test_manager_topple_stays_landing_while_kinematic() -> None:
     mgr._actor_is_kinematic = False
     mgr._update_topple_metrics()
     assert mgr._obstacle_toppled is True
+
+
+def test_robotwin_l1_trigger_dist_default_and_task_overlays() -> None:
+    base = load_config(LoadRequest(backend="robotwin", level=1, suite="main20", model="random"))
+    assert float(base.data["disturbance"]["l1"]["trigger_dist"]) == 0.10
+
+    pot = load_config(
+        LoadRequest(backend="robotwin", level=1, suite="main20", task="11", model="random")
+    )
+    assert float(pot.data["disturbance"]["l1"]["trigger_dist"]) == 0.15
+    assert pot.provenance["disturbance.l1.trigger_dist"].endswith("tasks/main20_11.yaml")
+
+    left = load_config(
+        LoadRequest(backend="robotwin", level=1, suite="main20", task="20", model="random")
+    )
+    assert float(left.data["disturbance"]["l1"]["trigger_dist"]) == 0.12
+
+    right = load_config(
+        LoadRequest(backend="robotwin", level=1, suite="main20", task="21", model="random")
+    )
+    assert float(right.data["disturbance"]["l1"]["trigger_dist"]) == 0.15
+
+    laptop = load_config(
+        LoadRequest(backend="robotwin", level=1, suite="main20", task="16", model="random")
+    )
+    assert float(laptop.data["disturbance"]["l1"]["trigger_dist"]) == 0.10
 
 
 def test_robotwin_yaml_catalog_and_open_laptop_overlay() -> None:

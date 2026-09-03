@@ -19,6 +19,9 @@ checkpoint:
     safelibero_goal: "${workspace}/external/checkpoints/openvla-oft_RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-goal"
     safelibero_long: "${workspace}/external/checkpoints/openvla-oft_RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-long"
 resources:
+  # In-process 7B weights like openvla_oft (checkpoints on disk are ~15 GB per
+  # suite), so this is VRAM-bound: two slots already commit ~32 GB of a 48 GB
+  # card. See openvla_oft.yaml for why the served models' 6 does not apply.
   max_jobs_per_gpu: 2
 backends: [libero]
 extra:

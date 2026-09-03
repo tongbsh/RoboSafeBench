@@ -1,0 +1,23 @@
+# Extension: π₀.₅ × DynamicLIBERO paper_main matrix + Oracle SWR + AEGIS (sim_gt).
+# Same 4 suites × 4 tasks × 4 levels × 50 ep × seed 7 as out/eval/libero raw π₀.₅.
+# Model stem is pi05_oracle_swr_aegis so resume/report do not skip or mix
+# completed raw-π₀.₅ cells. Backend knobs stay in configs/backends/libero/.
+#
+#   bash scripts/eval/01_eval.sh --suite libero_pi05_oracle_swr_aegis --dry-run
+#   DYNI_GPUS=0,1,2 bash scripts/eval/01_eval.sh --suite libero_pi05_oracle_swr_aegis
+#
+# Expected expand: 4 × 4 × 4 × 1 model × 1 seed = 64 jobs × 50 ep
+name: libero_pi05_oracle_swr_aegis
+episodes_per_task: 50
+seeds: [7]
+matrix:
+  - backend: libero
+    suites:
+      - safelibero_spatial
+      - safelibero_object
+      - safelibero_goal
+      - safelibero_long
+    tasks: [0, 1, 2, 3]
+    levels: [0, 1, 2, 3]
+    models:
+      - pi05_oracle_swr_aegis

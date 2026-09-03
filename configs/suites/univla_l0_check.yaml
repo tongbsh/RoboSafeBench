@@ -1,0 +1,16 @@
+# UniVLA L0 recovery check after session isolation + center_crop.
+# Not paper_main: 10 ep × seed 7 only, so we can see if SR leaves the ~0% floor.
+name: univla_l0_check
+episodes_per_task: 10
+seeds: [7]
+matrix:
+  - backend: libero
+    suites:
+      - safelibero_spatial
+      - safelibero_object
+      - safelibero_goal
+      - safelibero_long
+    tasks: [0, 1, 2, 3]
+    levels: [0]
+    models:
+      - univla

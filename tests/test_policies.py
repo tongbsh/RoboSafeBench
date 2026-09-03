@@ -619,6 +619,19 @@ def test_lingbot_va_serve_uses_wrapper_script() -> None:
     )
 
 
+def test_lingbot_serve_sh_walks_up_to_workspace_not_scripts() -> None:
+    """serve.sh used to stop at scripts/ (three levels) and miss lingbot-va."""
+    script = REPO_ROOT / "scripts" / "extra" / "models" / "lingbot_va" / "serve.sh"
+    text = script.read_text(encoding="utf-8")
+    assert "configs/paths.yaml" in text
+    assert "src/dynisafety" in text
+    three_up = (script.parent / "../../..").resolve()
+    assert three_up.name == "scripts"
+    wan = REPO_ROOT / "external" / "model_repos" / "lingbot-va" / "wan_va" / "wan_va_server.py"
+    assert wan.is_file()
+    assert f"{three_up}/external/model_repos/lingbot-va" not in str(wan)
+
+
 def test_xvla_and_xvla_official_share_adapter_class() -> None:
     xvla = yaml.safe_load((MODELS_DIR / "xvla.yaml").read_text(encoding="utf-8"))
     official = yaml.safe_load(

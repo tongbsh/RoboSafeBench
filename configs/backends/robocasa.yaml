@@ -9,6 +9,8 @@
 # L2：p_land 在 start→dest 上；开局停在 n 区间一端，靠近 p_land 后再横穿。留下。
 # L3：同一围裙 p_dwell=p_land；p_start=p_land+lateral*n → 靠近后离开。清场。
 # L1/L2 同一地面碰撞盒。视觉按 disturbance.obstacle.pool 轮换（trajectory_order = ep % N）。
+# 官方 RoboCasa 没有垃圾桶/饮水机/纸箱垛。L1/L2 视觉用 10 张最高且底座
+# 不超过约 0.41 m 的 Lightwheel 高凳（24 张里只有这些够高又够瘦）。不拉伸。
 # L3 着装行人 proxy。禁止 closest_visible / 任务物体。
 # 落点失败：沿路径外推 / 缩短侧向 n_attempts，失败 extra.spawn_failed，禁止改到台面。
 
@@ -28,6 +30,11 @@ disturbance:
       - delivery_crate
       - laundry_hamper
       - water_cooler
+      - stool_025
+      - stool_004
+      - stool_019
+      - stool_024
+      - stool_014
 
 extra:
   robocasa:
@@ -36,22 +43,59 @@ extra:
     split: pretrain
     sim_root: ${third_party}/robocasa
     l12:
+      # Ten tallest Lightwheel stools with AABB ≤ ~0.41 m (no stretch).
+      # 24 variants exist; the rest are short, cushion-only, or wider.
+      # cardboard_stack → Stool002 (~0.41×0.41×0.87 m)
+      # kitchen_bin     → Stool011 (~0.33×0.36×0.87 m)
+      # delivery_crate  → Stool005 (~0.30×0.30×0.83 m)
+      # laundry_hamper  → Stool017 (~0.40×0.36×0.83 m)
+      # water_cooler    → Stool013 (~0.29×0.36×0.83 m)
+      # stool_025       → Stool025 (~0.32×0.41×0.83 m)
+      # stool_004       → Stool004 (~0.36×0.40×0.82 m)
+      # stool_019       → Stool019 (~0.39×0.36×0.82 m)
+      # stool_024       → Stool024 (~0.38×0.36×0.81 m)
+      # stool_014       → Stool014 (~0.34×0.37×0.81 m, base ~0.23 m)
       visuals:
         cardboard_stack:
-          mesh_path: ${workspace}/src/dynisafety/backends/robocasa/assets/obstacles/cardboard_stack.obj
-          rgba: [0.76, 0.60, 0.38, 1.0]
+          mesh_path: ${third_party}/robocasa/robocasa/models/assets/objects/lightwheel/stool/Stool002/visual/Stool002.obj
+          texture_path: ${third_party}/robocasa/robocasa/models/assets/objects/lightwheel/stool/Stool002/visual/T_BC001.png
+          rgba: [1.0, 1.0, 1.0, 1.0]
         kitchen_bin:
-          mesh_path: ${workspace}/src/dynisafety/backends/robocasa/assets/obstacles/kitchen_bin.obj
-          rgba: [0.22, 0.36, 0.30, 1.0]
+          mesh_path: ${third_party}/robocasa/robocasa/models/assets/objects/lightwheel/stool/Stool011/visual/Stool011.obj
+          texture_path: ${third_party}/robocasa/robocasa/models/assets/objects/lightwheel/stool/Stool011/visual/T_BC001.png
+          rgba: [1.0, 1.0, 1.0, 1.0]
         delivery_crate:
-          mesh_path: ${workspace}/src/dynisafety/backends/robocasa/assets/obstacles/delivery_crate.obj
-          rgba: [0.55, 0.38, 0.22, 1.0]
+          mesh_path: ${third_party}/robocasa/robocasa/models/assets/objects/lightwheel/stool/Stool005/visual/Stool005.obj
+          texture_path: ${third_party}/robocasa/robocasa/models/assets/objects/lightwheel/stool/Stool005/visual/T_BC001.png
+          rgba: [1.0, 1.0, 1.0, 1.0]
         laundry_hamper:
-          mesh_path: ${workspace}/src/dynisafety/backends/robocasa/assets/obstacles/laundry_hamper.obj
-          rgba: [0.78, 0.70, 0.52, 1.0]
+          mesh_path: ${third_party}/robocasa/robocasa/models/assets/objects/lightwheel/stool/Stool017/visual/Stool017.obj
+          texture_path: ${third_party}/robocasa/robocasa/models/assets/objects/lightwheel/stool/Stool017/visual/T_BC001.png
+          rgba: [1.0, 1.0, 1.0, 1.0]
         water_cooler:
-          mesh_path: ${workspace}/src/dynisafety/backends/robocasa/assets/obstacles/water_cooler.obj
-          rgba: [0.82, 0.86, 0.90, 1.0]
+          mesh_path: ${third_party}/robocasa/robocasa/models/assets/objects/lightwheel/stool/Stool013/visual/Stool013.obj
+          texture_path: ${third_party}/robocasa/robocasa/models/assets/objects/lightwheel/stool/Stool013/visual/T_BC001.png
+          rgba: [1.0, 1.0, 1.0, 1.0]
+        stool_025:
+          mesh_path: ${third_party}/robocasa/robocasa/models/assets/objects/lightwheel/stool/Stool025/visual/Stool025.obj
+          texture_path: ${third_party}/robocasa/robocasa/models/assets/objects/lightwheel/stool/Stool025/visual/T_BC001.png
+          rgba: [1.0, 1.0, 1.0, 1.0]
+        stool_004:
+          mesh_path: ${third_party}/robocasa/robocasa/models/assets/objects/lightwheel/stool/Stool004/visual/Stool004.obj
+          texture_path: ${third_party}/robocasa/robocasa/models/assets/objects/lightwheel/stool/Stool004/visual/T_BC001.png
+          rgba: [1.0, 1.0, 1.0, 1.0]
+        stool_019:
+          mesh_path: ${third_party}/robocasa/robocasa/models/assets/objects/lightwheel/stool/Stool019/visual/Stool019.obj
+          texture_path: ${third_party}/robocasa/robocasa/models/assets/objects/lightwheel/stool/Stool019/visual/T_BC001.png
+          rgba: [1.0, 1.0, 1.0, 1.0]
+        stool_024:
+          mesh_path: ${third_party}/robocasa/robocasa/models/assets/objects/lightwheel/stool/Stool024/visual/Stool024.obj
+          texture_path: ${third_party}/robocasa/robocasa/models/assets/objects/lightwheel/stool/Stool024/visual/T_BC001.png
+          rgba: [1.0, 1.0, 1.0, 1.0]
+        stool_014:
+          mesh_path: ${third_party}/robocasa/robocasa/models/assets/objects/lightwheel/stool/Stool014/visual/Stool014.obj
+          texture_path: ${third_party}/robocasa/robocasa/models/assets/objects/lightwheel/stool/Stool014/visual/T_BC001.png
+          rgba: [1.0, 1.0, 1.0, 1.0]
     # Headless EGL path (MUJOCO_GL=egl). Not a tunable; required so make_env
     # does not inherit Kitchen's on-screen mjviewer default.
     renderer: mujoco

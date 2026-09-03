@@ -372,6 +372,31 @@ def test_libero_long_tasks_enable_home_workspace_onset() -> None:
         )
 
 
+def test_libero_goal_task2_l1_workspace_onset_dist_25cm() -> None:
+    stove = _load(
+        backend="libero",
+        level=1,
+        suite="safelibero_goal",
+        task="2",
+        model="random",
+    )
+    assert stove.data["extra"]["libero"]["l1_workspace_onset_dist"] == pytest.approx(0.25)
+    assert stove.provenance["extra.libero.l1_workspace_onset_dist"].endswith(
+        "safelibero_goal_2.yaml"
+    )
+    neighbor = _load(
+        backend="libero",
+        level=1,
+        suite="safelibero_goal",
+        task="0",
+        model="random",
+    )
+    assert neighbor.data["extra"]["libero"]["l1_workspace_onset_dist"] is None
+    assert neighbor.provenance["extra.libero.l1_workspace_onset_dist"].endswith(
+        "backends/libero.yaml"
+    )
+
+
 def test_libero_long_l1_trigger_dist_matches_other_suites_15cm() -> None:
     long = _load(
         backend="libero",
@@ -403,7 +428,7 @@ def test_obstacle_rescale_rejects_non_positive() -> None:
         )
 
 
-def test_libero_l2_spawn_diversity_default_off() -> None:
+def test_libero_l2_spawn_diversity_default_on() -> None:
     resolved = _load(
         backend="libero",
         level=2,
@@ -411,13 +436,26 @@ def test_libero_l2_spawn_diversity_default_off() -> None:
         model="random",
     )
     spawn = resolved.data["extra"]["libero"]["l2"]["spawn_diversity"]
-    assert spawn["enabled"] is False
-    assert spawn["enabled"] is not True
+    assert spawn["enabled"] is True
     assert spawn["linear_z_clearance_m"] == pytest.approx(0.05)
     assert spawn["tail_exclude_waypoints"] == 3
     assert spawn["forbidden_slots"] == []
     assert resolved.provenance["extra.libero.l2.spawn_diversity.enabled"].endswith(
         "backends/libero/levels/l2.yaml"
+    )
+
+
+def test_libero_obstacle_pack_default_on() -> None:
+    resolved = _load(
+        backend="libero",
+        level=0,
+        suite="safelibero_spatial",
+        model="random",
+    )
+    pack = resolved.data["extra"]["libero"]["obstacle_pack"]
+    assert pack["enabled"] is True
+    assert resolved.provenance["extra.libero.obstacle_pack.enabled"].endswith(
+        "backends/libero.yaml"
     )
 
 
@@ -434,7 +472,7 @@ def test_spatial_task1_l2_forbidden_slots_isolated() -> None:
     assert spatial1.provenance["extra.libero.l2.spawn_diversity.forbidden_slots"].endswith(
         "tasks/safelibero_spatial_1.yaml"
     )
-    assert spawn1["enabled"] is False
+    assert spawn1["enabled"] is True
 
     spatial0 = _load(
         backend="libero",
@@ -450,7 +488,7 @@ def test_spatial_task1_l2_forbidden_slots_isolated() -> None:
     )
 
 
-def test_libero_l3_reach_diversity_default_off() -> None:
+def test_libero_l3_reach_diversity_default_on() -> None:
     resolved = _load(
         backend="libero",
         level=3,
@@ -458,8 +496,7 @@ def test_libero_l3_reach_diversity_default_off() -> None:
         model="random",
     )
     reach = resolved.data["extra"]["libero"]["l3"]["reach_diversity"]
-    assert reach["enabled"] is False
-    assert reach["enabled"] is not True
+    assert reach["enabled"] is True
     assert reach["near_alpha"] == pytest.approx(0.30)
     assert reach["mid_alpha"] == pytest.approx(0.50)
     assert reach["forbidden_slots"] == []
@@ -467,19 +504,20 @@ def test_libero_l3_reach_diversity_default_off() -> None:
     assert resolved.provenance["extra.libero.l3.reach_diversity.enabled"].endswith(
         "backends/libero/levels/l3.yaml"
     )
+    assert float(resolved.data["hand"]["mass_kg"]) == pytest.approx(4.5)
 
 
 def test_libero_l3_reach_diversity_overlay_isolated() -> None:
-    enabled = _load(
+    disabled = _load(
         backend="libero",
         level=3,
         suite="safelibero_goal",
         task="3",
         model="random",
-        overrides=("extra.libero.l3.reach_diversity.enabled=true",),
+        overrides=("extra.libero.l3.reach_diversity.enabled=false",),
     )
-    assert enabled.data["extra"]["libero"]["l3"]["reach_diversity"]["enabled"] is True
-    assert enabled.provenance["extra.libero.l3.reach_diversity.enabled"] == "cli:--set"
+    assert disabled.data["extra"]["libero"]["l3"]["reach_diversity"]["enabled"] is False
+    assert disabled.provenance["extra.libero.l3.reach_diversity.enabled"] == "cli:--set"
 
     neighbor = _load(
         backend="libero",
@@ -488,7 +526,7 @@ def test_libero_l3_reach_diversity_overlay_isolated() -> None:
         task="0",
         model="random",
     )
-    assert neighbor.data["extra"]["libero"]["l3"]["reach_diversity"]["enabled"] is False
+    assert neighbor.data["extra"]["libero"]["l3"]["reach_diversity"]["enabled"] is True
 
     level2 = _load(
         backend="libero",
@@ -514,16 +552,16 @@ def test_libero_l3_reach_diversity_overlay_isolated() -> None:
 
 
 def test_libero_l2_spawn_diversity_overlay_isolated() -> None:
-    enabled = _load(
+    disabled = _load(
         backend="libero",
         level=2,
         suite="safelibero_goal",
         task="3",
         model="random",
-        overrides=("extra.libero.l2.spawn_diversity.enabled=true",),
+        overrides=("extra.libero.l2.spawn_diversity.enabled=false",),
     )
-    assert enabled.data["extra"]["libero"]["l2"]["spawn_diversity"]["enabled"] is True
-    assert enabled.provenance["extra.libero.l2.spawn_diversity.enabled"] == "cli:--set"
+    assert disabled.data["extra"]["libero"]["l2"]["spawn_diversity"]["enabled"] is False
+    assert disabled.provenance["extra.libero.l2.spawn_diversity.enabled"] == "cli:--set"
 
     neighbor_task = _load(
         backend="libero",
@@ -532,7 +570,7 @@ def test_libero_l2_spawn_diversity_overlay_isolated() -> None:
         task="0",
         model="random",
     )
-    assert neighbor_task.data["extra"]["libero"]["l2"]["spawn_diversity"]["enabled"] is False
+    assert neighbor_task.data["extra"]["libero"]["l2"]["spawn_diversity"]["enabled"] is True
     assert neighbor_task.provenance["extra.libero.l2.spawn_diversity.enabled"].endswith(
         "backends/libero/levels/l2.yaml"
     )
@@ -544,57 +582,80 @@ def test_libero_l2_spawn_diversity_overlay_isolated() -> None:
         task="0",
         model="random",
     )
-    assert spatial0.data["extra"]["libero"]["l2"]["spawn_diversity"]["enabled"] is False
+    assert spatial0.data["extra"]["libero"]["l2"]["spawn_diversity"]["enabled"] is True
     assert spatial0.data["extra"]["libero"]["l2"]["nudge_landing_xy"] is False
 
 
-def test_simplerenv_l2_spawn_diversity_default_off() -> None:
+def test_simplerenv_l2_spawn_diversity_default_on() -> None:
     resolved = _load(backend="simplerenv", level=2, suite="bridge", model="random")
     spawn = resolved.data["extra"]["simplerenv"]["l2"]["spawn_diversity"]
-    assert spawn["enabled"] is False
+    assert spawn["enabled"] is True
     assert spawn["lateral_width_m"] == pytest.approx(0.15)
     assert resolved.provenance["extra.simplerenv.l2.spawn_diversity.enabled"].endswith(
         "backends/simplerenv/levels/l2.yaml"
     )
+    assert resolved.data["disturbance"]["l2"]["align_start_y_to_eef"] is False
+    assert float(resolved.data["contact"]["force_report_window_s"]) == pytest.approx(0.05)
 
 
-def test_simplerenv_l3_reach_diversity_default_off() -> None:
+def test_simplerenv_l3_reach_diversity_default_on() -> None:
     resolved = _load(backend="simplerenv", level=3, suite="bridge", model="random")
     l3 = resolved.data["extra"]["simplerenv"]["l3"]
     assert l3["target_mode"] == "current"
-    assert l3["reach_diversity"]["enabled"] is False
+    assert l3["reach_diversity"]["enabled"] is True
     assert resolved.provenance["extra.simplerenv.l3.reach_diversity.enabled"].endswith(
         "backends/simplerenv/levels/l3.yaml"
     )
+    assert resolved.data["extra"]["simplerenv"]["l3_force_scheme"] == "dynamic_release"
+    assert float(resolved.data["disturbance"]["l3"]["enter_height"]) == pytest.approx(0.08)
+    assert float(resolved.data["disturbance"]["l3"]["corner_inward_shift"]) == pytest.approx(0.25)
+    assert list(resolved.data["extra"]["simplerenv"]["hand_color"]) == [0.78, 0.60, 0.48]
+    assert float(resolved.data["hand"]["mass_kg"]) == pytest.approx(4.5)
+    assert float(resolved.data["contact"]["force_report_window_s"]) == pytest.approx(0.01)
 
 
-def test_robotwin_l2_spawn_diversity_default_off() -> None:
+def test_robotwin_l2_spawn_diversity_default_on() -> None:
     resolved = _load(backend="robotwin", level=2, suite="main20", model="random")
     spawn = resolved.data["extra"]["robotwin"]["l2"]["spawn_diversity"]
-    assert spawn["enabled"] is False
+    assert spawn["enabled"] is True
     assert spawn["path_num_samples"] == 64
     assert resolved.data["extra"]["robotwin"]["l2_start_mode"] == "head_on"
+    assert resolved.data["extra"]["robotwin"]["l12_force_scheme"] == "kinematic_first_hit"
+    assert resolved.data["disturbance"]["l2"]["alpha"] == pytest.approx(0.5)
+    assert resolved.data["extra"]["robotwin"]["l2"]["move_start_task_step"] == 20
 
 
-def test_robotwin_l3_reach_diversity_default_off() -> None:
+def test_robotwin_l1_alpha_is_half() -> None:
+    resolved = _load(backend="robotwin", level=1, suite="main20", model="random")
+    assert resolved.data["disturbance"]["l1"]["alpha"] == pytest.approx(0.5)
+
+
+def test_robotwin_l3_reach_diversity_default_on() -> None:
     resolved = _load(backend="robotwin", level=3, suite="main20", model="random")
     l3 = resolved.data["extra"]["robotwin"]["l3"]
     assert l3["target_mode"] == "current"
-    assert l3["reach_diversity"]["enabled"] is False
-    assert resolved.data["extra"]["robotwin"]["l3_approach_steps"] == 10
+    assert l3["move_start_task_step"] == 20
+    assert l3["reach_diversity"]["enabled"] is True
+    assert resolved.data["extra"]["robotwin"]["l3_approach_steps"] == 400
+    assert resolved.data["extra"]["robotwin"]["video_sim_stride"] == 20
+    assert resolved.data["disturbance"]["l3"]["entry_steps"] == 6000
+    assert resolved.data["disturbance"]["l3"]["dwell_steps"] == 1
+    assert list(resolved.data["extra"]["robotwin"]["l3_spawn_world_xy"]) == [0.0, 0.32]
+    assert resolved.data["extra"]["robotwin"]["l3_force_scheme"] == "dynamic_release"
+    assert float(resolved.data["hand"]["mass_kg"]) == pytest.approx(4.5)
 
 
 def test_simplerenv_diversity_overlay_isolated() -> None:
-    enabled = _load(
+    disabled = _load(
         backend="simplerenv",
         level=2,
         suite="bridge",
         model="random",
-        overrides=("extra.simplerenv.l2.spawn_diversity.enabled=true",),
+        overrides=("extra.simplerenv.l2.spawn_diversity.enabled=false",),
     )
-    assert enabled.data["extra"]["simplerenv"]["l2"]["spawn_diversity"]["enabled"] is True
+    assert disabled.data["extra"]["simplerenv"]["l2"]["spawn_diversity"]["enabled"] is False
     neighbor = _load(backend="simplerenv", level=2, suite="bridge", model="random")
-    assert neighbor.data["extra"]["simplerenv"]["l2"]["spawn_diversity"]["enabled"] is False
+    assert neighbor.data["extra"]["simplerenv"]["l2"]["spawn_diversity"]["enabled"] is True
     level3 = _load(backend="simplerenv", level=3, suite="bridge", model="random")
     assert "spawn_diversity" not in ((level3.data.get("extra") or {}).get("simplerenv") or {}).get(
         "l2", {}
@@ -602,21 +663,21 @@ def test_simplerenv_diversity_overlay_isolated() -> None:
 
 
 def test_robotwin_diversity_overlay_isolated() -> None:
-    enabled = _load(
+    disabled = _load(
         backend="robotwin",
         level=3,
         suite="main20",
         model="random",
         overrides=(
             "extra.robotwin.l3.target_mode=path_intercept",
-            "extra.robotwin.l3.reach_diversity.enabled=true",
+            "extra.robotwin.l3.reach_diversity.enabled=false",
         ),
     )
-    assert enabled.data["extra"]["robotwin"]["l3"]["target_mode"] == "path_intercept"
-    assert enabled.data["extra"]["robotwin"]["l3"]["reach_diversity"]["enabled"] is True
+    assert disabled.data["extra"]["robotwin"]["l3"]["target_mode"] == "path_intercept"
+    assert disabled.data["extra"]["robotwin"]["l3"]["reach_diversity"]["enabled"] is False
     neighbor = _load(backend="robotwin", level=3, suite="main20", model="random")
     assert neighbor.data["extra"]["robotwin"]["l3"]["target_mode"] == "current"
-    assert neighbor.data["extra"]["robotwin"]["l3"]["reach_diversity"]["enabled"] is False
+    assert neighbor.data["extra"]["robotwin"]["l3"]["reach_diversity"]["enabled"] is True
     level2 = _load(backend="robotwin", level=2, suite="main20", model="random")
     assert "reach_diversity" not in ((level2.data.get("extra") or {}).get("robotwin") or {}).get(
         "l3", {}
@@ -630,3 +691,56 @@ def test_runtime_seed_stride_is_2000_from_yaml() -> None:
     resolved = _load(backend="libero", level=0, suite="safelibero_spatial", model="random")
     assert int(resolved.data["runtime"]["seed_stride"]) == 2000
     assert resolved.provenance["runtime.seed_stride"].endswith("base.yaml")
+
+
+def test_pi05_oracle_swr_aegis_overlays_without_clobbering_backend() -> None:
+    """God's-eye SWR+AEGIS model keeps paper_main LIBERO knobs (diversity / pack)."""
+    resolved = _load(
+        backend="libero",
+        level=2,
+        suite="safelibero_spatial",
+        task=task_yaml_stem("safelibero_spatial", 0),
+        model="pi05_oracle_swr_aegis",
+    )
+    extra = resolved.data["extra"]
+    libero = extra["libero"]
+    assert extra["feasibility_condition"] == "oracle_swr_aegis"
+    assert libero["oracle"]["enabled"] is True
+    assert libero["aegis"]["enabled"] is True
+    assert libero["aegis"]["obstacle_source"] == "sim_gt"
+    assert libero["aegis"]["activate_after"] == "settled_or_done"
+    assert libero["l2"]["spawn_diversity"]["enabled"] is True
+    assert libero["obstacle_pack"]["enabled"] is True
+    assert resolved.run.model == "pi05_oracle_swr_aegis"
+    assert resolved.provenance["extra.feasibility_condition"].endswith(
+        "pi05_oracle_swr_aegis.yaml"
+    )
+    assert resolved.provenance["extra.libero.oracle.enabled"].endswith(
+        "pi05_oracle_swr_aegis.yaml"
+    )
+    assert resolved.provenance["extra.libero.l2.spawn_diversity.enabled"].endswith(
+        "backends/libero/levels/l2.yaml"
+    )
+    assert resolved.provenance["extra.libero.obstacle_pack.enabled"].endswith(
+        "backends/libero.yaml"
+    )
+
+
+def test_capture_disabled_by_default_from_base_yaml() -> None:
+    """WRM sidecar is off unless explicitly enabled; default lives only in YAML."""
+    base = yaml.safe_load((REPO_ROOT / "configs" / "base.yaml").read_text(encoding="utf-8"))
+    assert base["capture"]["enabled"] is False
+    resolved = _load(backend="libero", level=0, suite="safelibero_spatial", model="random")
+    assert resolved.data["capture"]["enabled"] is False
+    assert resolved.run.capture.enabled is False
+    assert resolved.provenance["capture.enabled"].endswith("base.yaml")
+    on = _load(
+        backend="libero",
+        level=0,
+        suite="safelibero_spatial",
+        model="random",
+        overrides=("capture.enabled=true",),
+    )
+    assert on.data["capture"]["enabled"] is True
+    assert on.run.capture.enabled is True
+    assert on.provenance["capture.enabled"] == "cli:--set"

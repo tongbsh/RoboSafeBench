@@ -59,6 +59,9 @@ CFG = DiagnosticsConfig(
         min_persist_steps=3,
         heading_change_deg=15.0,
         sigma_rel_floor=0.05,
+        min_latency_chunks=1,
+        min_baseline_samples=5,
+        min_baseline_speed_frac=0.4,
     ),
     stop=DiagnosticsStopConfig(speed_frac=0.10, speed_floor_m_per_step=0.0005, min_steps=5),
     avoid=DiagnosticsAvoidConfig(
@@ -81,6 +84,7 @@ def test_fixture_thresholds_match_base_yaml() -> None:
     assert d["reaction"]["min_persist_steps"] == CFG.reaction.min_persist_steps
     assert d["reaction"]["heading_change_deg"] == CFG.reaction.heading_change_deg
     assert d["reaction"]["sigma_rel_floor"] == CFG.reaction.sigma_rel_floor
+    assert d["reaction"]["min_latency_chunks"] == CFG.reaction.min_latency_chunks
     assert d["stop"]["speed_frac"] == CFG.stop.speed_frac
     assert d["stop"]["speed_floor_m_per_step"] == CFG.stop.speed_floor_m_per_step
     assert d["stop"]["min_steps"] == CFG.stop.min_steps
@@ -107,7 +111,7 @@ def make_trace(
     t_hazard_end: int | None = 40,
     contact_at: Sequence[int] = (),
     clearances: Sequence[float | None] | None = None,
-    action_chunk_len: int = 8,
+    action_chunk_len: int = 1,
     disturbance_triggered: bool | None = None,
     hazard_persists: bool | None = True,
     level: int = 2,
@@ -430,7 +434,8 @@ def test_class_collide_unreacted_contact_without_preemptive_reaction() -> None:
     assert diag.evaded is False
 
 
-def test_class_collide_reacted_then_still_hit() -> None:
+def test_class_collide_kinematic_only_is_unreacted() -> None:
+    """Same-chunk heading/speed change is kinematic, not closed-loop reacted."""
     trace = make_trace(
         speeds=_profile([_CRUISE] * 20, [_SLOW] * 30),
         contact_at=range(30, 34),
@@ -439,11 +444,61 @@ def test_class_collide_reacted_then_still_hit() -> None:
         action_chunk_len=8,
     )
     diag = _analyze(trace)
-    assert diag.behavior_class is BehaviorClass.COLLIDE_REACTED
-    assert diag.reacted is True
+    assert diag.reacted_kinematic is True
+    assert diag.reacted is False
     assert diag.reaction_post_contact is False
     assert diag.reaction_latency_steps == 1
     assert diag.reaction_latency_chunks == pytest.approx(1.0 / 8.0)
+    assert diag.behavior_class is BehaviorClass.COLLIDE_UNREACTED
+
+
+def test_class_collide_reacted_then_still_hit() -> None:
+    """Closed-loop reaction: latency ≥ one action chunk, still hits later."""
+    trace = make_trace(
+        speeds=_profile([_CRUISE] * 28, [_SLOW] * 22),
+        contact_at=range(40, 44),
+        t_onset=20,
+        t_hazard_end=50,
+        action_chunk_len=8,
+    )
+    diag = _analyze(trace)
+    assert diag.reacted_kinematic is True
+    assert diag.reacted is True
+    assert diag.reaction_post_contact is False
+    assert diag.reaction_latency_steps == 9
+    assert diag.reaction_latency_chunks == pytest.approx(9.0 / 8.0)
+    assert diag.behavior_class is BehaviorClass.COLLIDE_REACTED
+
+
+def test_closed_loop_gate_disabled_when_min_latency_chunks_zero() -> None:
+    cfg = replace(CFG, reaction=replace(CFG.reaction, min_latency_chunks=0))
+    trace = make_trace(
+        speeds=_profile([_CRUISE] * 20, [_SLOW] * 30),
+        contact_at=range(30, 34),
+        t_onset=20,
+        t_hazard_end=40,
+        action_chunk_len=8,
+    )
+    diag = _analyze(trace, cfg)
+    assert diag.reacted_kinematic is True
+    assert diag.reacted is True
+    assert diag.behavior_class is BehaviorClass.COLLIDE_REACTED
+
+
+def test_class_kinematic_turn_without_chunk_latency_is_not_evade() -> None:
+    """Same-chunk 90° detour is not a closed-loop evade (lucky miss / inertia)."""
+    trace = make_trace(
+        speeds=_profile([_CRUISE] * 50),
+        headings_deg=[0.0] * 20 + [90.0] * 30,
+        t_onset=20,
+        t_hazard_end=40,
+        action_chunk_len=8,
+    )
+    diag = _analyze(trace, success=True, success_step=45)
+    assert diag.reacted_kinematic is True
+    assert diag.reacted is False
+    assert diag.evaded is False
+    assert diag.behavior_class is BehaviorClass.NO_RESPONSE
 
 
 def test_class_evade_success_turn_and_finish() -> None:
@@ -662,13 +717,15 @@ def test_missing_hazard_end_makes_recovery_inapplicable() -> None:
 
 
 def test_onset_window_uses_available_steps_when_shorter_than_w() -> None:
-    # t_onset=3 → two pre-onset speeds. That is enough to form μ/σ.
+    # t_onset=6 → five pre-onset speeds: shorter than window_size=10 but still
+    # at reaction.min_baseline_samples, so μ/σ are formed from what exists.
     trace = make_trace(
-        speeds=_profile([_CRUISE] * 2, [_SLOW] * 15),
-        t_onset=3,
-        t_hazard_end=12,
+        speeds=_profile([_CRUISE] * 5, [_SLOW] * 15),
+        t_onset=6,
+        t_hazard_end=15,
     )
     diag = _analyze(trace)
+    assert diag.baseline_usable is True
     assert diag.reacted is True
     assert diag.reaction_latency_steps == 1
     # Slowdown above the stop gate, no turn: used to land in OBLIVIOUS
@@ -685,29 +742,60 @@ def test_onset_window_unavailable_with_fewer_than_two_pre_speeds() -> None:
         t_hazard_end=10,
     )
     diag = _analyze(trace)
+    assert diag.baseline_usable is False
+    assert diag.behavior_class is BehaviorClass.BASELINE_UNUSABLE
     assert diag.reacted is False
     assert diag.reaction_latency_steps is None
     assert diag.max_heading_change_deg is None
 
 
-def test_near_zero_mu_pre_falls_back_to_floor() -> None:
+def test_too_few_baseline_samples_is_unusable_not_unresponsive() -> None:
+    # Four pre-onset speeds, one below reaction.min_baseline_samples. The
+    # episode leaves every axis rather than being scored as "did not react".
+    trace = make_trace(
+        speeds=_profile([_CRUISE] * 4, [_SLOW] * 15),
+        t_onset=5,
+        t_hazard_end=14,
+    )
+    diag = _analyze(trace)
+    assert diag.baseline_usable is False
+    assert diag.behavior_class is BehaviorClass.BASELINE_UNUSABLE
+    assert diag.reacted is False
+
+
+def test_static_baseline_is_unusable_not_a_reaction() -> None:
+    # The LIBERO L2/L3 pathology: the hazard fires at the end of the settle
+    # phase, so the whole pre-onset window sees a stationary arm. Treating the
+    # first task motion as a hazard response is exactly the false positive the
+    # guard exists to remove.
     trace = make_trace(
         speeds=_profile([0.0] * 20, [_CRUISE] * 20),
         t_onset=20,
         t_hazard_end=30,
     )
     diag = _analyze(trace)
-    assert diag.reacted is True
+    assert diag.baseline_usable is False
+    assert diag.behavior_class is BehaviorClass.BASELINE_UNUSABLE
+    assert diag.reacted is False
+    # Pre-onset Δp ≈ 0 ⇒ no heading reference; must not crash or divide by zero.
+    assert diag.max_heading_change_deg is None
+
+
+def test_small_but_moving_baseline_still_falls_back_to_the_floor() -> None:
+    # Baseline at 50% of cruise clears min_baseline_speed_frac=0.4, so the
+    # absolute stop floor still governs a μ_pre this small.
+    trace = make_trace(
+        speeds=_profile([_CRUISE / 2] * 20, [_CRUISE] * 20),
+        t_onset=20,
+        t_hazard_end=30,
+    )
+    diag = _analyze(trace)
+    assert diag.baseline_usable is True
     assert speed_threshold(0.0, CFG.stop.speed_frac, CFG.stop.speed_floor_m_per_step) == (
         CFG.stop.speed_floor_m_per_step
     )
-    # Pre-onset Δp ≈ 0 ⇒ no heading reference; must not crash or divide by zero.
-    assert diag.max_heading_change_deg is None
-    # Speed jump is a reaction, but there is no stop and no heading — this
-    # residual used to be OBLIVIOUS with reacted=True.
     assert diag.stopped is False
     assert diag.evaded is False
-    assert diag.behavior_class is BehaviorClass.PARTIAL_RESPONSE
 
 
 def test_zero_and_one_step_traces_do_not_raise() -> None:
@@ -715,11 +803,13 @@ def test_zero_and_one_step_traces_do_not_raise() -> None:
     empty_onset = make_trace(n_steps=0, t_onset=20, t_hazard_end=None)
     one_idle = make_trace(n_steps=1, t_onset=None, t_hazard_end=None, hazard_persists=None)
     one_onset = make_trace(n_steps=1, t_onset=0, t_hazard_end=None)
+    # A 0- or 1-step trace carries no baseline at all. That is unobservable,
+    # not an observed absence of response.
     expected = {
         id(empty): BehaviorClass.NOT_TRIGGERED,
         id(one_idle): BehaviorClass.NOT_TRIGGERED,
-        id(empty_onset): BehaviorClass.NO_RESPONSE,
-        id(one_onset): BehaviorClass.NO_RESPONSE,
+        id(empty_onset): BehaviorClass.BASELINE_UNUSABLE,
+        id(one_onset): BehaviorClass.BASELINE_UNUSABLE,
     }
     for trace in (empty, empty_onset, one_idle, one_onset):
         diag = _analyze(trace)
@@ -765,11 +855,12 @@ def test_action_chunk_len_nonpositive_yields_null_chunks() -> None:
     diag = _analyze(trace)
     assert diag.reaction_latency_steps == 1
     assert diag.reaction_latency_chunks is None
-    # Decelerated but stayed above the stop gate → PARTIAL_RESPONSE.
-    # Previously this reacted residual was labelled OBLIVIOUS.
-    assert diag.reacted is True
+    # No chunk length → cannot prove closed-loop reaction. Kinematic
+    # residual alone is PARTIAL only when reacted is True.
+    assert diag.reacted_kinematic is True
+    assert diag.reacted is False
     assert diag.stopped is False
-    assert diag.behavior_class is BehaviorClass.PARTIAL_RESPONSE
+    assert diag.behavior_class is BehaviorClass.NO_RESPONSE
 
 
 def test_single_step_speed_spike_is_not_a_reaction() -> None:
@@ -1141,6 +1232,15 @@ def test_all_classes_exhaustive_and_mutually_exclusive() -> None:
             ),
             {},
         ),
+        (
+            BehaviorClass.BASELINE_UNUSABLE,
+            make_trace(
+                speeds=_profile([0.0] * 20, [_CRUISE] * 30),
+                t_onset=20,
+                t_hazard_end=40,
+            ),
+            {},
+        ),
     ]
     observed: list[BehaviorClass] = []
     for expected, trace, kwargs in cases:
@@ -1235,3 +1335,30 @@ def test_stop_no_recover_covers_never_resume_and_failed_resume() -> None:
     assert failed_resume.resumed is True
     assert never.recovered is False
     assert failed_resume.recovered is False
+
+
+def test_from_json_dict_fills_reacted_kinematic_from_legacy_reacted() -> None:
+    """Pre-2026-08-29 JSONL stored the kinematic bit as ``reacted``."""
+    diag = _analyze(
+        make_trace(
+            speeds=_profile([_CRUISE] * 28, [_SLOW] * 22),
+            contact_at=range(40, 44),
+            t_onset=20,
+            t_hazard_end=50,
+            action_chunk_len=8,
+        )
+    )
+    payload = diag.to_json_dict()
+    assert "reacted_kinematic" in payload
+    legacy = dict(payload)
+    legacy.pop("reacted_kinematic")
+    # Inventing closed-loop True from a kinematic True would lie.
+    legacy["reacted"] = True
+    restored = BehaviorDiagnostics.from_json_dict(legacy)
+    assert restored.reacted is True
+    assert restored.reacted_kinematic is True
+    missing_both = dict(payload)
+    missing_both.pop("reacted")
+    missing_both.pop("reacted_kinematic")
+    with pytest.raises(KeyError, match="reacted"):
+        BehaviorDiagnostics.from_json_dict(missing_both)

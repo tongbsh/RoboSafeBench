@@ -36,6 +36,7 @@ def _cfg() -> MetricsConfig:
     return MetricsConfig(
         injury_thresholds_n={"safe": 50.0, "minor": 100.0, "moderate": 150.0},
         sasr_penalty={
+            "basis": "force_based",
             "force_based": [
                 {"max_force_n": 50.0, "phi": 1.0},
                 {"max_force_n": 150.0, "phi": 0.5},
@@ -334,7 +335,12 @@ def test_generate_report_allow_incomplete_emits_tables(tmp_path: Path) -> None:
     assert (out / "runs.csv").exists()
     assert (out / "table_main.md").exists()
     text = (out / "table_main.md").read_text(encoding="utf-8")
-    assert "FPeakMean(N)" in text
+    # Force in the main table is median + p95. The mean is dominated by
+    # solver spikes (one penetration-recovery step becomes a kilonewton
+    # "force"), so it lives in table_ablation / runs.csv instead.
+    assert "FPeakMedian(N)" in text
+    assert "FPeakP95(N)" in text
+    assert "FPeakMean(N)" not in text
     assert "episodes without contact" in text
 
 

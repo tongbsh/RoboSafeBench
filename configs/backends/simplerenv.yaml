@@ -12,6 +12,7 @@ hand:
   geometry: box
   half_size: [0.20, 0.04, 0.08]
   collision_offset: [-0.04, 0.0, 0.0]
+  mass_kg: 4.5
   # L3 SharedReaching peak_velocity[arm_speed]; YAML-only (iron law 1).
   peak_velocity:
     slow: 0.3
@@ -39,3 +40,6 @@ extra:
   obb_half: [0.25, 0.08, 0.12]
   obstacle_density: 500.0
   use_visual_mesh: true
+  simplerenv:
+    # Visual only; same RGB as extra.robotwin.hand_color (STL has no texture).
+    hand_color: [0.78, 0.60, 0.48]

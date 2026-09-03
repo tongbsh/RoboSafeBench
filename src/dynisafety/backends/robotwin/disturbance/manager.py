@@ -14,6 +14,7 @@ from typing import Any
 import numpy as np
 
 from dynisafety.backends._engine.sapien_contact import (
+    first_actor_contact_kinematics,
     read_pair_body_entity,
     scan_actor_contacts,
     scene_timestep,
@@ -33,8 +34,18 @@ from dynisafety.backends.robotwin.contact import (
     force_equiv_timestep,
     is_ghost_overlap,
     is_toppled,
+    L12_FORCE_SCHEME_NEWTON_RELATIVE,
+    L3_FORCE_SCHEME_DYNAMIC_RELEASE,
+    L3_RELEASE_MIN_SPEED_MPS,
+    l3_closing_speed_mps,
+    l3_freeze_after_first_event,
+    l3_newton_normal_impulse_ns,
+    l3_release_linear_velocity,
     measure_tilt_deg,
-    official_l12_contact,
+    normalize_l12_force_scheme,
+    normalize_l3_force_scheme,
+    official_l12_scheme_contact,
+    official_l3_contact,
     rising_edge_contact,
     should_skip_dynamic_release,
     xyz_list,
@@ -75,7 +86,12 @@ from dynisafety.backends.robotwin.disturbance.l3_reach import (
     robotwin_l3_slot_xy,
 )
 from dynisafety.backends.robotwin.obstacles import get_semantic_family
-from dynisafety.core.disturbance import interpolate_toward, perpendicular_2d, quat_mul
+from dynisafety.core.disturbance import (
+    Phase,
+    interpolate_toward,
+    perpendicular_2d,
+    quat_mul,
+)
 
 # Repo root: .../src/dynisafety/backends/robotwin/disturbance/manager.py → parents[5]
 _REPO_ROOT = Path(__file__).resolve().parents[5]
@@ -111,6 +127,142 @@ def _actor_cls():
     from envs.utils.actor_utils import Actor
 
     return Actor
+
+
+def _sapien_entity(actor: Any) -> Any:
+    return actor.actor if hasattr(actor, "actor") else actor
+
+
+def _disable_actor_collisions(entity: Any) -> None:
+    """Best-effort: stop the parked palm from generating new contacts."""
+    if entity is None:
+        return
+    for name in ("set_collision_enabled", "set_collision"):
+        fn = getattr(entity, name, None)
+        if callable(fn):
+            try:
+                fn(False)
+                return
+            except TypeError:
+                try:
+                    fn(0)
+                    return
+                except Exception:
+                    pass
+            except Exception:
+                pass
+    getter = getattr(entity, "get_collision_shapes", None)
+    if callable(getter):
+        try:
+            for shape in getter() or []:
+                for attr in ("set_collision_enabled", "disable"):
+                    fn = getattr(shape, attr, None)
+                    if callable(fn):
+                        try:
+                            fn(False)
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
+
+def _park_actor_hidden(entity: Any) -> None:
+    """Move off-table without ``remove_actor`` (same-frame contacts stay valid)."""
+    if entity is None:
+        return
+    try:
+        sapien = _sapien()
+        entity.set_pose(sapien.Pose(HIDDEN_POS))
+    except Exception:
+        setter = getattr(entity, "set_pose", None)
+        if callable(setter):
+            try:
+                setter(HIDDEN_POS)
+            except Exception:
+                pass
+    _set_sapien_linear_velocity(entity, np.zeros(3))
+    _set_sapien_angular_velocity(entity, np.zeros(3))
+
+
+def _set_sapien_linear_velocity(actor: Any, vel: np.ndarray) -> bool:
+    """SAPIEN 3 has no Entity.set_velocity; write the dynamic rigid component."""
+    v = np.asarray(vel, dtype=np.float64).reshape(3)
+    entity = _sapien_entity(actor)
+    for name in ("set_linear_velocity", "set_velocity"):
+        fn = getattr(entity, name, None)
+        if callable(fn):
+            fn(v)
+            return True
+    get_components = getattr(entity, "get_components", None)
+    if not callable(get_components):
+        return False
+    for component in get_components():
+        fn = getattr(component, "set_linear_velocity", None)
+        if callable(fn):
+            fn(v)
+            return True
+        if hasattr(component, "linear_velocity"):
+            component.linear_velocity = v
+            return True
+    return False
+
+
+def _set_sapien_angular_velocity(actor: Any, omega: np.ndarray) -> bool:
+    w = np.asarray(omega, dtype=np.float64).reshape(3)
+    entity = _sapien_entity(actor)
+    for name in ("set_angular_velocity",):
+        fn = getattr(entity, name, None)
+        if callable(fn):
+            fn(w)
+            return True
+    get_components = getattr(entity, "get_components", None)
+    if not callable(get_components):
+        return False
+    for component in get_components():
+        fn = getattr(component, "set_angular_velocity", None)
+        if callable(fn):
+            fn(w)
+            return True
+        if hasattr(component, "angular_velocity"):
+            component.angular_velocity = w
+            return True
+    return False
+
+
+def _get_sapien_linear_velocity(actor: Any) -> np.ndarray | None:
+    """Read world linear velocity from Entity or a Physx rigid/link component."""
+    entity = _sapien_entity(actor)
+    for name in ("get_linear_velocity", "get_velocity"):
+        fn = getattr(entity, name, None)
+        if callable(fn):
+            try:
+                return np.asarray(fn(), dtype=np.float64).reshape(3)
+            except Exception:
+                pass
+    for attr in ("linear_velocity", "velocity"):
+        raw = getattr(entity, attr, None)
+        if raw is not None:
+            try:
+                return np.asarray(raw, dtype=np.float64).reshape(3)
+            except Exception:
+                pass
+    get_components = getattr(entity, "get_components", None)
+    if not callable(get_components):
+        return None
+    for component in get_components():
+        fn = getattr(component, "get_linear_velocity", None)
+        if callable(fn):
+            try:
+                return np.asarray(fn(), dtype=np.float64).reshape(3)
+            except Exception:
+                continue
+        raw = getattr(component, "linear_velocity", None)
+        if raw is not None:
+            try:
+                return np.asarray(raw, dtype=np.float64).reshape(3)
+            except Exception:
+                continue
+    return None
 
 
 def _require_attr(config: Any, name: str) -> Any:
@@ -274,12 +426,35 @@ class DisturbanceManager:
         self._release_reason: str | None = None
         self._last_free_pos: np.ndarray | None = None
         self._last_free_quat: np.ndarray | None = None
+        self._l3_release_linear_vel: np.ndarray | None = None
+        self._l3_force_linear_vel: np.ndarray | None = None
+        self._l3_release_speed_mps: float = 0.0
+        self._l3_force_inbound_speed_mps: float = 0.0
+        self._l3_partner_speed_mps: float = 0.0
+        self._l3_closing_speed_mps: float = 0.0
+        self._l3_force_from_release_momentum: bool = False
+        # Official force already stored; remove after the next scene.step so
+        # same-frame get_contacts() (e.g. click_bell.check_success) is safe.
+        self._l3_hand_remove_pending: Any = None
         # L3: geometric overlaps after the first official event (not in CR/force).
         self._l3_post_first_overlap_sim_steps = 0
+        # L3 dynamic_release: kinematic-phase solver spikes (not in CR/force).
+        self._l3_kinematic_overlap_sim_steps = 0
+        self._l3_kinematic_peak_impulse_ns = 0.0
+        self._l3_kinematic_peak_force_n = 0.0
         # L2: official overlap after skipped_penetration freeze (not in CR/force).
         self._l2_post_freeze_overlap_sim_steps = 0
         self._l2_post_freeze_peak_force_n = 0.0
         self._l2_post_freeze_peak_impulse_ns = 0.0
+        # L1/L2 newton_relative: kinematic-phase solver spikes (not in CR/force).
+        self._l12_force_linear_vel: np.ndarray | None = None
+        self._l12_kinematic_overlap_sim_steps = 0
+        self._l12_kinematic_peak_impulse_ns = 0.0
+        self._l12_kinematic_peak_force_n = 0.0
+        self._l12_force_from_newton = False
+        self._l12_force_inbound_speed_mps = 0.0
+        self._l12_partner_speed_mps = 0.0
+        self._l12_closing_speed_mps = 0.0
         self._spawn_plan: dict[str, Any] | None = None
         self._reach_plan: dict[str, Any] | None = None
 
@@ -333,6 +508,7 @@ class DisturbanceManager:
         self._action_contact_without_force = False
 
     def destroy(self):
+        self._flush_pending_l3_hand_remove()
         if self.actor is None:
             return
         try:
@@ -380,10 +556,23 @@ class DisturbanceManager:
         self._release_reason = None
         self._last_free_pos = None
         self._last_free_quat = None
+        self._l3_release_linear_vel = None
+        self._l3_force_linear_vel = None
+        self._l3_release_speed_mps = 0.0
+        self._l3_force_inbound_speed_mps = 0.0
+        self._l3_partner_speed_mps = 0.0
+        self._l3_closing_speed_mps = 0.0
+        self._l3_force_from_release_momentum = False
+        self._flush_pending_l3_hand_remove()
+        self._l3_hand_remove_pending = None
         self._l3_post_first_overlap_sim_steps = 0
+        self._l3_kinematic_overlap_sim_steps = 0
+        self._l3_kinematic_peak_impulse_ns = 0.0
+        self._l3_kinematic_peak_force_n = 0.0
         self._l2_post_freeze_overlap_sim_steps = 0
         self._l2_post_freeze_peak_force_n = 0.0
         self._l2_post_freeze_peak_impulse_ns = 0.0
+        self._reset_l12_newton_state()
         self._spawn_plan = None
         self._reach_plan = None
 
@@ -410,9 +599,25 @@ class DisturbanceManager:
             self._l2_post_freeze_overlap_sim_steps = 0
             self._l2_post_freeze_peak_force_n = 0.0
             self._l2_post_freeze_peak_impulse_ns = 0.0
+            self._reset_l12_newton_state()
             self.actor = self._create_level12_actor()
         else:
             self._l3_post_first_overlap_sim_steps = 0
+            self._l3_kinematic_overlap_sim_steps = 0
+            self._l3_kinematic_peak_impulse_ns = 0.0
+            self._l3_kinematic_peak_force_n = 0.0
+            self._ghost_contact_sim_steps = 0
+            self._rollback_steps = 0
+            self._release_reason = None
+            self._last_free_pos = None
+            self._last_free_quat = None
+            self._l3_release_linear_vel = None
+            self._l3_force_linear_vel = None
+            self._l3_release_speed_mps = 0.0
+            self._l3_force_inbound_speed_mps = 0.0
+            self._l3_partner_speed_mps = 0.0
+            self._l3_closing_speed_mps = 0.0
+            self._l3_force_from_release_momentum = False
             self.actor = self._create_level3_hand_actor()
             try:
                 self.actor.set_mass(self.config.hand_mass)
@@ -505,6 +710,9 @@ class DisturbanceManager:
                 path_style=path_style,
                 cruise_z=cruise_z,
                 descent_alpha=descent_alpha,
+                move_start_task_step=int(
+                    _require_attr(self.config, "l2_move_start_task_step")
+                ),
             )
             self.controller.spawn_plan = self._spawn_plan
             self._last_free_pos = np.asarray(start_pos, dtype=np.float64).copy()
@@ -634,6 +842,9 @@ class DisturbanceManager:
                 hover_pos=hover_pos,
                 dwell_pos=dwell_pos,
                 move_start_step=self.config.l3_move_start_step,
+                move_start_task_step=int(
+                    _require_attr(self.config, "l3_move_start_task_step")
+                ),
                 entry_steps=self.config.l3_entry_steps,
                 approach_steps=self.config.l3_approach_steps,
                 dwell_steps=self.config.l3_dwell_steps,
@@ -647,6 +858,7 @@ class DisturbanceManager:
                 hover_rise_m=hover_rise_m,
                 via_descent_alpha=via_descent_alpha,
                 pose_start=pose_start,
+                release_on_hit=self._l3_uses_dynamic_release(),
             )
             self.controller.reach_plan = self._reach_plan
             # When using a mesh-based hand the object's local frame
@@ -666,11 +878,17 @@ class DisturbanceManager:
             raise ValueError(f"Unsupported dynamic_level={self.dynamic_level}")
 
     def before_step(self, sim_step: int):
+        self._flush_pending_l3_hand_remove()
         if self.controller is None:
             return
-        self.controller.update_before_step(sim_step)
-        if self.dynamic_level == 1 and self._actor_is_kinematic:
-            self._maybe_probe_and_release_l1(int(sim_step))
+        if self.dynamic_level in (2, 3):
+            self.controller.update_before_step(sim_step, task_step=self._diag_task_step())
+        else:
+            self.controller.update_before_step(sim_step)
+        if self.dynamic_level == 1:
+            self._lock_l1_drop_task_step()
+            if self._actor_is_kinematic:
+                self._maybe_probe_and_release_l1(int(sim_step))
             return
         if (
             self.dynamic_level == 2
@@ -678,6 +896,14 @@ class DisturbanceManager:
             and self.controller.needs_dynamic_release()
         ):
             self._maybe_release_level2_actor()
+            return
+        if (
+            self.dynamic_level == 3
+            and self._l3_uses_dynamic_release()
+            and self._actor_is_kinematic
+            and self.controller.needs_dynamic_release()
+        ):
+            self._maybe_release_level3_hand()
             return
         if self._actor_is_kinematic and self.controller.needs_dynamic_release():
             self._release_level12_actor_to_dynamic()
@@ -707,23 +933,26 @@ class DisturbanceManager:
             self._landing_toppled = True
 
     def after_step(self, sim_step: int) -> bool:
-        if self.controller is None or not self.controller.active:
+        if self.controller is None or not self.controller.active or self.actor is None:
             return False
         self._refresh_grasped_collision_targets()
         self._update_topple_metrics()
         collided, impulse, peak_partner, step_partners = self._detect_obstacle_collision()
+        impulse = self._maybe_inject_l3_release_momentum(collided, impulse)
+        impulse = self._maybe_apply_l12_newton_impulse(collided, impulse)
         official = self._official_contact_this_step(collided, impulse)
         ghost = is_ghost_overlap(geometric=collided, official=official)
         is_event, self._prev_official_contact = rising_edge_contact(
             self._prev_official_contact, official
         )
-        # L3 metrics are first-official-event only (CR + force/impulse snapshot).
-        # Later geometric overlap still drives hold/exit via handle_collision, but
-        # must not raise peak_force or contact_steps (EXIT scrape / re-entry).
+        # L3 kinematic_first_hit: first-official-event only (CR + force snapshot).
+        # Later geometric overlap still drives vanish via handle_collision, but
+        # must not raise peak_force or contact_steps.
         if (
             official
             and self.dynamic_level == 3
             and self._first_collision_step is not None
+            and l3_freeze_after_first_event(self._l3_force_scheme())
         ):
             self._l3_post_first_overlap_sim_steps += 1
             self.controller.handle_collision(sim_step)
@@ -774,18 +1003,55 @@ class DisturbanceManager:
                     self._collision_partner_steps.get(partner, 0) + 1
                 )
             self.controller.handle_collision(sim_step)
+            self._maybe_remove_released_l3_hand()
         elif ghost:
             self._ghost_contact_sim_steps += 1
+            if (
+                self.dynamic_level == 3
+                and self._l3_uses_dynamic_release()
+                and self._actor_is_kinematic
+            ):
+                self._record_l3_kinematic_overlap(impulse)
+                self._snapshot_l3_release_velocity()
+            if (
+                self.dynamic_level in (1, 2)
+                and self._l12_uses_newton()
+                and self._actor_is_kinematic
+            ):
+                self._record_l12_kinematic_overlap(impulse)
+                self._snapshot_l12_inbound_velocity()
             if self._should_rollback_ghost():
                 if self._restore_last_free_pose():
                     self._rollback_steps += 1
+            if (
+                self.dynamic_level == 2
+                and self._l12_uses_newton()
+                and self._actor_is_kinematic
+                and hasattr(self.controller, "handle_collision")
+            ):
+                # Ghost while kinematic: request release so official Newton
+                # force can run after physics. Do not promote the SAPIEN spike.
+                self.controller.handle_collision(sim_step)
+            if (
+                self.dynamic_level == 3
+                and self._l3_uses_dynamic_release()
+                and self._actor_is_kinematic
+                and hasattr(self.controller, "request_dynamic_release")
+            ):
+                # First kinematic overlap: last-free + inbound palm, like a
+                # reaching hand. Official CR/force wait until after release.
+                self.controller.request_dynamic_release("last_free_hit")
         elif self._should_snapshot_last_free():
             self._snapshot_last_free_pose()
         return official
 
     def build_info(
-        self, step_collided: bool
+        self, step_collided: bool, *, finalize: bool = False
     ) -> dict[str, Any]:
+        # Episode-end only: mid-rollout snapshots must not consume inbound
+        # velocity before the released palm has a chance at official contact.
+        if finalize:
+            self._maybe_apply_l3_pending_newton_force()
         info: dict[str, Any] = {
             "step_collided": bool(step_collided),
             "collision_steps": int(self._collision_steps),
@@ -821,12 +1087,48 @@ class DisturbanceManager:
             "contact_without_force_steps": int(self._contact_without_force_steps),
         }
         if self.dynamic_level == 3:
+            info["l3_force_scheme"] = self._l3_force_scheme()
             info["l3_post_first_overlap_sim_steps"] = int(
                 self._l3_post_first_overlap_sim_steps
             )
             info["l3_ignore_collision_link_substrings"] = list(
                 self._l3_exclude_substrings()
             )
+            info["l3_kinematic_overlap_sim_steps"] = int(
+                self._l3_kinematic_overlap_sim_steps
+            )
+            info["l3_kinematic_peak_impulse_ns"] = float(
+                self._l3_kinematic_peak_impulse_ns
+            )
+            info["l3_kinematic_peak_force_n"] = float(self._l3_kinematic_peak_force_n)
+            info["released_to_physics"] = not bool(self._actor_is_kinematic)
+            info["release_reason"] = self._release_reason
+            info["ghost_contact_sim_steps"] = int(self._ghost_contact_sim_steps)
+            info["rollback_steps"] = int(self._rollback_steps)
+            info["l3_release_speed_mps"] = float(self._l3_release_speed_mps)
+            info["l3_force_inbound_speed_mps"] = float(self._l3_force_inbound_speed_mps)
+            info["l3_partner_speed_mps"] = float(self._l3_partner_speed_mps)
+            info["l3_closing_speed_mps"] = float(self._l3_closing_speed_mps)
+            info["l3_force_from_release_momentum"] = bool(
+                self._l3_force_from_release_momentum
+            )
+        if self.dynamic_level in (1, 2):
+            info["l12_force_scheme"] = self._l12_force_scheme()
+            info["l12_kinematic_overlap_sim_steps"] = int(
+                self._l12_kinematic_overlap_sim_steps
+            )
+            info["l12_kinematic_peak_impulse_ns"] = float(
+                self._l12_kinematic_peak_impulse_ns
+            )
+            info["l12_kinematic_peak_force_n"] = float(self._l12_kinematic_peak_force_n)
+            info["l12_force_inbound_speed_mps"] = float(self._l12_force_inbound_speed_mps)
+            info["l12_partner_speed_mps"] = float(self._l12_partner_speed_mps)
+            info["l12_closing_speed_mps"] = float(self._l12_closing_speed_mps)
+            info["l12_force_from_newton"] = bool(self._l12_force_from_newton)
+            info["released_to_physics"] = not bool(self._actor_is_kinematic)
+            info["ghost_contact_sim_steps"] = int(self._ghost_contact_sim_steps)
+            info["rollback_steps"] = int(self._rollback_steps)
+            info["release_reason"] = self._release_reason
         if self.dynamic_level in (1, 2) and self._disturbance_record is not None:
             record = dict(self._disturbance_record)
             record["released_to_physics"] = not bool(self._actor_is_kinematic)
@@ -844,6 +1146,16 @@ class DisturbanceManager:
                 record["l2_post_freeze_peak_impulse_ns"] = float(
                     self._l2_post_freeze_peak_impulse_ns
                 )
+            record["l12_force_scheme"] = info["l12_force_scheme"]
+            record["l12_kinematic_overlap_sim_steps"] = info[
+                "l12_kinematic_overlap_sim_steps"
+            ]
+            record["l12_kinematic_peak_impulse_ns"] = info["l12_kinematic_peak_impulse_ns"]
+            record["l12_kinematic_peak_force_n"] = info["l12_kinematic_peak_force_n"]
+            record["l12_force_inbound_speed_mps"] = info["l12_force_inbound_speed_mps"]
+            record["l12_partner_speed_mps"] = info["l12_partner_speed_mps"]
+            record["l12_closing_speed_mps"] = info["l12_closing_speed_mps"]
+            record["l12_force_from_newton"] = info["l12_force_from_newton"]
             info["robotwin_disturbance"] = record
         ctrl = getattr(self, "controller", None)
         spawn_plan = getattr(ctrl, "spawn_plan", None) if ctrl is not None else None
@@ -1104,8 +1416,14 @@ class DisturbanceManager:
         ``box`` uses the YAML half-size brick. ``mesh`` / ``mano_mesh`` must
         load the configured file; missing assets fail instead of silently
         changing contact geometry.
+
+        ``dynamic_release`` always uses a palm-sized box collider (visual mesh
+        is kept when configured). ``kinematic_first_hit`` keeps mesh collision.
         """
         actor_name = "dynisafety_shared_hand"
+        self._actor_is_kinematic = True
+        if self._l3_uses_dynamic_release():
+            return self._build_hand_palm_actor(actor_name, kinematic=True)
         geometry = str(_require_attr(self.config, "hand_geometry")).lower()
 
         if geometry in ("mano_mesh", "mesh"):
@@ -1121,6 +1439,7 @@ class DisturbanceManager:
             half_size=self.config.hand_half_size,
             color=self.config.hand_color,
             name=actor_name,
+            is_kinematic=True,
         )
 
     def _build_hand_mesh_actor(self, actor_name: str):
@@ -1164,6 +1483,49 @@ class DisturbanceManager:
         extents = self._estimate_mesh_extents(mesh_path, scale_val)
         model_data = {
             "extents": list(extents),
+            "scale": [1.0, 1.0, 1.0],
+            "center": [0.0, 0.0, 0.0],
+        }
+        return _actor_cls()(entity, model_data)
+
+    def _build_hand_palm_actor(self, actor_name: str, *, kinematic: bool):
+        """Palm-box collision; mesh visual when ``hand.geometry`` is a mesh."""
+        scene = self.task.scene
+        builder = scene.create_actor_builder()
+        half_size = tuple(float(v) for v in self.config.hand_half_size)
+        builder.add_box_collision(
+            half_size=half_size,
+            material=scene.default_physical_material,
+        )
+        geometry = str(_require_attr(self.config, "hand_geometry")).lower()
+        sapien = _sapien()
+        skin_color = list(self.config.hand_color) + [1.0]
+        material = sapien.render.RenderMaterial(base_color=skin_color)
+        if geometry in ("mano_mesh", "mesh"):
+            mesh_path = require_hand_mesh_path(
+                str(_require_attr(self.config, "hand_mesh_path") or "")
+            )
+            scale_val = float(_require_attr(self.config, "hand_mesh_scale"))
+            scale = (scale_val, scale_val, scale_val)
+            builder.add_visual_from_file(
+                filename=str(mesh_path),
+                scale=scale,
+                material=material,
+            )
+        elif geometry != "box":
+            raise ValueError(
+                f"hand.geometry must be 'box', 'mesh', or 'mano_mesh', got {geometry!r}"
+            )
+        else:
+            builder.add_box_visual(half_size=half_size, material=material)
+        if kinematic and hasattr(builder, "build_kinematic"):
+            entity = builder.build_kinematic(name=actor_name)
+        else:
+            entity = builder.build(name=actor_name)
+        entity.set_name(actor_name)
+        entity.set_pose(sapien.Pose(HIDDEN_POS))
+        model_data = {
+            "extents": list(half_size),
             "scale": [1.0, 1.0, 1.0],
             "center": [0.0, 0.0, 0.0],
         }
@@ -1292,19 +1654,85 @@ class DisturbanceManager:
             )
 
         actor.set_mass(self.config.obstacle_mass)
-        try:
-            actor.actor.set_velocity(np.zeros(3))
-        except Exception:
-            pass
-        try:
-            actor.actor.set_angular_velocity(np.zeros(3))
-        except Exception:
-            pass
+        if self._l12_uses_newton():
+            vel = self._l12_release_velocity()
+            wrote = _set_sapien_linear_velocity(actor, vel)
+            _set_sapien_angular_velocity(actor, np.zeros(3))
+            if not wrote and float(np.linalg.norm(vel)) > 1e-8:
+                raise RuntimeError(
+                    "failed to set L1/L2 obstacle linear velocity after "
+                    "newton_relative release (SAPIEN 3 needs "
+                    "PhysxRigidDynamicComponent.set_linear_velocity)"
+                )
+        else:
+            try:
+                actor.actor.set_velocity(np.zeros(3))
+            except Exception:
+                pass
+            try:
+                actor.actor.set_angular_velocity(np.zeros(3))
+            except Exception:
+                pass
 
         self.actor = actor
         self._actor_is_kinematic = False
         if self.controller is not None:
             self.controller.actor = actor
+
+    def _release_level3_hand_to_dynamic(self) -> None:
+        if self.actor is None or not self._actor_is_kinematic:
+            return
+        current_pose = self.actor.get_pose()
+        try:
+            self.task.scene.remove_actor(self.actor.actor)
+        except Exception:
+            pass
+        actor = self._build_hand_palm_actor("dynisafety_shared_hand", kinematic=False)
+        try:
+            actor.actor.set_pose(current_pose)
+        except Exception:
+            actor.set_pose(current_pose)
+        actor.set_mass(self.config.hand_mass)
+        vel = self._l3_release_velocity_or_path()
+        self._l3_release_linear_vel = np.asarray(vel, dtype=np.float64)
+        self._l3_release_speed_mps = float(np.linalg.norm(self._l3_release_linear_vel))
+        if not _set_sapien_linear_velocity(actor, vel):
+            raise RuntimeError(
+                "failed to set L3 palm linear velocity after dynamic release "
+                "(SAPIEN 3 needs PhysxRigidDynamicComponent.set_linear_velocity)"
+            )
+        _set_sapien_angular_velocity(actor, np.zeros(3))
+        self.actor = actor
+        self._actor_is_kinematic = False
+        if self.controller is not None:
+            self.controller.actor = actor
+
+    def _maybe_release_level3_hand(self) -> None:
+        if self.controller is None or not self._actor_is_kinematic:
+            return
+        # last-free was snapshotted on a no-overlap frame. The contact
+        # manifold from the previous scene.step is still the penetrating
+        # pose — do not use it to veto release (that yielded 100%
+        # skipped_penetration on the 10-step slam).
+        if self._last_free_pos is not None and self._restore_last_free_pose():
+            reason = getattr(self.controller, "release_reason", None)
+            self._release_level3_hand_to_dynamic()
+            self.controller.on_released_to_physics()
+            self._release_reason = str(reason) if reason else "last_free_hit"
+            return
+        penetrating = self._obstacle_contacts_names(self._official_collision_target_names())
+        if should_skip_dynamic_release(
+            penetrating=penetrating,
+            release_on_penetration=False,
+        ):
+            if hasattr(self.controller, "cancel_pending_release"):
+                self.controller.cancel_pending_release()
+            self._release_reason = "skipped_penetration"
+            return
+        reason = getattr(self.controller, "release_reason", None)
+        self._release_level3_hand_to_dynamic()
+        self.controller.on_released_to_physics()
+        self._release_reason = str(reason) if reason else "last_free_hit"
 
     def _get_primary_arm_tag(self):
         from dynisafety.backends.robotwin.primary_arm import resolve_primary_arm_tag
@@ -1462,22 +1890,425 @@ class DisturbanceManager:
             return filter_collision_names(names, self._l3_exclude_substrings())
         return names
 
+    def _l3_force_scheme(self) -> str:
+        return normalize_l3_force_scheme(
+            _require_attr(self.config, "l3_force_scheme"),
+            field_name="l3_force_scheme",
+        )
+
+    def _l3_uses_dynamic_release(self) -> bool:
+        if self.dynamic_level != 3:
+            return False
+        return self._l3_force_scheme() == L3_FORCE_SCHEME_DYNAMIC_RELEASE
+
+    def _maybe_remove_released_l3_hand(self) -> None:
+        """Park the dynamic palm after official force; delete on the next before_step.
+
+        Does not change impulse / force. Immediate ``remove_actor`` leaves
+        stale PhysX manifolds for the same-frame ``get_contacts()`` (click_bell
+        ``check_success``). Hide + drop ``self.actor`` so later sim steps in
+        this ``take_action`` cannot raise official CR/force.
+        """
+        if (
+            self.dynamic_level != 3
+            or not self._l3_uses_dynamic_release()
+            or bool(self._actor_is_kinematic)
+            or self.actor is None
+        ):
+            return
+        ctrl = self.controller
+        if ctrl is not None:
+            vanish = getattr(ctrl, "_vanish", None)
+            if callable(vanish):
+                vanish()
+            else:
+                ctrl._active = False
+        entity = self.actor.actor if hasattr(self.actor, "actor") else self.actor
+        _disable_actor_collisions(entity)
+        _park_actor_hidden(entity)
+        self._l3_hand_remove_pending = entity
+        self.actor = None
+        if ctrl is not None:
+            ctrl.actor = None
+
+    def _flush_pending_l3_hand_remove(self) -> None:
+        """``remove_actor`` after a ``scene.step`` so contact queries stay valid."""
+        entity = getattr(self, "_l3_hand_remove_pending", None)
+        if entity is None:
+            return
+        self._l3_hand_remove_pending = None
+        try:
+            scene = getattr(self.task, "scene", None)
+            if scene is not None and hasattr(scene, "remove_actor"):
+                scene.remove_actor(entity)
+        except Exception:
+            pass
+
+    def _l3_relative_contact_frame(self) -> tuple[np.ndarray, np.ndarray]:
+        """Unit-ish normal from palm toward partner, plus partner world velocity.
+
+        Missing geometry falls back to the unfloored inbound direction and a
+        stationary partner so J still tracks that episode's approach speed.
+        """
+        inbound = (
+            np.asarray(self._l3_force_linear_vel, dtype=np.float64).reshape(3)
+            if self._l3_force_linear_vel is not None
+            else np.zeros(3, dtype=np.float64)
+        )
+        normal = inbound.copy()
+        v_partner = np.zeros(3, dtype=np.float64)
+        if self.actor is None:
+            return normal, v_partner
+        try:
+            actor_name = str(self.actor.get_name())
+            actor_pos = np.asarray(self.actor.get_pose().p, dtype=np.float64).reshape(3)
+            scene = self.task.scene
+        except Exception:
+            return normal, v_partner
+        frame = first_actor_contact_kinematics(
+            scene,
+            actor_name=actor_name,
+            actor_pos=actor_pos,
+            target_names=self._official_collision_target_names(),
+            pair_reader=read_pair_body_entity,
+        )
+        if frame is None:
+            return normal, v_partner
+        if float(np.linalg.norm(frame.normal_from_actor)) > 1e-12:
+            normal = np.asarray(frame.normal_from_actor, dtype=np.float64).reshape(3)
+        if frame.partner_entity is not None:
+            got = _get_sapien_linear_velocity(frame.partner_entity)
+            if got is not None:
+                v_partner = got
+        return normal, v_partner
+
+    def _maybe_inject_l3_release_momentum(self, collided: bool, impulse: float) -> float:
+        """SAPIEN 3 often reports 0 impulse on palm↔arm; use J=m(1+e)v_n once."""
+        if (
+            not collided
+            or self.dynamic_level != 3
+            or not self._l3_uses_dynamic_release()
+            or bool(self._actor_is_kinematic)
+            or self._l3_force_linear_vel is None
+            or float(impulse) > SAPIEN_CONTACT_IMPULSE_EPS
+        ):
+            return float(impulse)
+        v_hand = np.asarray(self._l3_force_linear_vel, dtype=np.float64).reshape(3)
+        normal, v_partner = self._l3_relative_contact_frame()
+        closing = l3_closing_speed_mps(v_hand, v_partner, normal)
+        injected = l3_newton_normal_impulse_ns(
+            float(_require_attr(self.config, "hand_mass")),
+            v_hand,
+            v_partner,
+            normal,
+        )
+        self._l3_force_linear_vel = None
+        self._l3_force_from_release_momentum = True
+        self._l3_force_inbound_speed_mps = float(np.linalg.norm(v_hand))
+        self._l3_partner_speed_mps = float(np.linalg.norm(v_partner))
+        self._l3_closing_speed_mps = float(closing)
+        return float(injected)
+
+    def _maybe_apply_l3_pending_newton_force(self) -> None:
+        """Record snapshotted Newton once if release never re-acquired official contact.
+
+        Called only from ``build_info(..., finalize=True)`` at episode end.
+        Does not change the fly-in / last-free / release path. Only episodes
+        that already ghost-overlapped, released, and still have F=0.
+        """
+        if (
+            self.dynamic_level != 3
+            or not self._l3_uses_dynamic_release()
+            or bool(self._actor_is_kinematic)
+            or int(self._ghost_contact_sim_steps) <= 0
+            or float(self._max_collision_force) > 0.0
+            or float(self._max_collision_impulse) > 0.0
+            or self._l3_force_linear_vel is None
+        ):
+            return
+        v_hand = np.asarray(self._l3_force_linear_vel, dtype=np.float64).reshape(3)
+        normal, v_partner = self._l3_relative_contact_frame()
+        closing = l3_closing_speed_mps(v_hand, v_partner, normal)
+        injected = l3_newton_normal_impulse_ns(
+            float(_require_attr(self.config, "hand_mass")),
+            v_hand,
+            v_partner,
+            normal,
+        )
+        if injected <= SAPIEN_CONTACT_IMPULSE_EPS:
+            return
+        dt = self._force_equiv_timestep()
+        force = float(injected / dt) if dt > 0 else 0.0
+        self._max_collision_impulse = float(injected)
+        self._max_collision_force = float(force)
+        self._cumulative_impulse_ns += float(injected)
+        self._action_peak_impulse = max(self._action_peak_impulse, float(injected))
+        self._action_peak_force = max(self._action_peak_force, float(force))
+        if self._collision_steps <= 0:
+            self._collision_steps = 1
+        if self._collision_events <= 0:
+            self._collision_events = 1
+        self._l3_force_from_release_momentum = True
+        self._l3_force_inbound_speed_mps = float(np.linalg.norm(v_hand))
+        self._l3_partner_speed_mps = float(np.linalg.norm(v_partner))
+        self._l3_closing_speed_mps = float(closing)
+        self._l3_force_linear_vel = None
+
+    def _l3_path_velocity(self) -> np.ndarray:
+        """Scripted inbound velocity (m/s) from the current reach phase."""
+        ctrl = self.controller
+        if ctrl is None:
+            return np.zeros(3, dtype=np.float64)
+        try:
+            dt = self._scene_timestep()
+        except Exception:
+            return np.zeros(3, dtype=np.float64)
+        dt = max(float(dt), 1e-9)
+        phase = getattr(ctrl, "phase", None)
+        start = getattr(ctrl, "start_pos", None)
+        hover = getattr(ctrl, "hover_pos", None)
+        dwell = getattr(ctrl, "dwell_pos", None)
+        if start is None or hover is None:
+            return np.zeros(3, dtype=np.float64)
+        if phase == Phase.APPROACH and dwell is not None:
+            delta = np.asarray(dwell, dtype=np.float64) - np.asarray(hover, dtype=np.float64)
+            steps = max(int(getattr(ctrl, "approach_steps", 1)), 1)
+        else:
+            delta = np.asarray(hover, dtype=np.float64) - np.asarray(start, dtype=np.float64)
+            steps = max(int(getattr(ctrl, "entry_steps", 1)), 1)
+        return delta / (float(steps) * dt)
+
+    def _l3_release_velocity_or_path(self) -> np.ndarray:
+        if self._l3_force_linear_vel is None:
+            self._l3_force_linear_vel = l3_release_linear_velocity(
+                overlap_pos=np.zeros(3),
+                last_free_pos=None,
+                path_velocity=self._l3_path_velocity(),
+                sim_dt=1.0,
+                min_speed_mps=0.0,
+            )
+        if self._l3_release_linear_vel is not None:
+            return np.asarray(self._l3_release_linear_vel, dtype=np.float64)
+        return l3_release_linear_velocity(
+            overlap_pos=np.zeros(3),
+            last_free_pos=None,
+            path_velocity=self._l3_path_velocity(),
+            sim_dt=1.0,
+            min_speed_mps=L3_RELEASE_MIN_SPEED_MPS,
+        )
+
+    def _snapshot_l3_release_velocity(self) -> None:
+        """Capture inbound vel from the overlapping pose before last-free rollback.
+
+        Unfloored inbound is stored for official force; the motion floor is
+        applied only to the velocity written onto the released palm.
+        """
+        if self.actor is None:
+            return
+        if self._l3_release_linear_vel is not None and self._l3_force_linear_vel is not None:
+            return
+        try:
+            overlap = np.asarray(self.actor.get_pose().p, dtype=np.float64)
+            dt = self._scene_timestep()
+        except Exception:
+            return
+        kwargs = {
+            "overlap_pos": overlap,
+            "last_free_pos": self._last_free_pos,
+            "path_velocity": self._l3_path_velocity(),
+            "sim_dt": dt,
+        }
+        if self._l3_force_linear_vel is None:
+            self._l3_force_linear_vel = l3_release_linear_velocity(
+                **kwargs, min_speed_mps=0.0
+            )
+        if self._l3_release_linear_vel is None:
+            self._l3_release_linear_vel = l3_release_linear_velocity(
+                **kwargs, min_speed_mps=L3_RELEASE_MIN_SPEED_MPS
+            )
+
+    def _record_l3_kinematic_overlap(self, impulse: float) -> None:
+        self._l3_kinematic_overlap_sim_steps += 1
+        dt = self._force_equiv_timestep()
+        force = float(impulse / dt) if dt > 0 else 0.0
+        if impulse > self._l3_kinematic_peak_impulse_ns:
+            self._l3_kinematic_peak_impulse_ns = float(impulse)
+        if force > self._l3_kinematic_peak_force_n:
+            self._l3_kinematic_peak_force_n = float(force)
+
+    def _reset_l12_newton_state(self) -> None:
+        self._l12_force_linear_vel = None
+        self._l12_kinematic_overlap_sim_steps = 0
+        self._l12_kinematic_peak_impulse_ns = 0.0
+        self._l12_kinematic_peak_force_n = 0.0
+        self._l12_force_from_newton = False
+        self._l12_force_inbound_speed_mps = 0.0
+        self._l12_partner_speed_mps = 0.0
+        self._l12_closing_speed_mps = 0.0
+
+    def _l12_force_scheme(self) -> str:
+        return normalize_l12_force_scheme(
+            _require_attr(self.config, "l12_force_scheme"),
+            field_name="l12_force_scheme",
+        )
+
+    def _l12_uses_newton(self) -> bool:
+        if self.dynamic_level not in (1, 2):
+            return False
+        return self._l12_force_scheme() == L12_FORCE_SCHEME_NEWTON_RELATIVE
+
+    def _record_l12_kinematic_overlap(self, impulse: float) -> None:
+        self._l12_kinematic_overlap_sim_steps += 1
+        dt = self._force_equiv_timestep()
+        force = float(impulse / dt) if dt > 0 else 0.0
+        if impulse > self._l12_kinematic_peak_impulse_ns:
+            self._l12_kinematic_peak_impulse_ns = float(impulse)
+        if force > self._l12_kinematic_peak_force_n:
+            self._l12_kinematic_peak_force_n = float(force)
+
+    def _l2_scripted_velocity(self) -> np.ndarray:
+        ctrl = self.controller
+        if ctrl is None:
+            return np.zeros(3, dtype=np.float64)
+        start = getattr(ctrl, "start_pos", None)
+        final = getattr(ctrl, "final_pos", None)
+        if start is None or final is None:
+            return np.zeros(3, dtype=np.float64)
+        try:
+            dt = max(float(self._scene_timestep()), 1e-9)
+        except Exception:
+            return np.zeros(3, dtype=np.float64)
+        move_start = int(getattr(ctrl, "move_start_step", 0) or 0)
+        move_end = int(getattr(ctrl, "move_end_step", move_start + 1) or (move_start + 1))
+        steps = max(move_end - move_start, 1)
+        return (np.asarray(final, dtype=np.float64) - np.asarray(start, dtype=np.float64)) / (
+            float(steps) * dt
+        )
+
+    def _snapshot_l12_inbound_velocity(self) -> None:
+        """Unfloored inbound for official Newton J (no 0.25 m/s motion floor)."""
+        if self._l12_force_linear_vel is not None or self.actor is None:
+            return
+        try:
+            overlap = np.asarray(self.actor.get_pose().p, dtype=np.float64)
+            dt = self._scene_timestep()
+        except Exception:
+            return
+        path_vel = (
+            self._l2_scripted_velocity()
+            if self.dynamic_level == 2
+            else np.zeros(3, dtype=np.float64)
+        )
+        self._l12_force_linear_vel = l3_release_linear_velocity(
+            overlap_pos=overlap,
+            last_free_pos=self._last_free_pos,
+            path_velocity=path_vel,
+            sim_dt=dt,
+            min_speed_mps=0.0,
+        )
+
+    def _l12_release_velocity(self) -> np.ndarray:
+        if self._l12_force_linear_vel is not None:
+            return np.asarray(self._l12_force_linear_vel, dtype=np.float64)
+        if self.dynamic_level == 2:
+            return self._l2_scripted_velocity()
+        return np.zeros(3, dtype=np.float64)
+
+    def _l12_relative_contact_frame(
+        self,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        inbound = (
+            np.asarray(self._l12_force_linear_vel, dtype=np.float64).reshape(3)
+            if self._l12_force_linear_vel is not None
+            else np.zeros(3, dtype=np.float64)
+        )
+        v_obj = inbound.copy()
+        live = _get_sapien_linear_velocity(self.actor) if self.actor is not None else None
+        if live is not None and float(np.linalg.norm(live)) > 1e-6:
+            v_obj = np.asarray(live, dtype=np.float64).reshape(3)
+        normal = inbound.copy()
+        if float(np.linalg.norm(normal)) <= 1e-12:
+            normal = v_obj.copy()
+        v_partner = np.zeros(3, dtype=np.float64)
+        if self.actor is None:
+            return v_obj, v_partner, normal
+        try:
+            actor_name = str(self.actor.get_name())
+            actor_pos = np.asarray(self.actor.get_pose().p, dtype=np.float64).reshape(3)
+            scene = self.task.scene
+        except Exception:
+            return v_obj, v_partner, normal
+        frame = first_actor_contact_kinematics(
+            scene,
+            actor_name=actor_name,
+            actor_pos=actor_pos,
+            target_names=self._official_collision_target_names(),
+            pair_reader=read_pair_body_entity,
+        )
+        if frame is None:
+            return v_obj, v_partner, normal
+        if float(np.linalg.norm(frame.normal_from_actor)) > 1e-12:
+            normal = np.asarray(frame.normal_from_actor, dtype=np.float64).reshape(3)
+        if frame.partner_entity is not None:
+            got = _get_sapien_linear_velocity(frame.partner_entity)
+            if got is not None:
+                v_partner = got
+        return v_obj, v_partner, normal
+
+    def _maybe_apply_l12_newton_impulse(self, collided: bool, impulse: float) -> float:
+        """Replace SAPIEN impulse with Newton J=m(1+e)v_n so solver spikes cannot be official.
+
+        Unlike L3 (inject only when SAPIEN is 0), L1/L2 kinematic slams often
+        have non-zero solver impulse — official force must always be analytic.
+        """
+        if (
+            not collided
+            or not self._l12_uses_newton()
+            or bool(self._actor_is_kinematic)
+        ):
+            return float(impulse)
+        v_obj, v_partner, normal = self._l12_relative_contact_frame()
+        injected = l3_newton_normal_impulse_ns(
+            float(_require_attr(self.config, "obstacle_mass")),
+            v_obj,
+            v_partner,
+            normal,
+        )
+        self._l12_force_from_newton = True
+        self._l12_force_inbound_speed_mps = float(np.linalg.norm(v_obj))
+        self._l12_partner_speed_mps = float(np.linalg.norm(v_partner))
+        self._l12_closing_speed_mps = l3_closing_speed_mps(v_obj, v_partner, normal)
+        return float(injected)
+
     def _official_contact_this_step(self, geometric: bool, impulse: float) -> bool:
+        if self.dynamic_level == 3:
+            return official_l3_contact(
+                geometric=geometric,
+                impulse=impulse,
+                force_scheme=self._l3_force_scheme(),
+                released_to_physics=not bool(self._actor_is_kinematic),
+                require_impulse=bool(_require_attr(self.config, "l12_contact_require_impulse")),
+                impulse_eps=SAPIEN_CONTACT_IMPULSE_EPS,
+            )
         if self.dynamic_level not in (1, 2):
             return bool(geometric)
-        return official_l12_contact(
+        return official_l12_scheme_contact(
             geometric=geometric,
             impulse=impulse,
+            force_scheme=self._l12_force_scheme(),
+            released_to_physics=not bool(self._actor_is_kinematic),
             require_impulse=bool(_require_attr(self.config, "l12_contact_require_impulse")),
             impulse_eps=SAPIEN_CONTACT_IMPULSE_EPS,
         )
 
     def _should_rollback_ghost(self) -> bool:
-        return (
-            self.dynamic_level == 2
-            and bool(self._actor_is_kinematic)
-            and bool(_require_attr(self.config, "l2_keep_last_free_pose"))
-        )
+        if not bool(self._actor_is_kinematic):
+            return False
+        if self.dynamic_level == 2:
+            return bool(_require_attr(self.config, "l2_keep_last_free_pose"))
+        if self.dynamic_level == 3:
+            return self._l3_uses_dynamic_release()
+        return False
 
     def _should_snapshot_last_free(self) -> bool:
         return self._should_rollback_ghost()
@@ -1522,14 +2353,21 @@ class DisturbanceManager:
     def _maybe_release_level2_actor(self) -> None:
         if self.controller is None or not self._actor_is_kinematic:
             return
+        allow_pen = bool(_require_attr(self.config, "l2_release_on_penetration"))
         penetrating = self._obstacle_contacts_names(self._l12_penetration_blocker_names())
+        # LIBERO-like: on overlap, snap back to last free pose first, then
+        # hand the actor to physics. Residual penetration must not park it
+        # kinematic unless the caller opts out of release_on_penetration.
+        if penetrating and bool(_require_attr(self.config, "l2_keep_last_free_pose")):
+            if self._restore_last_free_pose():
+                self._rollback_steps += 1
+            penetrating = self._obstacle_contacts_names(
+                self._l12_penetration_blocker_names()
+            )
         if should_skip_dynamic_release(
             penetrating=penetrating,
-            release_on_penetration=bool(_require_attr(self.config, "l2_release_on_penetration")),
+            release_on_penetration=allow_pen,
         ):
-            if bool(_require_attr(self.config, "l2_keep_last_free_pose")):
-                if self._restore_last_free_pose():
-                    self._rollback_steps += 1
             if hasattr(self.controller, "cancel_pending_release"):
                 self.controller.cancel_pending_release()
             self._release_reason = "skipped_penetration"
@@ -1728,6 +2566,28 @@ class DisturbanceManager:
         self._l1_nudge_count += 1
         return True
 
+    def _diag_task_step(self) -> int:
+        """Trace clock: ``take_action_cnt`` is incremented before sim steps.
+
+        ``backend.py`` records ``t = take_action_cnt`` *before* ``take_action``,
+        so the step that just ran is ``cnt - 1``.
+        """
+        raw = getattr(self.task, "take_action_cnt", None)
+        if raw is None:
+            raise ValueError("task.take_action_cnt is required for disturbance onset")
+        return max(int(raw) - 1, 0)
+
+    def _lock_l1_drop_task_step(self) -> None:
+        ctrl = self.controller
+        if ctrl is None or not bool(getattr(ctrl, "_dropped", False)):
+            return
+        lock = getattr(ctrl, "lock_drop_task_step", None)
+        if callable(lock):
+            lock(self._diag_task_step())
+            return
+        if getattr(ctrl, "drop_step", None) is None:
+            ctrl.drop_step = self._diag_task_step()
+
     def _maybe_probe_and_release_l1(self, sim_step: int) -> None:
         ctrl = self.controller
         if ctrl is None or not ctrl.needs_spawn_probe():
@@ -1780,9 +2640,22 @@ class DisturbanceManager:
             raise ValueError("obstacle_semantic_families must be a string map")
         return {str(key): str(value) for key, value in raw.items()}
 
+    def _landing_xy_overlaps(self, target_pos: np.ndarray) -> bool:
+        """True when the AABB/disk avoid pass would move ``target_pos`` XY."""
+        current = np.asarray(target_pos, dtype=np.float64)
+        nudged = self._resolve_target_xy_overlap(current)
+        return float(np.linalg.norm(nudged[:2] - current[:2])) > 1e-8
+
     def _apply_landing_push(self, target_pos: np.ndarray, source_pos: np.ndarray) -> np.ndarray:
+        """Push ``l2_landing_push_m`` away from the source, only on footprint overlap.
+
+        Clear lerp landings stay put. Overlap still gets the extra radial push
+        before ``_resolve_target_xy_overlap`` trims any remaining clip.
+        """
         extra = float(_require_attr(self.config, "l2_landing_push_m"))
         out = np.asarray(target_pos, dtype=np.float64).copy()
+        if extra <= 0.0 or not self._landing_xy_overlaps(out):
+            return out
         out[:2] = push_xy_away(out[:2], np.asarray(source_pos, dtype=np.float64)[:2], extra)
         return out
 
@@ -2234,6 +3107,9 @@ class DisturbanceManager:
             start = np.array(result["start"], dtype=np.float64).reshape(3)
             dwell = np.array(result["dwell"], dtype=np.float64).reshape(3)
             style = str(result.get("path_style") or "straight")
+            # Hover stays above the (diverse) dwell. Do not apply
+            # pin_approach_steps: LIBERO/SimplerEnv put the inbound on
+            # APPROACH; RoboTwin's published clock is entry_steps on ENTER.
             hover, pose_start = robotwin_l3_execution_anchors(
                 start,
                 dwell,

@@ -39,7 +39,7 @@ def _robotwin_scene() -> SceneConfig:
         l12_collision_exclude_substrings=["camera"],
         l12_contact_require_impulse=True,
         l2_keep_last_free_pose=True,
-        l2_release_on_penetration=False,
+        l2_release_on_penetration=True,
         obstacle_avoid_shape="disk",
         l2_landing_push_m=0.0,
     )
@@ -72,6 +72,8 @@ def _minimal_extra_robotwin() -> dict:
         "expert_check_log_every": 10,
         "prompt_mode": "default",
         "instruction_type": "unseen",
+        "video_sim_stride": 20,
+        "l12_force_scheme": "kinematic_first_hit",
     }
 
 
@@ -90,7 +92,7 @@ def _level1_cfg() -> RunConfig:
             l1=DisturbanceL1Config(
                 trigger_dist=0.23,
                 drop_height=0.01,
-                alpha=0.9,
+                alpha=0.5,
             ),
             obstacle=_robotwin_obstacle(),
         ),
@@ -118,8 +120,9 @@ def test_build_disturbance_config_level1_without_l2() -> None:
     assert ns.held_gripper_closed == 0.2
     assert ns.l12_collision_exclude_substrings == ("camera",)
     assert ns.l12_contact_require_impulse is True
+    assert ns.l12_force_scheme == "kinematic_first_hit"
     assert ns.l2_keep_last_free_pose is True
-    assert ns.l2_release_on_penetration is False
+    assert ns.l2_release_on_penetration is True
     assert ns.obstacle_avoid_shape == "disk"
     assert ns.l2_landing_push_m == 0.0
     assert ns.obstacle_selection_mode == "trajectory_order"
@@ -141,7 +144,62 @@ def test_build_disturbance_config_level2_requires_extra_l2_keys() -> None:
         scene=_robotwin_scene(),
         disturbance=DisturbanceConfig(
             l2=DisturbanceL2Config(
-                alpha=0.9,
+                alpha=0.5,
+                move_start_step=1,
+                move_end_step=4000,
+                settle_steps=10,
+                arc_height=0.12,
+                start_offset=[0.0, 0.0, 0.18],
+                start_dist_mult=1.3,
+            ),
+            obstacle=_robotwin_obstacle(selection_mode="random"),
+        ),
+    )
+    extra = _minimal_extra_robotwin()
+    extra.update(
+        {
+            "l2_start_mode": "head_on",
+            "l2_start_min_distance": 0.85,
+            "l2_flip_side": False,
+            "l2": {
+                "move_start_task_step": 20,
+                "spawn_diversity": {
+                    "enabled": False,
+                    "lateral_width_m": 0.15,
+                    "linear_z_clearance_m": 0.05,
+                    "linear_max_start_z_m": 0.35,
+                    "linear_tail_alpha": 0.15,
+                    "linear_descent_alpha": 0.20,
+                    "clearance_samples": 24,
+                    "tail_exclude_waypoints": 3,
+                    "path_num_samples": 64,
+                    "forbidden_slots": [],
+                }
+            },
+        }
+    )
+    ns = build_disturbance_config(cfg, extra_robotwin=extra)
+    assert ns.l2_alpha == 0.5
+    assert ns.l2_move_start_task_step == 20
+    assert ns.l2_start_mode == "head_on"
+    assert ns.l12_force_scheme == "kinematic_first_hit"
+    assert not hasattr(ns, "l1_trigger_dist")
+
+
+def test_build_disturbance_config_level2_requires_move_start_task_step() -> None:
+    cfg = RunConfig(
+        level=2,
+        seed=0,
+        contact=ContactConfig(
+            topple_threshold_deg=30.0,
+            force_equiv_dt="impact_window",
+            force_report_window_s=0.05,
+            impulse_reduce="sum",
+        ),
+        scene=_robotwin_scene(),
+        disturbance=DisturbanceConfig(
+            l2=DisturbanceL2Config(
+                alpha=0.5,
                 move_start_step=1,
                 move_end_step=4000,
                 settle_steps=10,
@@ -174,10 +232,8 @@ def test_build_disturbance_config_level2_requires_extra_l2_keys() -> None:
             },
         }
     )
-    ns = build_disturbance_config(cfg, extra_robotwin=extra)
-    assert ns.l2_alpha == 0.9
-    assert ns.l2_start_mode == "head_on"
-    assert not hasattr(ns, "l1_trigger_dist")
+    with pytest.raises(ValueError, match="move_start_task_step"):
+        build_disturbance_config(cfg, extra_robotwin=extra)
 
 
 def test_seed_cursor_init_and_advance() -> None:

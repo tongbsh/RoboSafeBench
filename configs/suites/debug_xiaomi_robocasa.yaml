@@ -1,0 +1,15 @@
+# Debug walkthrough: Xiaomi-Robotics-1 × RoboCasa kitchen-nav × L0–L3.
+# One task (nav_sink) × 5 episodes. Pool has 10 stools; trajectory_order
+# is ep % 10 so this walkthrough shows the first five. Videos via DYNI_SAVE_VIDEO.
+#
+#   DYNI_SAVE_VIDEO=1 DYNI_SUITE=debug_xiaomi_robocasa bash scripts/eval/sweep.sh
+#   DYNI_SAVE_VIDEO=1 bash scripts/eval/01_eval.sh --backend robocasa --suite debug_xiaomi_robocasa
+name: debug_xiaomi_robocasa
+episodes_per_task: 5
+seeds: [7]
+matrix:
+  - backend: robocasa
+    suites: [robocasa_nav]
+    tasks: [0]
+    levels: [0, 1, 2, 3]
+    models: [xiaomi]

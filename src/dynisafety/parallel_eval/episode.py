@@ -22,24 +22,31 @@ import numpy as np
 
 from dynisafety.backends.robotwin.backend import (
     _apply_action_chunk,
+    _capture_fps,
+    _copy_camera_rgb,
+    _copy_endpose_7d,
     _copy_endpose_xyz,
+    _copy_joint_vector,
     _force_equiv_dt_s,
     _require_level_supported,
     _require_robotwin_key,
     _robotwin_extra,
 )
 from dynisafety.backends.robotwin.config_bridge import build_disturbance_config
+from dynisafety.backends.robotwin.contact import l3_episode_extra_from_info
 from dynisafety.backends.robotwin.env import (
     RoboTwinEnvHandle,
     apply_ee_action,
     apply_qpos_action,
     build_observation,
     expert_check_setup,
+    extract_capture_cameras,
     extract_head_rgb,
     save_episode_video,
     select_instruction,
 )
 from dynisafety.backends.robotwin.expert_cache import resolve_expert_check_cache_dir
+from dynisafety.backends.robotwin.primary_arm import ensure_open_laptop_arm_tag
 from dynisafety.backends.robotwin.hooks import (
     disable_dynamic_disturbance,
     enable_dynamic_disturbance,
@@ -55,6 +62,7 @@ from dynisafety.core.rollout import (
     episode_video_dir,
     resolve_save_video,
 )
+from dynisafety.capture import CaptureSession
 from dynisafety.diagnostics import DiagnosticsSession
 from dynisafety.parallel_eval.slot_state import SlotState
 from dynisafety.policies.action_space import effective_action_space
@@ -89,6 +97,7 @@ class EpisodeSlot:
         extra_robotwin: Mapping[str, Any],
         builder: EpisodeMetricsBuilder,
         diag_session: DiagnosticsSession,
+        capture_session: CaptureSession,
         action_queue: ActionChunkQueue,
         force_dt: float,
         t0: float,
@@ -111,6 +120,7 @@ class EpisodeSlot:
         self.extra_robotwin = extra_robotwin
         self.builder = builder
         self.diag_session = diag_session
+        self.capture_session = capture_session
         self.action_queue = action_queue
         self.force_dt = float(force_dt)
         self.t0 = float(t0)
@@ -119,6 +129,13 @@ class EpisodeSlot:
         self.raw_obs: Mapping[str, Any] | None = None
         self.step_eef_pos: tuple[float, ...] | None = None
         self.step_eef_pos_secondary: tuple[float, ...] | None = None
+        self.step_tcp: tuple[float, ...] | None = None
+        self.step_tcp_right: tuple[float, ...] | None = None
+        self.step_joint: tuple[float, ...] | None = None
+        self.step_primary: np.ndarray | None = None
+        self.step_wrist: np.ndarray | None = None
+        self.step_wrist_right: np.ndarray | None = None
+        self.step_cameras: dict[str, dict[str, Any]] | None = None
         self.success = False
         self.success_step: int | None = None
         self.termination = "max_steps"
@@ -195,6 +212,7 @@ def begin(
         is_test=True,
         **handle.task_args,
     )
+    ensure_open_laptop_arm_tag(task_env)
 
     dist_cfg = build_disturbance_config(cfg, extra_robotwin=extra_robotwin)
     enable_dynamic_disturbance(task_env, dist_cfg)
@@ -223,6 +241,12 @@ def begin(
         bound=bound,
         controller=getattr(task_env, "dynisafety_manager", None),
     )
+    capture_session = CaptureSession.create(
+        cfg,
+        episode_index=episode_index,
+        bound=bound,
+        fps=_capture_fps(extra_robotwin),
+    )
     save_video = resolve_save_video(cfg)
     force_dt = _force_equiv_dt_s(cfg)
 
@@ -248,6 +272,7 @@ def begin(
         extra_robotwin=extra_robotwin,
         builder=builder,
         diag_session=diag_session,
+        capture_session=capture_session,
         action_queue=ActionChunkQueue(bound.chunk_size),
         force_dt=force_dt,
         t0=t0,
@@ -278,6 +303,32 @@ def collect_obs(slot: EpisodeSlot) -> Observation:
     task_step = int(getattr(task_env, "take_action_cnt", 0))
     slot.step_eef_pos = _copy_endpose_xyz(slot.raw_obs, "left_endpose")
     slot.step_eef_pos_secondary = _copy_endpose_xyz(slot.raw_obs, "right_endpose")
+    if slot.capture_session.enabled:
+        slot.step_tcp = _copy_endpose_7d(slot.raw_obs, "left_endpose")
+        slot.step_tcp_right = _copy_endpose_7d(slot.raw_obs, "right_endpose")
+        slot.step_joint = _copy_joint_vector(slot.raw_obs)
+        try:
+            slot.step_cameras = extract_capture_cameras(slot.raw_obs)
+            if not slot.step_cameras:
+                slot.step_cameras = None
+        except Exception:
+            slot.step_cameras = None
+        if slot.capture_session.wants_images:
+            slot.step_primary = _copy_camera_rgb(slot.raw_obs, "head_camera")
+            slot.step_wrist = _copy_camera_rgb(slot.raw_obs, "left_camera")
+            slot.step_wrist_right = _copy_camera_rgb(slot.raw_obs, "right_camera")
+        else:
+            slot.step_primary = None
+            slot.step_wrist = None
+            slot.step_wrist_right = None
+    else:
+        slot.step_tcp = None
+        slot.step_tcp_right = None
+        slot.step_joint = None
+        slot.step_primary = None
+        slot.step_wrist = None
+        slot.step_wrist_right = None
+        slot.step_cameras = None
     observation = build_observation(
         slot.handle,
         instruction=slot.instruction,
@@ -354,6 +405,30 @@ def step_once(slot: EpisodeSlot) -> bool:
             force_n=step_force,
             impulse_ns=step_impulse,
         )
+    cap_eef = (
+        slot.step_tcp[:3]
+        if slot.step_tcp is not None
+        else slot.step_eef_pos
+    )
+    slot.capture_session.record_step(
+        t=task_step,
+        eef_pos=cap_eef or (0.0, 0.0, 0.0),
+        eef_quat=(
+            slot.step_tcp[3:7]
+            if slot.step_tcp is not None and len(slot.step_tcp) >= 7
+            else None
+        ),
+        action=action,
+        in_contact=step_collided,
+        force_n=step_force,
+        reward=0.0,
+        joint_position=slot.step_joint,
+        primary=slot.step_primary,
+        wrist=slot.step_wrist,
+        wrist_right=slot.step_wrist_right,
+        tcp_pose_right=slot.step_tcp_right,
+        cameras=slot.step_cameras,
+    )
     if bool(dyn_info.get("contact_without_force", False)):
         slot.contact_without_force_any = True
 
@@ -422,6 +497,19 @@ def finish(slot: EpisodeSlot) -> EpisodeRecord:
         first_contact_step=first_contact_control_step,
         contact_steps=contact_control_steps,
     )
+    slot.capture_session.finalize(
+        success=slot.success,
+        success_step=slot.success_step,
+        termination=slot.termination,
+        first_contact_step=first_contact_control_step,
+        contact_steps=contact_control_steps,
+        toppled=metrics.get("toppled") if slot.level in (1, 2) else None,
+        task_id=slot.handle.task.task_id,
+        task_name=slot.handle.task.task_name,
+        instruction=slot.instruction,
+        checkpoint=str(slot.cfg.checkpoint),
+        config_hash=slot.bound.config_hash,
+    )
     metrics["peak_force_n"] = float(dyn_final.get("max_collision_force", 0.0) or 0.0)
     metrics["peak_impulse_ns"] = float(dyn_final.get("max_collision_impulse", 0.0) or 0.0)
     if "cumulative_impulse_ns" in dyn_final:
@@ -477,9 +565,9 @@ def finish(slot: EpisodeSlot) -> EpisodeRecord:
 
 
 def _dynisafety_info(task_env: Any) -> dict[str, Any]:
-    dyn_info = snapshot_info(task_env)
+    dyn_info = snapshot_info(task_env, finalize=True)
     if hasattr(task_env, "info") and isinstance(task_env.info, dict):
-        dyn_info = dict(task_env.info.get("dynisafety") or dyn_info)
+        task_env.info["dynisafety"] = dyn_info
     return dyn_info
 
 
@@ -536,13 +624,7 @@ def _episode_extra(
     if slot.level in (1, 2):
         extra["landing_toppled"] = bool(dyn_final.get("landing_toppled", False))
     if slot.level == 3:
-        extra["l3_post_first_overlap_sim_steps"] = int(
-            dyn_final.get("l3_post_first_overlap_sim_steps", 0) or 0
-        )
-        raw_ignore = dyn_final.get("l3_ignore_collision_link_substrings")
-        extra["l3_ignore_collision_link_substrings"] = (
-            [str(item) for item in raw_ignore] if raw_ignore else []
-        )
+        extra.update(l3_episode_extra_from_info(dyn_final))
     spawn_plan = dyn_final.get("spawn_plan")
     if isinstance(spawn_plan, dict) and spawn_plan:
         extra["spawn_plan"] = dict(spawn_plan)

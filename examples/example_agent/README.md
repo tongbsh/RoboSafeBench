@@ -8,10 +8,10 @@ runnable example, not a second contract.
 Canonical procedure, frozen contracts, and install rules live elsewhere — read
 those, do not re-learn them here:
 
-- [docs/user/adding_a_model.md](../../docs/user/adding_a_model.md) — 6-step procedure
-- [docs/user/contracts.md](../../docs/user/contracts.md) — frozen contracts
-- [docs/user/installation.md](../../docs/user/installation.md) — one backend per environment; extras are mutually exclusive
-- [docs/user/benchmark_design.md](../../docs/user/benchmark_design.md), [docs/user/metrics.md](../../docs/user/metrics.md)
+- [docs/user/repo.md](../../docs/user/repo.md) — 6-step procedure
+- [docs/user/eval.md](../../docs/user/eval.md) — frozen contracts
+- [docs/user/install.md](../../docs/user/install.md) — one backend per environment; extras are mutually exclusive
+- [docs/user/eval.md](../../docs/user/eval.md), [docs/user/eval.md](../../docs/user/eval.md)
 
 ## What this is (and is not)
 
@@ -182,6 +182,12 @@ dynisafety eval \
 A sweep injects `HOST` / `PORT` as `extra.server_host` / `extra.server_port`
 for you.
 
+`server.launch` must be a path under `server.root`: the scheduler joins
+`Path(root) / launch`. In-tree HTTP counterpart: `configs/models/turbovla.yaml`
+(`root` = workspace, `launch` = `scripts/turbovla/deploy_turbovla_dynisafety_server.py`)
+with the same payload (`images` / `state` / `instruction` / `horizon`, response
+`actions`).
+
 ## Verification ladder
 
 From the repository root:
@@ -226,6 +232,8 @@ Two-stage signal (identical to `random` and every other in-tree model):
 - `name:` not matching the YAML filename stem.
 - Adding a fifth image key (only `primary` / `wrist` / `left` / `right`).
 - Assuming `dynisafety models` lists the catalog. Use `available()` as above.
+- Placing `server.launch` outside `server.root`. The scheduler does not search
+  the repo root separately.
 
 ## File map
 

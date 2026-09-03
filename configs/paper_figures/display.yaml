@@ -1,0 +1,84 @@
+# Paper display names. IDs stay as EpisodeRecord / YAML stems.
+# L2 locked name: Arc-Transit Intrusion (not "Sliding").
+
+backends:
+  libero: LIBERO
+  simplerenv: SimplerEnv
+  robotwin: RoboTwin
+
+levels:
+  0: L0 Baseline
+  1: L1 Sudden Drop
+  2: L2 Arc-Transit
+  3: L3 Shared Reach
+
+level_short:
+  0: L0
+  1: L1
+  2: L2
+  3: L3
+
+# Tabletop intent (paper caption). Paper figures cover LIBERO / SimplerEnv / RoboTwin only.
+level_intent:
+  0: no injected disturbance
+  1: obstacle appears in the workspace
+  2: carried object transits on a continuous arc
+  3: human-hand proxy reaches in
+
+models:
+  openvla_oft: OpenVLA-OFT
+  openvla_oft_rlinf: OpenVLA-OFT-RLInf
+  xvla: X-VLA
+  xvla_official: X-VLA
+  starvla: starVLA
+  pi0: π₀
+  pi05: π₀.₅
+  univla: UniVLA
+  internvla_a1: InternVLA-A1
+  internvla_m1: InternVLA-M1
+  fastwam: FastWaM
+  lingbot_va: LingBot-VA
+  pi05_oracle_swr_aegis: π₀.₅+Oracle/AEGIS
+
+model_order:
+  - openvla_oft
+  - xvla
+  - xvla_official
+  - starvla
+  - pi0
+  - pi05
+  - univla
+  - internvla_a1
+  - internvla_m1
+  - fastwam
+  - lingbot_va
+  - openvla_oft_rlinf
+  - pi05_oracle_swr_aegis
+
+suites:
+  safelibero_spatial: Spatial
+  safelibero_object: Object
+  safelibero_goal: Goal
+  safelibero_long: Long
+  bridge: Bridge
+  main20: Main-20
+
+metrics:
+  sr: SR
+  cr: CR
+  ssr: SSR
+  sasr: SASR
+  ss: SS
+  us: US
+  cff: CFF
+  cif: CIF
+  reaction_rate: Reaction
+  stop_rate: Stop
+  evade_rate: Evade
+  recovery_rate: Recovery
+
+quadrants:
+  ss: SS
+  us: US
+  cff: CFF
+  cif: CIF

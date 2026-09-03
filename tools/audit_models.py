@@ -95,7 +95,20 @@ def main() -> int:
         data = resolve_placeholders(
             raw, workspace=REPO, third_party=default_third_party_root(REPO)
         )
-        for dotted, label in CHECK_KEYS:
+        # checkpoint.default is only the suite-less fallback (model listing,
+        # this audit). A model with checkpoint.per_suite runs a different
+        # weight per suite, and printing default alone reads as "this model
+        # evaluates every suite with the spatial fine-tune".
+        keys = list(CHECK_KEYS)
+        per_suite = dig(data, "checkpoint.per_suite")
+        if isinstance(per_suite, dict) and per_suite:
+            keys = [(k, lbl) for k, lbl in keys if k != "checkpoint.default"]
+            keys.append(("checkpoint.default", "ckpt[fallback]"))
+            keys.extend(
+                (f"checkpoint.per_suite.{suite}", f"ckpt[{suite}]")
+                for suite in sorted(per_suite)
+            )
+        for dotted, label in keys:
             val = dig(data, dotted)
             if val is None:
                 continue
@@ -123,7 +136,10 @@ def main() -> int:
 
     print(f"\n{missing} path(s) MISSING or UNRESOLVED out of {len(rows)} checked")
     if missing:
-        print("Fix: python scripts/setup/download_assets.py --list   (or export the env var)")
+        print(
+            "Fix: python scripts/setup/download_assets.py --paper   "
+            "(or --model <stem> / export the env var)"
+        )
     return 1 if missing else 0
 
 

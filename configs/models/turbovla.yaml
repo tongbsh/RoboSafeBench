@@ -1,0 +1,67 @@
+# DyniSafety model config (M4 frozen structure).
+# TurboVLA LIBERO serve — HTTP /health /reset /act, shared by eval slots.
+# Checkpoints are suite-specific; DINOv3/BERT/stats are shared.
+# Not in paper_main. Weights follow the DINOv3 license.
+name: turbovla
+transport: http
+adapter: dynisafety.policies.adapters.turbovla:TurboVLAAdapter
+action_space: delta_ee_7d
+chunk_size: 12
+observation:
+  images: [primary, wrist]
+  needs_state: true
+server:
+  env: turbovla
+  root: "${workspace}"
+  launch: scripts/turbovla/deploy_turbovla_dynisafety_server.py
+  default_port: 8040
+  health_path: /health
+  startup_timeout_s: 600
+  args:
+    - "--ckpt_path"
+    - "{checkpoint}"
+    - "--dinov3_path"
+    - "{dinov3_path}"
+    - "--bert_path"
+    - "{bert_path}"
+    - "--stats_path"
+    - "{stats_path}"
+    - "--stats_key"
+    - "{stats_key}"
+    - "--repo_root"
+    - "{repo_root}"
+    - "--precision"
+    - "{precision}"
+    - "--port"
+    - "{port}"
+  per_suite:
+    safelibero_spatial: &turbovla_serve_shared
+      dinov3_path: "${workspace}/external/checkpoints/turbovla/backbones/dinov3-vitb16"
+      bert_path: "${workspace}/external/checkpoints/turbovla/backbones/bert-base-uncased"
+      stats_path: "${workspace}/external/checkpoints/turbovla/libero_all4_stats.json"
+      stats_key: libero_all4_no_noops
+      repo_root: "${env:TURBOVLA_ROOT|${workspace}/external/model_repos/TurboVLA}"
+      precision: bf16
+    safelibero_object: *turbovla_serve_shared
+    safelibero_goal: *turbovla_serve_shared
+    safelibero_long: *turbovla_serve_shared
+checkpoint:
+  default: "${env:TURBOVLA_CKPT|${workspace}/external/checkpoints/turbovla/checkpoints/libero/spatial.pth}"
+  per_suite:
+    safelibero_spatial: "${workspace}/external/checkpoints/turbovla/checkpoints/libero/spatial.pth"
+    safelibero_object: "${workspace}/external/checkpoints/turbovla/checkpoints/libero/object.pth"
+    safelibero_goal: "${workspace}/external/checkpoints/turbovla/checkpoints/libero/goal.pth"
+    safelibero_long: "${workspace}/external/checkpoints/turbovla/checkpoints/libero/long.pth"
+resources:
+  # Thin websocket/HTTP client per eval slot (same shape as pi05 / xvla).
+  # Serve holds the 0.2B policy (~1 GB); LIBERO stepping is CPU-bound.
+  max_jobs_per_gpu: 6
+backends: [libero]
+extra:
+  act_timeout_s: 60
+  reset_path: /reset
+  act_path: /act
+  server_host: 127.0.0.1
+  needs_server: true
+  eval_env: openvla-oft
+  serve_env: turbovla

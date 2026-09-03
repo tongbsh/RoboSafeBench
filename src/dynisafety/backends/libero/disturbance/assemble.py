@@ -30,6 +30,7 @@ from dynisafety.backends.libero.disturbance.l1 import SuddenDropController
 from dynisafety.backends.libero.disturbance.l2 import DynamicObstacleController
 from dynisafety.backends.libero.disturbance.l3 import SharedReachingController
 from dynisafety.backends.libero.disturbance.l3_reach import DEPTHS, SLOTS
+from dynisafety.backends.libero.disturbance.onset_schedule import resolve_onset
 from dynisafety.backends.libero.obstacle_pack import (
     align_carrier_quat,
     parse_obstacle_pack,
@@ -745,10 +746,24 @@ def _build_l2(
     )
     mode_seed = int(_require(cfg.seed, "cfg.seed"))
 
-    return DynamicObstacleController(
+    configured_start = int(_require(l2.move_start_step, "disturbance.l2.move_start_step"))
+    configured_end = int(_require(l2.move_end_step, "disturbance.l2.move_end_step"))
+    onset = resolve_onset(
+        extra_libero,
+        suite=str(handle.suite),
+        task_id=int(handle.task_id),
+        episode_index=int(episode_index),
+        plan_seed=seed,
+        default_step=configured_start,
+    )
+    # The configured pair fixes the transit *duration*; scheduling shifts both
+    # ends so a later onset does not also make the obstacle travel faster.
+    transit_steps = configured_end - configured_start
+
+    controller = DynamicObstacleController(
         handle,
-        move_start_step=int(_require(l2.move_start_step, "disturbance.l2.move_start_step")),
-        move_end_step=int(_require(l2.move_end_step, "disturbance.l2.move_end_step")),
+        move_start_step=onset.step,
+        move_end_step=onset.step + transit_steps,
         settle_steps=int(_require(l2.settle_steps, "disturbance.l2.settle_steps")),
         start_offset=_l2_start_offset(l2, extra_libero),
         arc_height=_l2_arc_height(l2, extra_libero),
@@ -772,6 +787,8 @@ def _build_l2(
         mode_seed=mode_seed,
         spawn_diversity=spawn_diversity,
     )
+    controller.onset_plan = onset.as_dict()
+    return controller
 
 
 def _build_l3(
@@ -975,6 +992,14 @@ def _build_l3(
     mode_seed = int(_require(cfg.seed, "cfg.seed"))
     hand_half = _optional_xyz(hand.half_size, "hand.half_size")
     hand_off = _optional_xyz(hand.collision_offset, "hand.collision_offset")
+    onset = resolve_onset(
+        extra_libero,
+        suite=str(handle.suite),
+        task_id=int(handle.task_id),
+        episode_index=int(episode_index),
+        plan_seed=seed,
+        default_step=int(_require(l3.move_start_step, "disturbance.l3.move_start_step")),
+    )
     controller = SharedReachingController(
         handle,
         alpha=float(_require(l3.alpha, "disturbance.l3.alpha")),
@@ -987,7 +1012,7 @@ def _build_l3(
         peak_velocity=peak_velocity,
         start_mode=start_mode,
         start_offset=list(_require(l3.start_offset, "disturbance.l3.start_offset")),
-        move_start_step=int(_require(l3.move_start_step, "disturbance.l3.move_start_step")),
+        move_start_step=onset.step,
         target_mode=target_mode,
         interp_z=l3_extra.get("interp_z"),
         start_z=start_z,
@@ -1024,4 +1049,5 @@ def _build_l3(
         if controller.reach_plan.get("dwell") is not None:
             plan["target_pos"] = list(controller.reach_plan["dwell"])
     controller.l3_plan = plan
+    controller.onset_plan = onset.as_dict()
     return controller

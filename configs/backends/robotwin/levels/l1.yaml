@@ -1,6 +1,8 @@
-# RoboTwin × L1 — CLI-effective (D4: trigger_dist=0.23; §0.1 alpha=0.9).
+# RoboTwin × L1 — shared default. Tasks whose EEF never enters 0.10 m of the
+# drop (lift_pot, place_a2b_*) overlay disturbance.l1.trigger_dist in
+# configs/backends/robotwin/tasks/{name}.yaml and main20_{id}.yaml.
 disturbance:
   l1:
-    trigger_dist: 0.23
+    trigger_dist: 0.10
     drop_height: 0.01
-    alpha: 0.9
+    alpha: 0.5

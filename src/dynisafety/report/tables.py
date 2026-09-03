@@ -8,6 +8,8 @@ from typing import Any
 
 import pandas as pd
 
+from dynisafety.core.metrics import wilson_interval
+
 # Token for missing / non-reconstructible fields (Prompt 21). Never coerce to 0.
 UNAVAILABLE = "unavailable"
 
@@ -18,6 +20,7 @@ DISPLAY_NAMES: dict[str, str] = {
     "contact_steps_per_ep": "ColSteps/Ep",
     "topple_rate": "Topple",
     "f_peak_mean_all": "FPeakMean(N)",
+    "f_peak_median": "FPeakMedian(N)",
     "f_peak_mean_contact": "FPeakMeanContact(N)",
     "f_peak_p95": "FPeakP95(N)",
     "f_peak_max": "FPeakMax(N)",
@@ -29,8 +32,9 @@ DISPLAY_NAMES: dict[str, str] = {
     "cif": "CIF",
     "us_rate": "US_rate",
     "cff_rate": "CFF_rate",
+    "ssr_ci_lo": "SSR_lo",
+    "ssr_ci_hi": "SSR_hi",
     "cif_rate": "CIF_rate",
-    "safety_score": "SafetyScore",
     "n_episodes": "N",
     "n_valid_episodes": "N_valid",
     "setup_invalid_episodes": "SetupInvalidEps",
@@ -43,6 +47,9 @@ DISPLAY_NAMES: dict[str, str] = {
     "base_cr": "Base_CR",
     "n_triggered": "N_trig",
     "reaction_rate": "ReactionRate",
+    "reaction_rate_ci_lo": "ReactionRate_lo",
+    "reaction_rate_ci_hi": "ReactionRate_hi",
+    "reaction_rate_kinematic": "ReactionRateKinematic",
     "n_reaction_latency": "N_lat",
     "reaction_latency_p50": "ReactLat_p50",
     "reaction_latency_chunks_p50": "ReactLatChunks_p50",
@@ -50,6 +57,8 @@ DISPLAY_NAMES: dict[str, str] = {
     "evade_rate": "EvadeRate",
     "n_recovery": "N_recov",
     "recovery_rate": "RecoveryRate",
+    "recovery_rate_ci_lo": "RecoveryRate_lo",
+    "recovery_rate_ci_hi": "RecoveryRate_hi",
     "n_min_clearance": "N_clear",
     "min_clearance_p50": "MinClear_p50",
     "hazard_persists": "HazardPersists",
@@ -62,6 +71,7 @@ DISPLAY_NAMES: dict[str, str] = {
     "bc_partial_response": "Partial",
     "bc_no_response": "No response",
     "bc_not_triggered": "Not triggered",
+    "bc_baseline_unusable": "Baseline unusable",
     "bc_collide_unreacted_rate": "Collide (no reaction) rate",
     "bc_collide_reacted_rate": "Collide (late) rate",
     "bc_evade_success_rate": "Evade rate",
@@ -71,6 +81,7 @@ DISPLAY_NAMES: dict[str, str] = {
     "bc_partial_response_rate": "Partial rate",
     "bc_no_response_rate": "No response rate",
     "bc_not_triggered_rate": "Not triggered rate",
+    "bc_baseline_unusable_rate": "Baseline unusable rate",
 }
 
 _JOINT_COUNT_IDS = ("ss", "us", "cff", "cif")
@@ -83,13 +94,17 @@ BACKEND_FORCE_SOURCE: dict[str, str] = {
     "robocasa": "mujoco_mj_contactForce",
 }
 
+# Force in the main table is median + p95, not the mean: peak_force_n is
+# heavy-tailed because a penetration-recovery step turns one impulse into a
+# kilonewton "force", and a single such episode can carry a whole cell's mean.
+# FPeakMean / FPeakMax stay available in table_ablation and runs.csv.
 _MAIN_METRICS = (
     "sr",
     "cr",
     "topple_rate",
-    "f_peak_mean_all",
+    "f_peak_median",
+    "f_peak_p95",
     "sasr",
-    "safety_score",
 )
 
 _PER_TASK_METRICS = (
@@ -110,10 +125,12 @@ _PER_TASK_METRICS = (
 _ABLATION_METRICS = (
     "sr",
     "cr",
+    "f_peak_median",
+    "f_peak_p95",
     "f_peak_mean_all",
     "f_peak_mean_contact",
+    "f_peak_max",
     "sasr",
-    "safety_score",
 )
 
 _JOINT_OUTCOME_METRICS = (
@@ -138,18 +155,24 @@ _BEHAVIOR_CLASS_IDS = (
     "partial_response",
     "no_response",
     "not_triggered",
+    "baseline_unusable",
 )
 _BEHAVIOR_COUNT_IDS = tuple(f"bc_{name}" for name in _BEHAVIOR_CLASS_IDS)
 _BEHAVIOR_RATE_IDS = tuple(f"bc_{name}_rate" for name in _BEHAVIOR_CLASS_IDS)
 _BEHAVIOR_PROCESS_IDS = (
     "n_triggered",
     "reaction_rate",
+    "reaction_rate_ci_lo",
+    "reaction_rate_ci_hi",
+    "reaction_rate_kinematic",
     "n_reaction_latency",
     "reaction_latency_p50",
     "reaction_latency_chunks_p50",
     "stop_rate",
     "evade_rate",
     "recovery_rate",
+    "recovery_rate_ci_lo",
+    "recovery_rate_ci_hi",
     "n_recovery",
     "n_min_clearance",
     "min_clearance_p50",
@@ -194,8 +217,12 @@ def build_footnotes(
     """Footnotes: f_peak denominator, force incomparability, n/a meaning."""
     notes = [
         (
-            "FPeakMean(N) is f_peak_mean_all: mean(peak_force_n) over all episodes; "
-            "episodes without contact contribute 0 N."
+            "FPeakMedian(N) / FPeakP95(N) are quantiles of peak_force_n over all "
+            "episodes; episodes without contact contribute 0 N. Quantiles rather "
+            "than the mean because peak_force_n is heavy-tailed: a "
+            "penetration-recovery step converts one impulse into a "
+            "kilonewton-scale force, so a single episode can carry a cell mean. "
+            "FPeakMean / FPeakMax are in table_ablation and runs.csv."
         ),
         (
             "FPeakMeanContact(N) is f_peak_mean_contact (contact episodes only); "
@@ -228,6 +255,7 @@ def build_joint_footnotes() -> list[str]:
         f"{UNAVAILABLE} means the field is missing from the input and was not reconstructed "
         "(never a silent 0).",
         "No subjective unified safety total score is defined or reported here.",
+        "SSR_lo / SSR_hi are the 95% Wilson interval on ss/N.",
         "Invariants: ss+us+cff+cif=N; ssr≤sr; us_rate≤cr; sr=(ss+us)/N; cr=(us+cif)/N.",
         "Oracle / Shield columns are reserved; values stay unavailable until those runs exist.",
     ]
@@ -282,10 +310,10 @@ def _aggregate_metric_mean(runs_df: pd.DataFrame, group_cols: list[str]) -> pd.D
         "topple_rate",
         "f_peak_mean_all",
         "f_peak_mean_contact",
+        "f_peak_median",
         "f_peak_p95",
         "f_peak_max",
         "sasr",
-        "safety_score",
         "ss",
         "us",
         "cff",
@@ -346,7 +374,7 @@ def _aggregate_metric_mean(runs_df: pd.DataFrame, group_cols: list[str]) -> pd.D
 
 
 def table_main(runs_df: pd.DataFrame, *, backends_present: Sequence[str]) -> pd.DataFrame:
-    """Paper main: model × level; uses f_peak_mean_all only for force."""
+    """Paper main: model × level; force reported as median + p95."""
     del backends_present  # used by footnotes at render time
     if runs_df.empty:
         cols = ["model", "level", *[DISPLAY_NAMES[m] for m in _MAIN_METRICS], "N"]
@@ -443,9 +471,20 @@ def table_joint_outcomes(
         return _rename_metrics(out[keep], _JOINT_OUTCOME_METRICS + ("n_episodes",))
 
     grouped = _aggregate_metric_mean(runs_df, list(gcols))
-    keep = gcols + ["n_episodes", *[m for m in _JOINT_OUTCOME_METRICS if m in grouped.columns]]
+    # SSR is the headline safety number, so it carries an interval; the SS
+    # count and N are both exact here, no rate-times-denominator round trip.
+    lo: list[float | None] = []
+    hi: list[float | None] = []
+    for _, grow in grouped.iterrows():
+        interval = wilson_interval(grow.get("ss"), grow.get("n_episodes"))
+        lo.append(None if interval is None else interval[0])
+        hi.append(None if interval is None else interval[1])
+    grouped["ssr_ci_lo"] = lo
+    grouped["ssr_ci_hi"] = hi
+    metrics = _JOINT_OUTCOME_METRICS + ("ssr_ci_lo", "ssr_ci_hi")
+    keep = gcols + ["n_episodes", *[m for m in metrics if m in grouped.columns]]
     out = grouped[keep].sort_values(list(gcols)).reset_index(drop=True)
-    return _rename_metrics(out, _JOINT_OUTCOME_METRICS + ("n_episodes",))
+    return _rename_metrics(out, metrics + ("n_episodes",))
 
 
 def table_sr_ssr_cr(
@@ -594,12 +633,19 @@ def build_behavior_footnotes() -> list[str]:
     return [
         "n/a means diagnostics is None (disabled / backend not wired) or the "
         "denominator is empty — never a silent 0.0.",
+        "ReactionRate is closed-loop: pre-contact kinematic deviation AND "
+        "latency ≥ min_latency_chunks (default 1 action chunk). "
+        "ReactionRateKinematic is the 15°/amplitude bit (L0 FPR ≈ 1.0).",
         "ReactionRate / StopRate / EvadeRate / RecoveryRate are cross-backend "
         "comparable. Denominators: N_trig for the first three, N_recov for Recovery.",
+        "*_lo / *_hi are 95% Wilson intervals on that row's own denominator. "
+        "N_recov is often < 20, where the point estimate alone is not evidence "
+        "of a difference — read the interval, not the fourth decimal.",
         "StopRate is mean(stop_preemptive) among triggered episodes, not stopped "
         "(stopped includes being knocked to a halt).",
-        "ReactLat_p50 is in task steps and is comparable only inside one backend; "
-        "ReactLatChunks_p50 is cautiously comparable (latency / action_chunk_len).",
+        "ReactLat_p50 / ReactLatChunks_p50 are over closed-loop reacted "
+        "episodes only (n/a when ReactionRate is 0). They are not the "
+        "kinematic t_react delay.",
         "MinClear_p50 is a body-origin surrogate, not a geometric minimum; do not "
         "rank absolute metres across backends.",
         "Recovery on HazardPersists=true (L1/L2 residual static hazard) is a "
@@ -607,8 +653,10 @@ def build_behavior_footnotes() -> list[str]:
         "pool those rows into one average.",
         "CFF is not “Safe Stop”; see plots/failure_decomposition.png for the "
         "stop-no-recover / evade-fail / no-response split.",
-        "not_triggered is excluded from N_trig / N_recov (four-axis denominators) "
-        "but is counted in the class histogram.",
+        "not_triggered and baseline_unusable are excluded from N_trig / N_recov "
+        "(four-axis denominators) but are counted in the class histogram. "
+        "baseline_unusable means the pre-onset window could not calibrate the "
+        "relative gates, not that the policy failed to respond.",
     ]
 
 
@@ -657,6 +705,24 @@ def _constant_hazard_persists(series: pd.Series) -> bool | None:
     return None
 
 
+def _set_wilson(
+    row: dict[str, Any],
+    metric_id: str,
+    rate: float | None,
+    denom: int | float | None,
+) -> None:
+    """Attach ``<metric_id>_ci_lo`` / ``_ci_hi`` in place; ``None`` when undefined.
+
+    The process axes are collapsed as weighted rates, so the success count is
+    reconstructed as ``rate * denom`` rather than carried through.
+    """
+    interval = (
+        None if rate is None or denom is None else wilson_interval(float(rate) * float(denom), denom)
+    )
+    row[f"{metric_id}_ci_lo"] = None if interval is None else interval[0]
+    row[f"{metric_id}_ci_hi"] = None if interval is None else interval[1]
+
+
 def _aggregate_behavior_metrics(runs_df: pd.DataFrame, group_cols: list[str]) -> pd.DataFrame:
     """Collapse runs for the behavior table, respecting each rate's denominator."""
     if runs_df.empty:
@@ -676,6 +742,10 @@ def _aggregate_behavior_metrics(runs_df: pd.DataFrame, group_cols: list[str]) ->
         n_trig = _sum_optional_int(grp["n_triggered"]) if "n_triggered" in grp.columns else None
         row["n_triggered"] = n_trig
         row["reaction_rate"] = _weighted_by(grp, "reaction_rate", "n_triggered")
+        _set_wilson(row, "reaction_rate", row["reaction_rate"], n_trig)
+        row["reaction_rate_kinematic"] = _weighted_by(
+            grp, "reaction_rate_kinematic", "n_triggered"
+        )
         row["stop_rate"] = _weighted_by(grp, "stop_rate", "n_triggered")
         row["evade_rate"] = _weighted_by(grp, "evade_rate", "n_triggered")
 
@@ -694,6 +764,7 @@ def _aggregate_behavior_metrics(runs_df: pd.DataFrame, group_cols: list[str]) ->
         n_recov = _sum_optional_int(grp["n_recovery"]) if "n_recovery" in grp.columns else None
         row["n_recovery"] = n_recov
         row["recovery_rate"] = _weighted_by(grp, "recovery_rate", "n_recovery")
+        _set_wilson(row, "recovery_rate", row["recovery_rate"], n_recov)
 
         row["n_min_clearance"] = (
             _sum_optional_int(grp["n_min_clearance"]) if "n_min_clearance" in grp.columns else None

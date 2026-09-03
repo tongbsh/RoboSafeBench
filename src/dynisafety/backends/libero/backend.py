@@ -15,6 +15,7 @@ from dynisafety.backends.libero.contact import (
     collect_obstacle_geom_ids,
     collect_robot_geom_ids,
     collect_task_object_geom_ids,
+    libero_records_topple,
     measure_libero_episode_contact,
     measure_tilt_deg,
     merge_pre_rollback_contact,
@@ -25,6 +26,7 @@ from dynisafety.backends.libero.env import (
     build_video_path,
     dummy_action,
     ensure_libero_sys_path,
+    get_capture_cameras,
     get_primary_image,
     get_wrist_image,
     make_libero_env,
@@ -42,8 +44,9 @@ from dynisafety.backends.libero.obstacle_pack import (
 )
 from dynisafety.backends.libero.safety import LiberoAegisSession, LiberoOracleSession
 from dynisafety.backends.libero.safety.phases import probe_controller_phase
+from dynisafety.capture import CaptureSession
 from dynisafety.config.schema import MISSING, RunConfig
-from dynisafety.core.contact import is_toppled, resolve_force_equiv_dt
+from dynisafety.core.contact import is_force_anomaly, is_toppled, resolve_force_equiv_dt
 from dynisafety.core.episode import EpisodeRecord
 from dynisafety.core.metrics import EpisodeMetricsBuilder
 from dynisafety.core.protocols import BackendCapabilities, EnvHandle, TaskSpec
@@ -483,6 +486,16 @@ class LiberoBackend:
         metrics_cfg = cfg.metrics
         if metrics_cfg is MISSING:
             raise ValueError("cfg.metrics is MISSING")
+        force_anomaly_n = metrics_cfg.force_anomaly_threshold_n
+        impulse_anomaly_ns = metrics_cfg.impulse_anomaly_threshold_ns
+        if force_anomaly_n is MISSING or impulse_anomaly_ns is MISSING:
+            raise ValueError(
+                "metrics.force_anomaly_threshold_n and "
+                "metrics.impulse_anomaly_threshold_ns required (YAML)"
+            )
+        force_anomaly_n = float(force_anomaly_n)
+        impulse_anomaly_ns = float(impulse_anomaly_ns)
+        force_anomaly_any = False
 
         t0 = time.perf_counter()
         handle.env.reset()
@@ -594,7 +607,11 @@ class LiberoBackend:
 
         topple_body_name: str | None = None
         topple_ref_quat: np.ndarray | None = None
-        if controller is not None and hasattr(controller, "_body_id"):
+        if (
+            libero_records_topple(level)
+            and controller is not None
+            and hasattr(controller, "_body_id")
+        ):
             body_id = int(controller._body_id)  # noqa: SLF001
             topple_body_name = handle.env.env.sim.model.body_id2name(body_id)
             if hasattr(controller, "final_quat"):
@@ -608,6 +625,11 @@ class LiberoBackend:
             episode_index=episode_index,
             bound=bound,
             controller=controller,
+        )
+        capture_session = CaptureSession.create(
+            cfg,
+            episode_index=episode_index,
+            bound=bound,
         )
         frames: list[np.ndarray] = []
         save_video = resolve_save_video(cfg)
@@ -644,6 +666,37 @@ class LiberoBackend:
                 # reuse the same ndarray buffers in place.
                 step_eef_pos = copy_vec(obs["robot0_eef_pos"])
                 step_eef_quat = copy_vec(obs["robot0_eef_quat"])
+                # WRM extras: only copy images / joints when capture is on.
+                # get_*_image reads obs already in hand — no extra render.
+                if capture_session.enabled:
+                    step_joint = copy_vec(
+                        obs["robot0_joint_pos"]
+                        if "robot0_joint_pos" in obs
+                        else obs.get("robot0_joint_positions")
+                    )
+                    try:
+                        step_cameras = get_capture_cameras(handle.env, obs)
+                        if not step_cameras:
+                            step_cameras = None
+                    except Exception:
+                        step_cameras = None
+                    if capture_session.wants_images:
+                        try:
+                            step_primary = np.asarray(get_primary_image(obs)).copy()
+                        except Exception:
+                            step_primary = None
+                        try:
+                            step_wrist = np.asarray(get_wrist_image(obs)).copy()
+                        except Exception:
+                            step_wrist = None
+                    else:
+                        step_primary = None
+                        step_wrist = None
+                else:
+                    step_joint = None
+                    step_primary = None
+                    step_wrist = None
+                    step_cameras = None
 
                 observation: Observation | None = None
                 if oracle_session.enabled or len(action_queue) == 0:
@@ -717,7 +770,7 @@ class LiberoBackend:
                         probe_phase=phase_probe.phase,
                         action_space=action_space_now,
                     )
-                obs, _reward, done, _info = handle.env.step(action.tolist())
+                obs, step_reward, done, _info = handle.env.step(action.tolist())
                 if np.any(np.isnan(handle.env.env.sim.data.qpos)):
                     termination = "sim_unstable"
                     break
@@ -751,6 +804,18 @@ class LiberoBackend:
                         )
                 contact = merge_pre_rollback_contact(contact, pre_rollback)
 
+                # MuJoCo penetration recovery can turn one step's impulse into
+                # a kilonewton "force". Latch it so the episode is reported as
+                # a solver artefact instead of contributing silently to the
+                # force tail. The force fields themselves are left untouched.
+                if is_force_anomaly(
+                    force_n=float(contact.force_n),
+                    impulse_ns=float(contact.impulse_ns),
+                    force_threshold_n=force_anomaly_n,
+                    impulse_threshold_ns=impulse_anomaly_ns,
+                ):
+                    force_anomaly_any = True
+
                 builder.update_contact(
                     in_contact=contact.in_contact,
                     force_n=contact.force_n,
@@ -766,11 +831,28 @@ class LiberoBackend:
                     force_n=contact.force_n,
                     impulse_ns=contact.impulse_ns,
                 )
+                capture_session.record_step(
+                    t=task_step,
+                    eef_pos=step_eef_pos,
+                    eef_quat=step_eef_quat,
+                    action=action,
+                    in_contact=contact.in_contact,
+                    force_n=contact.force_n,
+                    reward=step_reward,
+                    joint_position=step_joint,
+                    primary=step_primary,
+                    wrist=step_wrist,
+                    cameras=step_cameras,
+                )
 
                 drop_live = True
                 if controller is not None and hasattr(controller, "_dropped"):
                     drop_live = bool(controller._dropped)  # noqa: SLF001
-                if topple_body_name is not None and drop_live:
+                if (
+                    libero_records_topple(level)
+                    and topple_body_name is not None
+                    and drop_live
+                ):
                     tilt = measure_tilt_deg(
                         handle.env,
                         topple_body_name,
@@ -809,6 +891,17 @@ class LiberoBackend:
             success_step=success_step,
             metrics=metrics,
         )
+        capture_session.finalize(
+            success=success,
+            success_step=success_step,
+            termination=termination,
+            metrics=metrics,
+            task_id=handle.task_id,
+            task_name=handle.task_name,
+            instruction=handle.task_description,
+            checkpoint=str(cfg.checkpoint),
+            config_hash=bound.config_hash,
+        )
 
         video_path: str | None = None
         if save_video and frames:
@@ -839,11 +932,15 @@ class LiberoBackend:
             "num_steps_wait": num_steps_wait,
             "vla_budget_steps": int(vla_budget_used),
             "vla_budget_exempt_steps": int(vla_budget_exempt_steps),
+            "force_anomaly": bool(force_anomaly_any),
         }
         if controller is not None:
             plan = getattr(controller, "l3_plan", None)
             if isinstance(plan, dict) and plan:
                 extra["l3_plan"] = dict(plan)
+            onset_plan = getattr(controller, "onset_plan", None)
+            if isinstance(onset_plan, dict) and onset_plan:
+                extra["onset_plan"] = dict(onset_plan)
             spawn_plan = getattr(controller, "spawn_plan", None)
             if isinstance(spawn_plan, dict) and spawn_plan:
                 extra["spawn_plan"] = dict(spawn_plan)

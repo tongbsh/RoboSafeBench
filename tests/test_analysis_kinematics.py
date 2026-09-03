@@ -217,9 +217,10 @@ def test_cli_no_trace_writes_n_a_and_does_not_touch_results(tmp_path: Path) -> N
     out = tmp_path / "out"
     rc = analysis_main(["kinematics", "--results", str(results), "--out", str(out)])
     assert rc == 0
-    assert (out / "table_kinematics.csv").is_file()
-    assert (out / "plots" / "kinematics_path_by_quadrant.png").is_file()
-    loaded = pd.read_csv(out / "table_kinematics.csv")
+    stage = out / "kinematics"
+    assert (stage / "table_kinematics.csv").is_file()
+    assert (stage / "plots" / "kinematics_path_by_quadrant.png").is_file()
+    loaded = pd.read_csv(stage / "table_kinematics.csv")
     assert int(loaded.iloc[0]["n_with_trace"]) == 0
     assert (run_dir / "episodes.jsonl").read_bytes() == original
     assert fingerprint_results(results) == before

@@ -4,9 +4,11 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from dynisafety.backends.simplerenv.disturbance.diversity_clearance import LEGACY_UNVALIDATED
 from dynisafety.backends.simplerenv.disturbance.l3 import SharedReachingController
 from dynisafety.backends.simplerenv.disturbance.l3_reach import (
     LEGACY_MODE,
+    MODES,
     simplerenv_l3_accept_reach,
     simplerenv_l3_build_path,
     simplerenv_l3_fallback_chain,
@@ -81,6 +83,8 @@ def test_fallback_and_legacy() -> None:
     )
     assert chain[0] == ("left_near", "straight")
     assert chain[-1] == (LEGACY_MODE, None)
+    offered_modes = {mode for mode, _style in chain if mode != LEGACY_MODE}
+    assert offered_modes == set(MODES)
     assert simplerenv_l3_select_mode(1, 0, 0, forbidden_slots=("left",), forbidden_depths=()) != "left_mid"
 
     def make(mode: str, style: str):
@@ -96,6 +100,23 @@ def test_fallback_and_legacy() -> None:
         validate=lambda s, p: True,
     )
     assert out["accepted_mode"] == LEGACY_MODE
+    assert out["legacy_validated"] is True
+
+
+def test_l3_accept_marks_unvalidated_legacy() -> None:
+    def make(mode: str, style: str):
+        return {"start": np.zeros(3), "dwell": np.ones(3), "path": np.zeros((2, 3))}
+
+    out = simplerenv_l3_accept_reach(
+        "left_near",
+        forbidden_slots=(),
+        forbidden_depths=(),
+        make_candidate=make,
+        validate=lambda s, p: False,
+    )
+    assert out["accepted_mode"] == LEGACY_MODE
+    assert out["fallback_reason"] == LEGACY_UNVALIDATED
+    assert out["legacy_validated"] is False
 
 
 def test_assemble_requires_l3_block() -> None:

@@ -20,18 +20,24 @@ import yaml
 
 from dynisafety.backends.robotwin.capabilities import ROBOTWIN_CAPABILITIES
 from dynisafety.backends.robotwin.config_bridge import build_disturbance_config
+from dynisafety.backends.robotwin.contact import (
+    l12_episode_extra_from_info,
+    l3_episode_extra_from_info,
+)
 from dynisafety.backends.robotwin.env import (
     RoboTwinEnvHandle,
     apply_ee_action,
     apply_qpos_action,
     build_observation,
     expert_check_setup,
+    extract_capture_cameras,
     extract_head_rgb,
     make_robotwin_env,
     save_episode_video,
     select_instruction,
 )
 from dynisafety.backends.robotwin.expert_cache import resolve_expert_check_cache_dir
+from dynisafety.backends.robotwin.primary_arm import ensure_open_laptop_arm_tag
 from dynisafety.backends.robotwin.hooks import (
     disable_dynamic_disturbance,
     enable_dynamic_disturbance,
@@ -50,6 +56,7 @@ from dynisafety.core.rollout import (
     require_bound,
     resolve_save_video,
 )
+from dynisafety.capture import CaptureSession
 from dynisafety.diagnostics import DiagnosticsSession, copy_vec
 from dynisafety.policies.action_space import convert_action, effective_action_space
 from dynisafety.policies.base import ActionChunk, EpisodeContext, Policy
@@ -220,6 +227,55 @@ def _copy_endpose_xyz(raw_obs: Mapping[str, Any], key: str) -> tuple[float, ...]
         return copy_vec(endpose[key][:3])
     except Exception:
         return None
+
+
+def _copy_endpose_7d(raw_obs: Mapping[str, Any], key: str) -> tuple[float, ...] | None:
+    """Copy xyz + quat from an already-fetched obs. Never calls ``get_obs()``."""
+    try:
+        vec = np.asarray(raw_obs["endpose"][key], dtype=np.float64).reshape(-1)
+    except Exception:
+        return None
+    if vec.size >= 7:
+        return tuple(float(v) for v in vec[:7])
+    if vec.size >= 3:
+        return tuple(float(v) for v in vec[:3]) + (0.0, 0.0, 0.0, 1.0)
+    return None
+
+
+def _copy_joint_vector(raw_obs: Mapping[str, Any]) -> tuple[float, ...] | None:
+    """Copy ``joint_action.vector`` from an already-fetched obs."""
+    try:
+        joint_action = raw_obs.get("joint_action")
+        if isinstance(joint_action, Mapping) and "vector" in joint_action:
+            return copy_vec(joint_action["vector"])
+    except Exception:
+        return None
+    return None
+
+
+def _copy_camera_rgb(raw_obs: Mapping[str, Any], cam_key: str) -> np.ndarray | None:
+    """Copy one camera RGB from an already-fetched obs. Never calls ``get_obs()``."""
+    try:
+        observation = raw_obs.get("observation")
+        if not isinstance(observation, Mapping):
+            return None
+        cam = observation.get(cam_key)
+        if not isinstance(cam, Mapping) or "rgb" not in cam:
+            return None
+        return np.asarray(cam["rgb"]).copy()
+    except Exception:
+        return None
+
+
+def _capture_fps(extra_robotwin: Mapping[str, Any]) -> int:
+    raw = extra_robotwin.get("video_fps")
+    try:
+        fps = int(raw)
+        if fps > 0:
+            return fps
+    except (TypeError, ValueError):
+        pass
+    return 30
 
 
 def _eef_context(raw_obs: Mapping[str, Any]) -> dict[str, Any]:
@@ -426,6 +482,7 @@ class RoboTwinBackend:
             is_test=True,
             **handle.task_args,
         )
+        ensure_open_laptop_arm_tag(task_env)
 
         dist_cfg = build_disturbance_config(cfg, extra_robotwin=extra_robotwin)
         enable_dynamic_disturbance(task_env, dist_cfg)
@@ -467,6 +524,12 @@ class RoboTwinBackend:
             bound=bound,
             controller=getattr(task_env, "dynisafety_manager", None),
         )
+        capture_session = CaptureSession.create(
+            cfg,
+            episode_index=episode_index,
+            bound=bound,
+            fps=_capture_fps(extra_robotwin),
+        )
         save_video = resolve_save_video(cfg)
         frames: list[np.ndarray] = []
         force_dt = _force_equiv_dt_s(cfg)
@@ -496,6 +559,32 @@ class RoboTwinBackend:
                 # dual-arm reaction is not lost from the trace.
                 step_eef_pos = _copy_endpose_xyz(raw_obs, "left_endpose")
                 step_eef_pos_secondary = _copy_endpose_xyz(raw_obs, "right_endpose")
+                if capture_session.enabled:
+                    step_tcp = _copy_endpose_7d(raw_obs, "left_endpose")
+                    step_tcp_right = _copy_endpose_7d(raw_obs, "right_endpose")
+                    step_joint = _copy_joint_vector(raw_obs)
+                    try:
+                        step_cameras = extract_capture_cameras(raw_obs)
+                        if not step_cameras:
+                            step_cameras = None
+                    except Exception:
+                        step_cameras = None
+                    if capture_session.wants_images:
+                        step_primary = _copy_camera_rgb(raw_obs, "head_camera")
+                        step_wrist = _copy_camera_rgb(raw_obs, "left_camera")
+                        step_wrist_right = _copy_camera_rgb(raw_obs, "right_camera")
+                    else:
+                        step_primary = None
+                        step_wrist = None
+                        step_wrist_right = None
+                else:
+                    step_tcp = None
+                    step_tcp_right = None
+                    step_joint = None
+                    step_primary = None
+                    step_wrist = None
+                    step_wrist_right = None
+                    step_cameras = None
                 if save_video:
                     frames.append(np.asarray(extract_head_rgb(raw_obs)).copy())
 
@@ -558,6 +647,26 @@ class RoboTwinBackend:
                         force_n=step_force,
                         impulse_ns=step_impulse,
                     )
+                cap_eef = (
+                    step_tcp[:3]
+                    if step_tcp is not None
+                    else step_eef_pos
+                )
+                capture_session.record_step(
+                    t=task_step,
+                    eef_pos=cap_eef or (0.0, 0.0, 0.0),
+                    eef_quat=step_tcp[3:7] if step_tcp is not None and len(step_tcp) >= 7 else None,
+                    action=action,
+                    in_contact=step_collided,
+                    force_n=step_force,
+                    reward=0.0,
+                    joint_position=step_joint,
+                    primary=step_primary,
+                    wrist=step_wrist,
+                    wrist_right=step_wrist_right,
+                    tcp_pose_right=step_tcp_right,
+                    cameras=step_cameras,
+                )
                 if bool(dyn_info.get("contact_without_force", False)):
                     contact_without_force_any = True
 
@@ -579,9 +688,9 @@ class RoboTwinBackend:
         else:
             builder_extra_err = None
 
-        dyn_final = snapshot_info(task_env)
+        dyn_final = snapshot_info(task_env, finalize=True)
         if hasattr(task_env, "info") and isinstance(task_env.info, dict):
-            dyn_final = dict(task_env.info.get("dynisafety") or dyn_final)
+            task_env.info["dynisafety"] = dyn_final
 
         try:
             disable_dynamic_disturbance(task_env)
@@ -615,6 +724,19 @@ class RoboTwinBackend:
             success_step=success_step,
             first_contact_step=first_contact_control_step,
             contact_steps=contact_control_steps,
+        )
+        capture_session.finalize(
+            success=success,
+            success_step=success_step,
+            termination=termination,
+            first_contact_step=first_contact_control_step,
+            contact_steps=contact_control_steps,
+            toppled=metrics.get("toppled") if level in (1, 2) else None,
+            task_id=handle.task.task_id,
+            task_name=handle.task.task_name,
+            instruction=instruction,
+            checkpoint=str(cfg.checkpoint),
+            config_hash=bound.config_hash,
         )
         metrics["peak_force_n"] = float(dyn_final.get("max_collision_force", 0.0) or 0.0)
         metrics["peak_impulse_ns"] = float(dyn_final.get("max_collision_impulse", 0.0) or 0.0)
@@ -681,14 +803,9 @@ class RoboTwinBackend:
             extra["robotwin_disturbance"] = dict(disturbance_record)
         if level in (1, 2):
             extra["landing_toppled"] = bool(dyn_final.get("landing_toppled", False))
+            extra.update(l12_episode_extra_from_info(dyn_final))
         if level == 3:
-            extra["l3_post_first_overlap_sim_steps"] = int(
-                dyn_final.get("l3_post_first_overlap_sim_steps", 0) or 0
-            )
-            raw_ignore = dyn_final.get("l3_ignore_collision_link_substrings")
-            extra["l3_ignore_collision_link_substrings"] = (
-                [str(item) for item in raw_ignore] if raw_ignore else []
-            )
+            extra.update(l3_episode_extra_from_info(dyn_final))
         spawn_plan = dyn_final.get("spawn_plan")
         if isinstance(spawn_plan, dict) and spawn_plan:
             extra["spawn_plan"] = dict(spawn_plan)

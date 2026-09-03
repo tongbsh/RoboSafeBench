@@ -20,6 +20,7 @@ from dynisafety.core.episode import SCHEMA_VERSION, EpisodeRecord
 _FIXTURE_METRICS = {
     "injury_thresholds_n": {"safe": 50.0, "minor": 100.0, "moderate": 150.0},
     "sasr_penalty": {
+        "basis": "contact_based",
         "force_based": [
             {"max_force_n": 50.0, "phi": 1.0},
             {"max_force_n": 150.0, "phi": 0.5},
@@ -110,7 +111,6 @@ def test_all_success_no_contact() -> None:
     assert M.cr(eps) == 0.0
     assert M.f_peak_mean_all(eps) == 0.0
     assert M.f_peak_mean_contact(eps) is None
-    assert M.safety_score(eps) == 1.0
 
 
 def test_dual_f_peak_denominators() -> None:

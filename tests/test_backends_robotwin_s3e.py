@@ -8,7 +8,10 @@ from unittest.mock import patch
 import pytest
 
 from dynisafety.backends.robotwin import primary_arm as pa_mod
-from dynisafety.backends.robotwin.primary_arm import resolve_primary_arm_tag
+from dynisafety.backends.robotwin.primary_arm import (
+    ensure_open_laptop_arm_tag,
+    resolve_primary_arm_tag,
+)
 from dynisafety.backends.robotwin.seed import (
     episode_search_start,
     next_candidate_seed,
@@ -109,3 +112,34 @@ def test_resolve_place_a2b_right_by_object_x(_mock_arm: object) -> None:
     task.object.get_pose = lambda: SimpleNamespace(p=[-0.2, 0.0, 0.0])
     tag = resolve_primary_arm_tag(task, task_name="place_a2b_right")
     assert tag == FakeArmTag("left")
+
+
+class open_laptop:
+    """Runtime RoboTwin class name that ``ensure_open_laptop_arm_tag`` matches."""
+
+
+class click_bell:
+    pass
+
+
+def test_ensure_open_laptop_arm_tag_fills_missing_only() -> None:
+    task = open_laptop()
+    with patch.object(pa_mod, "resolve_primary_arm_tag", return_value=FakeArmTag("left")) as resolve:
+        ensure_open_laptop_arm_tag(task)
+        resolve.assert_called_once_with(task)
+    assert task.arm_tag == FakeArmTag("left")
+
+    already = open_laptop()
+    already.arm_tag = FakeArmTag("right")
+    with patch.object(pa_mod, "resolve_primary_arm_tag") as resolve:
+        ensure_open_laptop_arm_tag(already)
+        resolve.assert_not_called()
+    assert already.arm_tag == FakeArmTag("right")
+
+
+def test_ensure_open_laptop_arm_tag_ignores_other_tasks() -> None:
+    task = click_bell()
+    with patch.object(pa_mod, "resolve_primary_arm_tag") as resolve:
+        ensure_open_laptop_arm_tag(task)
+        resolve.assert_not_called()
+    assert not hasattr(task, "arm_tag")

@@ -15,6 +15,7 @@ from dynisafety.analysis.load import BoundEpisode, fingerprint_results, load_bou
 from dynisafety.analysis.termination import (
     cff_bucket,
     classify_termination,
+    is_cff_not_triggered,
     plot_cff_termination,
     table_termination,
     write_termination_tables,
@@ -26,6 +27,7 @@ from dynisafety.diagnostics.schema import BehaviorClass
 def _diag(**kw) -> dict:
     base = {
         "reacted": False,
+        "reacted_kinematic": False,
         "reaction_latency_steps": None,
         "reaction_latency_chunks": None,
         "reaction_post_contact": False,
@@ -111,7 +113,7 @@ def test_classify_timeout_from_max_steps_and_from_budget() -> None:
     assert classify_termination(budget) == "timeout"
 
 
-def test_cff_bucket_splits_timeout_not_triggered_remainder() -> None:
+def test_cff_bucket_partitions_on_termination_only() -> None:
     timeout = _ep(
         success=False,
         contact_steps=0,
@@ -121,19 +123,6 @@ def test_cff_bucket_splits_timeout_not_triggered_remainder() -> None:
         diagnostics=_diag(behavior_class=BehaviorClass.NO_RESPONSE.value),
     )
     assert cff_bucket(timeout) == "timeout"
-    idle = _ep(
-        success=False,
-        contact_steps=0,
-        termination="success",
-        steps=8,
-        max_steps=50,
-        diagnostics=_diag(
-            behavior_class=BehaviorClass.NOT_TRIGGERED.value,
-            disturbance_triggered=False,
-            t_onset=None,
-        ),
-    )
-    assert cff_bucket(idle) == "not_triggered"
     early = _ep(
         success=False,
         contact_steps=0,
@@ -142,11 +131,40 @@ def test_cff_bucket_splits_timeout_not_triggered_remainder() -> None:
         max_steps=50,
         diagnostics=_diag(behavior_class=BehaviorClass.STOP_NO_RECOVER.value, stopped=True),
     )
-    assert cff_bucket(early) == "remainder"
+    assert cff_bucket(early) == "early"
     unlabeled = _ep(success=False, contact_steps=0, termination="success", steps=12)
-    assert cff_bucket(unlabeled) == "unlabeled"
+    assert cff_bucket(unlabeled) == "early"
     not_cff = _ep(success=False, contact_steps=3, termination="max_steps", steps=50)
     assert cff_bucket(not_cff) is None
+
+
+def test_not_triggered_timeout_counts_as_timeout_not_as_its_own_bucket() -> None:
+    """L0 regression: a hazard-free timeout is still ``CFF ∩ timeout``.
+
+    The old priority chain returned ``not_triggered`` first, which zeroed
+    ``n_cff_timeout`` on the one level where every CFF episode is a timeout.
+    """
+    idle_timeout = _ep(
+        success=False,
+        contact_steps=0,
+        termination="max_steps",
+        steps=50,
+        max_steps=50,
+        diagnostics=_diag(
+            behavior_class=BehaviorClass.NOT_TRIGGERED.value,
+            disturbance_triggered=False,
+            t_onset=None,
+        ),
+    )
+    assert cff_bucket(idle_timeout) == "timeout"
+    assert is_cff_not_triggered(idle_timeout) is True
+
+    row = table_termination([_bound(idle_timeout)]).iloc[0]
+    assert int(row["n_cff"]) == 1
+    assert int(row["n_cff_timeout"]) == 1
+    assert int(row["n_cff_early"]) == 0
+    assert int(row["n_cff_not_triggered"]) == 1
+    assert pytest.approx(float(row["cff_timeout_share"])) == 1.0
 
 
 def test_table_missing_diagnostics_not_triggered_is_na() -> None:
@@ -201,6 +219,7 @@ def test_table_not_triggered_is_counted_when_diagnostics_present() -> None:
     row = table.iloc[0]
     assert int(row["n_cff"]) == 2
     assert int(row["n_cff_timeout"]) == 1
+    assert int(row["n_cff_early"]) == 1
     assert int(row["n_cff_not_triggered"]) == 1
     assert pytest.approx(float(row["cff_timeout_share"])) == 0.5
 
@@ -255,9 +274,12 @@ def test_cli_writes_out_and_does_not_touch_results(tmp_path: Path) -> None:
         ["termination", "--results", str(results), "--out", str(out)]
     )
     assert rc == 0
-    assert (out / "table_termination.csv").is_file()
-    assert (out / "table_termination.md").is_file()
-    assert (out / "plots" / "cff_termination.png").is_file()
+    stage = out / "termination"
+    assert (stage / "table_termination.csv").is_file()
+    assert (stage / "table_termination.md").is_file()
+    assert (stage / "plots" / "cff_termination.png").is_file()
+    # --out is the analysis root for every stage, matching `analysis all`.
+    assert not (out / "table_termination.csv").exists()
     assert (run_dir / "episodes.jsonl").read_bytes() == original
     assert fingerprint_results(results) == before
 

@@ -1,0 +1,4 @@
+# eval --task 11 stem is main20_11. Keep in sync with lift_pot.yaml.
+disturbance:
+  l1:
+    trigger_dist: 0.15

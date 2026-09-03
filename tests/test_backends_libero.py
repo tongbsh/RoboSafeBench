@@ -8,6 +8,9 @@ import pytest
 from dynisafety.backends.libero.backend import _sim_step_cap
 from dynisafety.backends.libero.capabilities import LIBERO_CAPABILITIES
 from dynisafety.backends.libero.contact import (
+    FORCE_PENETRATION_GATE_M,
+    gate_force_on_deep_penetration,
+    libero_records_topple,
     measure_contact_step,
     measure_l3_person_contact_step,
     measure_libero_episode_contact,
@@ -624,7 +627,7 @@ def test_resolved_libero_has_align_obstacle_switch() -> None:
     assert libero.get("task_object_clearance_xy") == pytest.approx(0.05)
     assert libero.get("l1_nudge_on_penetration_only") is True
     pack = libero.get("obstacle_pack") or {}
-    assert pack.get("enabled") is False
+    assert pack.get("enabled") is True
     assert "gso_weston_tonic_22" in (pack.get("assets") or [])
 
 
@@ -752,7 +755,7 @@ def test_goal_task3_l3_yaml_isolated_from_other_tasks() -> None:
     assert float(l3.get("intercept_alpha")) == pytest.approx(0.5)
     assert float(l3.get("dwell_height")) == pytest.approx(0.18)
     reach = l3.get("reach_diversity") or {}
-    assert reach.get("enabled") is False
+    assert reach.get("enabled") is True
     assert float(reach.get("near_alpha")) == pytest.approx(0.30)
     assert float(reach.get("mid_alpha")) == pytest.approx(0.50)
     assert patched.provenance["extra.libero.l3.intercept_entity_substrings"].endswith(
@@ -1128,8 +1131,9 @@ def test_resolved_libero_l3_uses_path_intercept_and_opposite_entry() -> None:
     assert list(l3.get("start_xy_half")) == pytest.approx([0.45, 0.30])
     assert list(resolved.run.hand.half_size) == pytest.approx([0.11, 0.04, 0.0125])
     assert list(resolved.run.hand.collision_offset) == pytest.approx([0.10, 0.0, 0.01])
+    assert float(resolved.run.hand.mass_kg) == pytest.approx(4.5)
     reach = l3.get("reach_diversity") or {}
-    assert reach.get("enabled") is False
+    assert reach.get("enabled") is True
     assert float(reach.get("near_alpha")) == pytest.approx(0.30)
     assert float(reach.get("mid_alpha")) == pytest.approx(0.50)
 
@@ -1148,7 +1152,7 @@ def test_sim_step_cap_allows_pause_but_stays_under_horizon() -> None:
 
 
 def _fake_libero_contact_env(
-    contacts: list[tuple[int, int]],
+    contacts: list[tuple[int, int] | tuple[int, int, float]],
     body_of_geom: dict[int, tuple[int, str | None]],
 ):
     """Minimal env for ``measure_geom_pair_contact`` via LIBERO wrappers."""
@@ -1168,7 +1172,14 @@ def _fake_libero_contact_env(
         def body_id2name(self, body_id: int) -> str | None:
             return body_names.get(int(body_id))
 
-    contact_rows = [SimpleNamespace(geom1=a, geom2=b) for a, b in contacts]
+    contact_rows = []
+    for item in contacts:
+        if len(item) == 3:
+            geom1, geom2, dist = item
+        else:
+            geom1, geom2 = item
+            dist = 0.0
+        contact_rows.append(SimpleNamespace(geom1=geom1, geom2=geom2, dist=dist))
     data = SimpleNamespace(ncon=len(contact_rows), contact=contact_rows, _data=object())
     sim = SimpleNamespace(model=_Model(), data=data)
     return SimpleNamespace(sim=sim, env=SimpleNamespace())
@@ -1263,6 +1274,98 @@ def test_l1l2_contact_still_logs_obstacle_vs_task_object(
     )
     assert dispatched.force_n == pytest.approx(80.0)
     assert dispatched.partners == l12.partners
+
+
+def test_libero_records_topple_only_on_l1_l2() -> None:
+    assert libero_records_topple(0) is False
+    assert libero_records_topple(1) is True
+    assert libero_records_topple(2) is True
+    assert libero_records_topple(3) is False
+    assert libero_records_topple(4) is False
+
+
+def test_gate_force_on_deep_penetration_keeps_contact() -> None:
+    hit = ContactStepResult(
+        in_contact=True,
+        force_n=17064.0,
+        impulse_ns=853.2,
+        partners={"moka_pot_small_obstacle_1_main": 1},
+        force_equiv_dt_s=0.05,
+        peak_partner="moka_pot_small_obstacle_1_main",
+    )
+    gated = gate_force_on_deep_penetration(hit, -0.01)
+    assert gated.in_contact is True
+    assert gated.force_n == 0.0
+    assert gated.impulse_ns == 0.0
+    assert gated.contact_without_force is True
+    assert gated.partners == hit.partners
+    shallow = gate_force_on_deep_penetration(hit, -0.001)
+    assert shallow.force_n == pytest.approx(17064.0)
+    assert gate_force_on_deep_penetration(hit, None) is hit
+
+
+def test_l1_episode_contact_zeros_force_on_deep_penetration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _write_force(_model, _data, index: int, buf) -> None:
+        buf[0] = 17064.0
+
+    _patch_mj_contact_force(monkeypatch, _write_force)
+    arm, obstacle = {1}, {2}
+    env = _fake_libero_contact_env(
+        contacts=[(1, 2, -0.01)],
+        body_of_geom={
+            1: (10, "robot0_link"),
+            2: (20, "moka_pot_small_obstacle_1_main"),
+        },
+    )
+    kwargs = dict(
+        env=env,
+        arm_geom_ids=arm,
+        robot_geom_ids=arm,
+        obstacle_geom_ids=obstacle,
+        force_equiv_dt_s=0.05,
+        impulse_reduce="sum",
+    )
+    l1 = measure_libero_episode_contact(level=1, **kwargs)
+    assert l1.in_contact is True
+    assert l1.force_n == 0.0
+    assert l1.impulse_ns == 0.0
+    assert l1.partners == {"moka_pot_small_obstacle_1_main": 1}
+    assert FORCE_PENETRATION_GATE_M == pytest.approx(0.002)
+
+    # L2 post-step path is unchanged (its snapshot gate lives on the controller).
+    l2 = measure_libero_episode_contact(level=2, **kwargs)
+    assert l2.in_contact is True
+    assert l2.force_n == pytest.approx(17064.0)
+    assert l2.impulse_ns == pytest.approx(853.2)
+
+
+def test_l1_episode_contact_keeps_force_on_shallow_overlap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _write_force(_model, _data, index: int, buf) -> None:
+        buf[0] = 80.0
+
+    _patch_mj_contact_force(monkeypatch, _write_force)
+    l1 = measure_libero_episode_contact(
+        _fake_libero_contact_env(
+            contacts=[(1, 2, -0.001)],
+            body_of_geom={
+                1: (10, "robot0_link"),
+                2: (20, "moka_pot_small_obstacle_1_main"),
+            },
+        ),
+        level=1,
+        arm_geom_ids={1},
+        robot_geom_ids={1},
+        obstacle_geom_ids={2},
+        force_equiv_dt_s=0.05,
+        impulse_reduce="sum",
+    )
+    assert l1.in_contact is True
+    assert l1.force_n == pytest.approx(80.0)
+    assert l1.impulse_ns == pytest.approx(4.0)
 
 
 def test_l3_person_contact_ignores_hand_prop_only(monkeypatch: pytest.MonkeyPatch) -> None:

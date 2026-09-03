@@ -156,15 +156,29 @@ def test_config_print_no_unknown_key() -> None:
             "delivery_crate",
             "laundry_hamper",
             "water_cooler",
+            "stool_025",
+            "stool_004",
+            "stool_019",
+            "stool_024",
+            "stool_014",
         ]
         l12_visuals = extra["l12"]["visuals"]
         assert set(l12_visuals) == set(obstacle["pool"])
         assert str(l12_visuals["cardboard_stack"]["mesh_path"]).endswith(
-            "assets/obstacles/cardboard_stack.obj"
+            "lightwheel/stool/Stool002/visual/Stool002.obj"
         )
+        from dynisafety.backends.robocasa.visuals import fit_visual_scale_pos, obj_axis_bounds
+
         for name, spec in l12_visuals.items():
             mesh = Path(spec["mesh_path"])
             assert mesh.is_file(), name
+            tex = spec.get("texture_path")
+            assert tex, name
+            assert Path(tex).is_file(), name
+            mins, maxs = obj_axis_bounds(mesh)
+            scale, _pos = fit_visual_scale_pos(mesh, half_z=0.65)
+            height = (maxs[2] - mins[2]) * scale[2]
+            assert height >= 0.80, f"{name} visual height {height:.3f} m is too short"
         if level == 1:
             l1 = extra["l1"]
             assert float(l1["goal_clearance_m"]) == 0.60
@@ -205,6 +219,16 @@ def test_config_print_no_unknown_key() -> None:
             assert float(l3["mass"]) == 5.0
             assert str(l3["mesh_path"]).endswith("assets/pedestrian/torso.obj")
             assert "smpl_model_path" not in l3
+            assert str(l3["smpl_mesh_path"]).endswith("smpl_pedestrian/standing.obj")
+            assert list(l3["smpl_mesh_rgba"]) == [0.80, 0.62, 0.50, 1.0]
+            rb_names = [row["name"] for row in l3["rocketbox_visuals"]]
+            assert rb_names == ["rocketbox_body", "rocketbox_head"]
+            assert str(l3["rocketbox_visuals"][0]["mesh_path"]).endswith(
+                "rocketbox/Chef_Female_01/body.obj"
+            )
+            assert str(l3["rocketbox_visuals"][0]["texture_path"]).endswith(
+                "rocketbox/Chef_Female_01/body.png"
+            )
             assert list(l3["mesh_rgba"]) == [0.22, 0.45, 0.62, 1.0]
             part_names = [row["name"] for row in l3["visual_parts"]]
             assert part_names == ["shoes", "legs", "torso", "arms", "hands", "head", "hair"]
@@ -779,6 +803,168 @@ def test_select_visual_id_trajectory_order() -> None:
     assert select_visual_id(_L12_POOL, 9, "fixed") == "cardboard_stack"
     with pytest.raises(ValueError, match="selection_mode"):
         select_visual_id(_L12_POOL, 0, "closest_visible")
+
+
+def test_obj_axis_bounds_and_fit_visual_scale_pos(tmp_path: Path) -> None:
+    from dynisafety.backends.robocasa.visuals import fit_visual_scale_pos, obj_axis_bounds
+
+    obj = tmp_path / "unit.obj"
+    obj.write_text(
+        "v -1 0 0\nv 1 0 0\nv 0 -2 0\nv 0 2 0\nv 0 0 2\nv 0 0 4\n",
+        encoding="utf-8",
+    )
+    mins, maxs = obj_axis_bounds(obj)
+    assert mins == (-1.0, -2.0, 0.0)
+    assert maxs == (1.0, 2.0, 4.0)
+    scale, pos = fit_visual_scale_pos(obj, half_z=0.65)
+    assert scale == pytest.approx((1.0, 1.0, 1.0))
+    assert pos == pytest.approx((0.0, 0.0, -0.65))
+
+    model_xml = tmp_path / "model.xml"
+    visual_dir = tmp_path / "visual"
+    visual_dir.mkdir()
+    nested = visual_dir / "unit.obj"
+    nested.write_text(obj.read_text(encoding="utf-8"), encoding="utf-8")
+    model_xml.write_text(
+        '<mujoco><asset><mesh file="visual/unit.obj" scale="0.12 0.12 0.12"/></asset></mujoco>\n',
+        encoding="utf-8",
+    )
+    scaled, scaled_pos = fit_visual_scale_pos(nested, half_z=0.65)
+    assert scaled == pytest.approx((0.12, 0.12, 0.12))
+    assert scaled_pos == pytest.approx((0.0, 0.0, -0.65))
+
+
+def test_l3_shared_frame_keeps_head_above_body(tmp_path: Path) -> None:
+    from dynisafety.backends.robocasa.visuals import (
+        fit_from_bounds,
+        fit_visual_scale_pos,
+        union_obj_axis_bounds,
+    )
+
+    body = tmp_path / "body.obj"
+    head = tmp_path / "head.obj"
+    body.write_text("v -0.1 -0.1 0\nv 0.1 0.1 1.4\n", encoding="utf-8")
+    head.write_text("v -0.05 -0.05 1.4\nv 0.05 0.05 1.7\n", encoding="utf-8")
+    _, pos_body = fit_visual_scale_pos(body, half_z=0.55)
+    _, pos_head = fit_visual_scale_pos(head, half_z=0.55)
+    assert pos_head[2] < pos_body[2] - 1.0
+    mins, maxs = union_obj_axis_bounds([body, head])
+    _, pos_shared = fit_from_bounds(mins, maxs, half_z=0.55)
+    assert pos_shared == pytest.approx(pos_body)
+    assert 1.4 + pos_shared[2] == pytest.approx(0.85)
+
+
+def test_parse_l12_visual_catalog_reads_texture(tmp_path: Path) -> None:
+    from dynisafety.backends.robocasa.visuals import parse_l12_visual_catalog
+
+    mesh = tmp_path / "box.obj"
+    tex = tmp_path / "box.png"
+    mesh.write_text("v 0 0 0\n", encoding="utf-8")
+    tex.write_bytes(b"\x89PNG")
+    catalog = parse_l12_visual_catalog(
+        {
+            "l12": {
+                "visuals": {
+                    "cardboard_stack": {
+                        "mesh_path": str(mesh),
+                        "texture_path": str(tex),
+                        "rgba": [1.0, 1.0, 1.0, 1.0],
+                    }
+                }
+            }
+        },
+        ["cardboard_stack"],
+    )
+    assert catalog[0].texture_path == tex
+    assert catalog[0].rgba == (1.0, 1.0, 1.0, 1.0)
+
+
+def test_parse_l3_visual_parts_prefers_local_smpl(tmp_path: Path) -> None:
+    from dynisafety.backends.robocasa.visuals import parse_l3_visual_parts
+
+    smpl = tmp_path / "standing.obj"
+    smpl.write_text("v 0 0 0\nv 0 0 1\nv 0 1 0\nf 1 2 3\n", encoding="utf-8")
+    fallback = tmp_path / "torso.obj"
+    fallback.write_text("v 0 0 0\n", encoding="utf-8")
+    parts = parse_l3_visual_parts(
+        {
+            "mesh_path": str(fallback),
+            "mesh_rgba": [0.22, 0.45, 0.62, 1.0],
+            "smpl_mesh_path": str(smpl),
+            "smpl_mesh_rgba": [0.80, 0.62, 0.50, 1.0],
+            "visual_parts": [
+                {"name": "torso", "mesh_path": str(fallback), "rgba": [0.22, 0.45, 0.62, 1.0]}
+            ],
+        }
+    )
+    assert [p.name for p in parts] == ["smpl_body"]
+    assert parts[0].mesh_path == smpl
+    missing = parse_l3_visual_parts(
+        {
+            "mesh_path": str(fallback),
+            "mesh_rgba": [0.22, 0.45, 0.62, 1.0],
+            "smpl_mesh_path": str(tmp_path / "absent.obj"),
+            "visual_parts": [
+                {"name": "torso", "mesh_path": str(fallback), "rgba": [0.22, 0.45, 0.62, 1.0]}
+            ],
+        }
+    )
+    assert [p.name for p in missing] == ["torso"]
+
+
+def test_parse_l3_visual_parts_prefers_rocketbox_over_smpl(tmp_path: Path) -> None:
+    from dynisafety.backends.robocasa.visuals import parse_l3_visual_parts
+
+    body = tmp_path / "body.obj"
+    head = tmp_path / "head.obj"
+    body_png = tmp_path / "body.png"
+    head_png = tmp_path / "head.png"
+    smpl = tmp_path / "standing.obj"
+    fallback = tmp_path / "torso.obj"
+    for path in (body, head, smpl, fallback):
+        path.write_text("v 0 0 0\n", encoding="utf-8")
+    body_png.write_bytes(b"\x89PNG\r\n\x1a\n")
+    head_png.write_bytes(b"\x89PNG\r\n\x1a\n")
+    cfg = {
+        "mesh_path": str(fallback),
+        "mesh_rgba": [0.22, 0.45, 0.62, 1.0],
+        "smpl_mesh_path": str(smpl),
+        "smpl_mesh_rgba": [0.80, 0.62, 0.50, 1.0],
+        "rocketbox_visuals": [
+            {
+                "name": "rocketbox_body",
+                "mesh_path": str(body),
+                "texture_path": str(body_png),
+                "rgba": [1.0, 1.0, 1.0, 1.0],
+            },
+            {
+                "name": "rocketbox_head",
+                "mesh_path": str(head),
+                "texture_path": str(head_png),
+                "rgba": [1.0, 1.0, 1.0, 1.0],
+            },
+        ],
+        "visual_parts": [
+            {"name": "torso", "mesh_path": str(fallback), "rgba": [0.22, 0.45, 0.62, 1.0]}
+        ],
+    }
+    parts = parse_l3_visual_parts(cfg)
+    assert [p.name for p in parts] == ["rocketbox_body", "rocketbox_head"]
+    assert parts[0].texture_path == body_png
+    missing_tex = parse_l3_visual_parts(
+        {
+            **cfg,
+            "rocketbox_visuals": [
+                {
+                    "name": "rocketbox_body",
+                    "mesh_path": str(body),
+                    "texture_path": str(tmp_path / "absent.png"),
+                    "rgba": [1.0, 1.0, 1.0, 1.0],
+                }
+            ],
+        }
+    )
+    assert [p.name for p in missing_tex] == ["smpl_body"]
 
 
 def test_l12_obstacle_objs_fit_l1_aabb() -> None:

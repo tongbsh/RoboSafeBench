@@ -1,5 +1,6 @@
-# Debug walkthrough: X-VLA only × paper_main tasks × L1–L3.
-# Same scheduler path as paper_main (serve + eval). Videos via DYNI_SAVE_VIDEO.
+# Debug walkthrough: X-VLA only × paper_main tasks × L0–L3.
+# Same scheduler path and backend YAML as paper_main (diversity / pack /
+# hand.mass_kg). Videos via DYNI_SAVE_VIDEO.
 #
 # LIBERO → model stem `xvla` (xvla-libero-full).
 # RoboTwin / SimplerEnv → `xvla_official` (RoboTwin2 / xvla-simpler-widowx).
@@ -8,10 +9,10 @@
 #   bash scripts/debug/xvla_walkthrough/00_run.sh --full
 #
 # Expected expand (20 ep, seeds=[7]):
-#   libero:     4 suites × 4 tasks × 3 levels = 48
-#   robotwin:   1 suite  × 20 tasks × 3 levels = 60
-#   simplerenv: 1 suite  × 3 tasks  × 3 levels =  9
-#   total = 117 jobs × 20 episodes
+#   libero:     4 suites × 4 tasks × 4 levels = 64
+#   robotwin:   1 suite  × 20 tasks × 4 levels = 80
+#   simplerenv: 1 suite  × 3 tasks  × 4 levels = 12
+#   total = 156 jobs × 20 episodes
 name: debug_xvla_dynamic
 episodes_per_task: 20
 seeds: [7]
@@ -23,16 +24,16 @@ matrix:
       - safelibero_goal
       - safelibero_long
     tasks: [0, 1, 2, 3]
-    levels: [1, 2, 3]
+    levels: [0, 1, 2, 3]
     models: [xvla]
 
   - backend: robotwin
     suites: [main20]
-    levels: [1, 2, 3]
+    levels: [0, 1, 2, 3]
     models: [xvla_official]
 
   - backend: simplerenv
     suites: [bridge]
     tasks: [0, 1, 2]
-    levels: [1, 2, 3]
+    levels: [0, 1, 2, 3]
     models: [xvla_official]

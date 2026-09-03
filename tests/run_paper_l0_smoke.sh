@@ -58,7 +58,7 @@ done
 
 summarize_l0() {
   dyni_activate "$DYNI_TOOL_ENV"
-  RESULTS="${DYNI_RESULTS:-$(dyni_eval_root)}"
+  RESULTS="$(dyni_eval_read_root)"
   python - "$RESULTS" "$SUITE_YAML" <<'PY'
 import json
 import sys

@@ -4,7 +4,7 @@
 这里的 shell 只负责切 conda、拼参数。按用途分成四类。
 
 输出约定见 [`configs/paths.yaml`](../configs/paths.yaml)：一个根 `out/`（`DYNI_OUT`），评测在 `eval/{backend}/{suite}/l{level}/`。  
-覆盖整棵树：`DYNI_OUT` 或 `--output-root`。只读旧 `results/` 做报告时设 `DYNI_RESULTS=results`。
+覆盖整棵树：`DYNI_OUT`。只读旧 `results/` 做 02/03 时用 `--results results`（或 `DYNI_EVAL_ROOT=results`）。
 
 ```text
 scripts/
@@ -30,15 +30,21 @@ bash scripts/eval/03_analysis.sh
 | [setup/](setup/README.md) | 第一次装机器 | `make install-libero` 或 `bash scripts/setup/setup.sh` |
 | [eval/](eval/README.md) | 正式评测 | `bash scripts/eval/00_smoke.sh` |
 | [debug/](debug/) | 自己调参 | `bash scripts/debug/eval_debug.sh --help`；X-VLA 走查 `bash scripts/debug/xvla_walkthrough/00_run.sh --dry-run` |
-| [extra/](extra/README.md) | Oracle / AEGIS / 旁路 | `bash scripts/extra/feasibility/run_authorized_aegis_feasibility.sh` |
+| [extra/](extra/README.md) | Oracle / AEGIS / 旁路 | `bash scripts/extra/feasibility/run_pi05_oracle_swr_aegis.sh` |
 
-装环境（四选一，extras 互斥）：
+装环境（四选一，extras 互斥）。先 `conda activate` **YAML 里的 eval 名**
+（`openvla-oft` / `simpler_env` / `internvla_a1` / `dynisafety-robocasa`），
+`make install-*` **不会**新建 conda。可选一键（只建**缺失**的 eval env，已有的跳过）：
+`bash scripts/setup/install_conda_env.sh`。指南：[`docs/user/README.md`](../docs/user/README.md)、[`docs/user/install.md`](../docs/user/install.md)。
+**不要重命名**已经能跑的 env。
 
 ```bash
+conda activate openvla-oft
 make install-libero          # = bash scripts/setup/install_backend.sh libero
-make install-simplerenv
-make install-robotwin
-make install-robocasa        # NumPy 2，env 名 dynisafety-robocasa
-bash scripts/setup/doctor.sh --backend libero
+# make install-simplerenv    # activate simpler_env first
+# make install-robotwin      # activate internvla_a1 first（不是 RoboTwin）
+# make install-robocasa      # NumPy 2，env 名 dynisafety-robocasa
+bash scripts/setup/audit_envs.sh
 python scripts/setup/download_assets.py --help
+python scripts/setup/download_assets.py --paper --dry-run
 ```

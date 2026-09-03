@@ -120,7 +120,7 @@ def _parse_per_suite(raw: Mapping[str, Any]) -> dict[str, str]:
 
 
 _PER_BACKEND_OVERLAY_KEYS = frozenset(
-    {"action_space", "observation", "extra", "chunk_size"}
+    {"action_space", "observation", "extra", "chunk_size", "resources"}
 )
 
 
@@ -226,6 +226,18 @@ def apply_per_backend(
         merged_extra = dict(base_extra) if isinstance(base_extra, Mapping) else {}
         merged_extra.update(dict(extra_ov))
         out["extra"] = merged_extra
+
+    if "resources" in overlay:
+        res_ov = overlay["resources"]
+        if not isinstance(res_ov, Mapping):
+            raise ValueError(
+                f"ModelConfig.per_backend[{backend!r}].resources must be a mapping, "
+                f"got {type(res_ov)!r}"
+            )
+        base_res = data.get("resources")
+        merged_res = dict(base_res) if isinstance(base_res, Mapping) else {}
+        merged_res.update(dict(res_ov))
+        out["resources"] = merged_res
 
     return out
 

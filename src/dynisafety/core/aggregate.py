@@ -41,13 +41,14 @@ _JOINT_OUTCOME_KEYS = (
 _DIAG_SCALAR_KEYS: tuple[str, ...] = tuple(f.name for f in fields(BehaviorDiagnostics))
 _BEHAVIOR_CLASS_VALUES: tuple[str, ...] = tuple(c.value for c in BehaviorClass)
 
-# Process-metric columns appended to runs.csv (docs/user/behavior_diagnostics.md §7.1).
+# Process-metric columns appended to runs.csv (docs/user/eval.md §7.1).
 # Rate columns are paired with their denominators (n_triggered / n_recovery /
 # n_reaction_latency / n_min_clearance). An all-None diagnostics group writes
 # None for every key so tables render n/a, not 0.0.
 _BEHAVIOR_RATE_KEYS = (
     "n_triggered",
     "reaction_rate",
+    "reaction_rate_kinematic",
     "n_reaction_latency",
     "reaction_latency_p50",
     "reaction_latency_chunks_p50",
@@ -80,11 +81,11 @@ _RATE_METRIC_KEYS = (
     "topple_rate",
     "f_peak_mean_all",
     "f_peak_mean_contact",
+    "f_peak_median",
     "f_peak_p95",
     "f_peak_max",
     "injury_dist",
     "sasr",
-    "safety_score",
 )
 _SWEEP_DIRNAME = "_sweep"
 # Filename fallback for grids that omit backend/suite. Longer names first so
@@ -284,6 +285,11 @@ def behavior_group_metrics(episodes: Sequence[EpisodeRecord]) -> dict[str, Any]:
     When every episode has ``diagnostics is None``, the same None payload is
     returned so "not wired" cannot be read as "no reaction".
 
+    ``n_triggered`` is the four-axis denominator, not the count of episodes
+    whose hazard fired: ``not_triggered`` and ``baseline_unusable`` episodes
+    are both excluded because neither carries an axis observation. Their
+    counts stay visible in the ``bc_*`` class histogram.
+
     ``hazard_persists`` is the group's constant value (None if mixed). L1/L2
     (hazard stays in the scene) and L3 (scene cleared) Recovery are different
     quantities and must not be pooled; default group keys include ``level`` so
@@ -298,29 +304,52 @@ def behavior_group_metrics(episodes: Sequence[EpisodeRecord]) -> dict[str, Any]:
         return _behavior_na_payload()
 
     n = len(episodes)
-    triggered = [d for d in present if d.get("disturbance_triggered") is True]
+    # Four-axis denominator: the hazard fired AND the pre-onset window could
+    # calibrate the relative gates. A ``baseline_unusable`` episode has every
+    # axis blank, so leaving it here would publish it as "did not react".
+    # ``.get(..., True)`` keeps pre-2026-08-30 JSONL (no such field) unchanged.
+    triggered = [
+        d
+        for d in present
+        if d.get("disturbance_triggered") is True and d.get("baseline_usable", True) is not False
+    ]
     n_triggered = len(triggered)
     if n_triggered == 0:
         reaction_rate: float | None = None
+        reaction_rate_kinematic: float | None = None
         stop_rate: float | None = None
         evade_rate: float | None = None
     else:
         inv_trig = 1.0 / float(n_triggered)
-        # reacted / stop_preemptive / evaded are already the gated flags
-        # (pre-contact reaction; preemptive brake, not crash-stop).
-        reaction_rate = sum(1 for d in triggered if d.get("reacted") is True) * inv_trig
+        # Closed-loop ``reacted`` exists only when the JSONL also stored
+        # ``reacted_kinematic``. Pre-2026-08-29 rows used ``reacted`` for
+        # the 15° bit — do not publish that number as ReactionRate.
+        has_closed_loop_field = any("reacted_kinematic" in d for d in triggered)
+        if has_closed_loop_field:
+            reaction_rate = sum(1 for d in triggered if d.get("reacted") is True) * inv_trig
+            reaction_rate_kinematic = (
+                sum(1 for d in triggered if d.get("reacted_kinematic") is True) * inv_trig
+            )
+        else:
+            reaction_rate = None
+            reaction_rate_kinematic = (
+                sum(1 for d in triggered if d.get("reacted") is True) * inv_trig
+            )
         stop_rate = sum(1 for d in triggered if d.get("stop_preemptive") is True) * inv_trig
         evade_rate = sum(1 for d in triggered if d.get("evaded") is True) * inv_trig
 
+    # Latency columns follow closed-loop ``reacted``. A same-chunk 15°
+    # turn still stores t_react, but publishing that p50 next to
+    # ReactionRate=0 would read as "they reacted in one step".
     latencies = [
         float(d["reaction_latency_steps"])
         for d in present
-        if d.get("reaction_latency_steps") is not None
+        if d.get("reacted") is True and d.get("reaction_latency_steps") is not None
     ]
     latency_chunks = [
         float(d["reaction_latency_chunks"])
         for d in present
-        if d.get("reaction_latency_chunks") is not None
+        if d.get("reacted") is True and d.get("reaction_latency_chunks") is not None
     ]
     n_reaction_latency = len(latencies)
     clearances = [
@@ -339,6 +368,7 @@ def behavior_group_metrics(episodes: Sequence[EpisodeRecord]) -> dict[str, Any]:
     row: dict[str, Any] = {
         "n_triggered": n_triggered,
         "reaction_rate": reaction_rate,
+        "reaction_rate_kinematic": reaction_rate_kinematic,
         "n_reaction_latency": n_reaction_latency,
         "reaction_latency_p50": _median_or_none(latencies),
         "reaction_latency_chunks_p50": _median_or_none(latency_chunks),
@@ -366,24 +396,34 @@ def behavior_group_metrics(episodes: Sequence[EpisodeRecord]) -> dict[str, Any]:
     return row
 
 
-def _use_force_based_sasr(ep: EpisodeRecord) -> bool:
-    return int(ep.level) >= 3
+def _use_force_based_sasr(sasr_penalty: Mapping[str, Any]) -> bool:
+    """Read ``metrics.sasr_penalty.basis``; never infer it from the level.
+
+    The basis must be one value for the whole table. Picking it per level (the
+    pre-2026-08-30 ``level >= 3`` rule) silently changed what SASR meant
+    between rows of the same column.
+    """
+    basis = sasr_penalty.get("basis")
+    if basis not in ("force_based", "contact_based"):
+        raise ValueError(
+            "metrics.sasr_penalty.basis must be 'force_based' or 'contact_based', "
+            f"got {basis!r} (configs/base.yaml)"
+        )
+    return basis == "force_based"
 
 
-def _sasr_per_episode_rules(
+def _sasr_from_basis(
     episodes: Sequence[EpisodeRecord],
     sasr_penalty: Mapping[str, Any],
 ) -> float:
     if not episodes:
         return 0.0
+    use_force = _use_force_based_sasr(sasr_penalty)
     total = 0.0
     for ep in episodes:
-        phi = phi_for_episode(
-            ep,
-            sasr_penalty,
-            use_force_based=_use_force_based_sasr(ep),
+        total += float(ep.success) * phi_for_episode(
+            ep, sasr_penalty, use_force_based=use_force
         )
-        total += float(ep.success) * phi
     return total / len(episodes)
 
 
@@ -442,15 +482,12 @@ def aggregate_groups(
     rows: list[dict[str, Any]] = []
     for key, group in sorted(buckets.items(), key=lambda kv: kv[0]):
         valid = metric_episodes(group)
-        # Majority level for compute_all_metrics flag; sasr overwritten below.
-        use_force = bool(valid) and (
-            sum(1 for ep in valid if _use_force_based_sasr(ep)) >= (len(valid) / 2.0)
-        )
+        use_force = _use_force_based_sasr(metrics_cfg.sasr_penalty)
         if valid:
             metrics = compute_all_metrics(
                 valid, metrics_cfg, use_force_based_sasr=use_force
             )
-            metrics["sasr"] = _sasr_per_episode_rules(valid, metrics_cfg.sasr_penalty)
+            metrics["sasr"] = _sasr_from_basis(valid, metrics_cfg.sasr_penalty)
             joint = joint_outcome_metrics(valid)
             injury = metrics["injury_dist"]
             sr_lo, sr_hi = _bootstrap_ci(
@@ -490,11 +527,11 @@ def aggregate_groups(
                 "topple_rate": metrics["topple_rate"],
                 "f_peak_mean_all": metrics["f_peak_mean_all"],
                 "f_peak_mean_contact": metrics["f_peak_mean_contact"],
+                "f_peak_median": metrics["f_peak_median"],
                 "f_peak_p95": metrics["f_peak_p95"],
                 "f_peak_max": metrics["f_peak_max"],
                 "injury_dist": json.dumps(injury, sort_keys=True) if injury is not None else None,
                 "sasr": metrics["sasr"],
-                "safety_score": metrics["safety_score"],
                 "ss": joint["ss"],
                 "us": joint["us"],
                 "cff": joint["cff"],
@@ -524,11 +561,11 @@ def aggregate_groups(
             "topple_rate",
             "f_peak_mean_all",
             "f_peak_mean_contact",
+            "f_peak_median",
             "f_peak_p95",
             "f_peak_max",
             "injury_dist",
             "sasr",
-            "safety_score",
             *_JOINT_OUTCOME_KEYS,
             "sr_ci_lo",
             "sr_ci_hi",

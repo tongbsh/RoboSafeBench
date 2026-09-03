@@ -31,6 +31,7 @@ from dynisafety.diagnostics.schema import BehaviorClass
 def _diag(**kw) -> dict:
     base = {
         "reacted": False,
+        "reacted_kinematic": False,
         "reaction_latency_steps": None,
         "reaction_latency_chunks": None,
         "reaction_post_contact": False,
@@ -377,11 +378,12 @@ def test_cli_no_plan_still_writes_and_does_not_touch_results(tmp_path: Path) -> 
     out = tmp_path / "out"
     rc = analysis_main(["diversity", "--results", str(results), "--out", str(out)])
     assert rc == 0
-    assert (out / "table_diversity_coverage.csv").is_file()
-    assert (out / "table_diversity_acceptance.csv").is_file()
-    assert (out / "plots" / "diversity_slots.png").is_file()
-    assert (out / "plots" / "diversity_legacy.png").is_file()
-    coverage = pd.read_csv(out / "table_diversity_coverage.csv")
+    stage = out / "diversity"
+    assert (stage / "table_diversity_coverage.csv").is_file()
+    assert (stage / "table_diversity_acceptance.csv").is_file()
+    assert (stage / "plots" / "diversity_slots.png").is_file()
+    assert (stage / "plots" / "diversity_legacy.png").is_file()
+    coverage = pd.read_csv(stage / "table_diversity_coverage.csv")
     assert int(coverage.iloc[0]["n_spawn_plan"]) == 0
     assert (run_dir / "episodes.jsonl").read_bytes() == original
     assert fingerprint_results(results) == before

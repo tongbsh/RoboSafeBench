@@ -1,0 +1,41 @@
+# ICLR conference figure settings (single-column, 5.5 in text width).
+# Display / rendering only — not eval hyperparameters.
+# CLI: dynisafety paper-figures --settings-yaml this file.
+# Include in LaTeX as: \includegraphics[width=\textwidth]{figXX.pdf}
+
+benchmark_name: RoboSafeBench
+
+formats:
+  - pdf
+  - png
+dpi: 300
+
+# Wilson interval for rate error bars (same family as report process CIs).
+confidence: 0.95
+
+# Safety-layer arms must not be ranked against bare VLAs.
+exclude_models:
+  - pi05_oracle_swr_aegis
+
+# oracle_model → paired base VLA (same backend / suite / task / level / seed).
+oracle_base_map:
+  pi05_oracle_swr_aegis: pi05
+
+# Off in the ICLR PDF (coverage stays in catalog.md / manifest.json).
+coverage_stamp: false
+
+# Heatmap: facet one panel per model while this many models have data.
+heatmap_max_model_facets: 4
+
+# Paired four-axis products from stage 03 (docs/user/eval.md §2.5). Relative
+# paths resolve against the workspace root. Written by
+# `bash scripts/eval/03_analysis.sh paired-axes`; missing → n/a panels, never 0.
+paired_axes:
+  analysis_root: out/analysis
+  episodes_relpath: paired_axes/paired_axes_episodes.csv
+
+# Optional screenshot roots for teaser / trajectory montages.
+# Missing files → empty frames (no overlay text).
+assets:
+  teaser_dir: null
+  trajectory_dir: null

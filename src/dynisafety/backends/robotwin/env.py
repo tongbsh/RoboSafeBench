@@ -451,6 +451,52 @@ def extract_head_rgb(raw_obs: Mapping[str, Any]) -> np.ndarray:
     return np.asarray(head["rgb"])
 
 
+_ROBOTWIN_CAPTURE_CAMERAS = (
+    ("primary", "head_camera"),
+    ("wrist", "left_camera"),
+    ("wrist_right", "right_camera"),
+)
+
+
+def extract_capture_cameras(raw_obs: Mapping[str, Any] | None) -> dict[str, dict[str, Any]]:
+    """Official SAPIEN ``intrinsic_cv`` / ``extrinsic_cv`` already on ``get_obs()``."""
+    observation = raw_obs.get("observation") if isinstance(raw_obs, Mapping) else None
+    if not isinstance(observation, Mapping):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for slot, key in _ROBOTWIN_CAPTURE_CAMERAS:
+        cam = observation.get(key)
+        if not isinstance(cam, Mapping):
+            continue
+        try:
+            K = np.asarray(cam["intrinsic_cv"], dtype=np.float64)
+            T_cw = np.asarray(cam["extrinsic_cv"], dtype=np.float64)
+        except (KeyError, TypeError, ValueError):
+            continue
+        if K.shape != (3, 3) or T_cw.shape != (4, 4):
+            continue
+        width = 0
+        height = 0
+        rgb = cam.get("rgb")
+        if rgb is not None:
+            try:
+                arr = np.asarray(rgb)
+            except (TypeError, ValueError):
+                arr = None
+            if arr is not None and arr.ndim >= 2:
+                height, width = int(arr.shape[0]), int(arr.shape[1])
+        out[slot] = {
+            "name": key,
+            "K": K.copy(),
+            "T_cw": T_cw.copy(),
+            "width": width,
+            "height": height,
+            "convention": "opencv",
+            "image_transform": "identity",
+        }
+    return out
+
+
 def build_observation(
     handle: RoboTwinEnvHandle,
     *,

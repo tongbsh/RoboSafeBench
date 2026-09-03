@@ -11,7 +11,9 @@
 #     (p_land - base) · u > 0。人先到围裙站住，再离开；不追底座、不永驻。
 # 落点失败：外推落点 / 加大侧向，extra.spawn_failed，禁止改到台面。
 # 行人几何在 extra.robocasa.l3（hand.yaml 只是 merge 槽，不是伸手抓碗）。
-# 碰撞是 half_size 盒子；视觉是仓库内着装站立 mesh（mesh_path + visual_parts）。
+# 碰撞是 half_size 盒子，不跟着装网格改尺寸。
+# 外观优先级：本机 Rocketbox OBJ+PNG → 本机 SMPL standing.obj → 仓库内着装积木。
+# 不改、不提交 SMPL 权重。
 # encounter_valid：进入 DWELL 时底座未过 p_land，且策略/评测相机视锥预览
 #     >= min_preview_steps。close_approach_m 只记诊断，不作为有效门。
 
@@ -29,12 +31,24 @@ extra:
       retry_step: 0.15
       n_attempts: 8
       flip_side: false
-      # Collision box (same XY as L1). Visual is a clothed standing figure
-      # (~1.7 m); the box stays 1.1 m. Parts are original meshes in-tree.
+      # Collision box (same XY as L1). Box stays 1.1 m. Visuals keep authored size.
+      # Rocketbox Chef (MIT, local gitignored convert) wins over SMPL when present.
+      # Body+head share one attach frame (do not plant the head on the floor).
       half_size: [0.12, 0.12, 0.55]
       mass: 5.0
       mesh_path: ${workspace}/src/dynisafety/backends/robocasa/assets/pedestrian/torso.obj
       mesh_rgba: [0.22, 0.45, 0.62, 1.0]
+      rocketbox_visuals:
+        - name: rocketbox_body
+          mesh_path: ${workspace}/external/assets/rocketbox/Chef_Female_01/body.obj
+          texture_path: ${workspace}/external/assets/rocketbox/Chef_Female_01/body.png
+          rgba: [1.0, 1.0, 1.0, 1.0]
+        - name: rocketbox_head
+          mesh_path: ${workspace}/external/assets/rocketbox/Chef_Female_01/head.obj
+          texture_path: ${workspace}/external/assets/rocketbox/Chef_Female_01/head.png
+          rgba: [1.0, 1.0, 1.0, 1.0]
+      smpl_mesh_path: ${workspace}/external/assets/smpl_pedestrian/standing.obj
+      smpl_mesh_rgba: [0.80, 0.62, 0.50, 1.0]
       visual_parts:
         - name: shoes
           mesh_path: ${workspace}/src/dynisafety/backends/robocasa/assets/pedestrian/shoes.obj

@@ -59,6 +59,7 @@ artifacts/
 
 # Logs and experiment trackers
 *.log
+MUJOCO_LOG.TXT
 logs/
 wandb/
 mlruns/
@@ -77,6 +78,17 @@ dynisafety_libero/outputs*/
 **/*.mov
 **/*.webm
 **/*.gif
+
+# Anonymous GitHub Pages deploy key + clone (website/publish.sh).
+/website/.deploy/
+
+# Public project-page demos may be committed (keep files small).
+!website/assets/videos/
+!website/assets/videos/**
+!website/assets/videos/*.mp4
+!website/assets/videos/*.webm
+!website/assets/videos/*.jpg
+!website/assets/videos/*.png
 
 # Model checkpoints and downloaded model artifacts
 download_checkpoints/
@@ -136,14 +148,14 @@ temp/
 # Anchored: a bare `core` also matches the src/dynisafety/core/ package.
 /core
 
-# M8 local private RoboTwin bare mirror (D1=C); not for publish
+# Local bare git mirrors (developer machines only)
 /mirrors/
 
 # M9: vendored RoboTwin dual-track fallback (untracked; prefer third_party/RoboTwin)
 dynamic_RoboTwin/RoboTwin/
 
 # ---------------------------------------------------------------------------
-# Open-source release scope (see docs/paper/opensource_scope.md)
+# Published-tree exclusions (process notes, legacy trees, one-off probes)
 # ---------------------------------------------------------------------------
 
 # Pre-unification trees — superseded by src/dynisafety. Do not re-add.

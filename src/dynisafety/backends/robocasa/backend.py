@@ -1,7 +1,8 @@
-"""RoboCasa ``Backend`` — L0 NavigateKitchen + L1–L3 floor disturbances.
+"""RoboCasa ``Backend`` — L0–L3 NavigateKitchen plus optional PickPlace A9 suite.
 
-L1 Frontal Sudden Appear, L2 Base-Directed Approach, L3 Approaching Human
-(pedestrian proxy on the floor). No Oracle / AEGIS. No table-top PickPlace.
+``robocasa_nav``: L1 Frontal Sudden Appear, L2 Base-Directed Approach, L3
+Approaching Human. ``robocasa_pnp`` is a separate level-0 PickPlace suite
+and does not change nav L0–L3.
 """
 
 from __future__ import annotations
@@ -27,12 +28,27 @@ from dynisafety.core.rollout import (
     require_bound,
     resolve_save_video,
 )
+from dynisafety.capture import CaptureSession
 from dynisafety.diagnostics import DiagnosticsSession, copy_vec
 from dynisafety.policies.action_space import convert_action, effective_action_space
 from dynisafety.policies.base import ActionChunk, EpisodeContext, Observation, Policy
 
-_VALID_SUITES = frozenset({"robocasa_nav"})
+_VALID_SUITES = frozenset({"robocasa_nav", "robocasa_pnp"})
+_PNP_SUITE = "robocasa_pnp"
 _NAV_ENV_CLASS = "NavigateKitchen"
+_PNP_ENV_CLASSES = frozenset(
+    {
+        "PickPlaceCounterToSink",
+        "PickPlaceCounterToCabinet",
+        "PickPlaceStoveToCounter",
+    }
+)
+_PNP_TRACKS = frozenset({"sink_beside", "cab_beside", "stove_beside"})
+_PNP_TRACK_OBJECT = {
+    "sink_beside": "hazard",
+    "cab_beside": "hazard",
+    "stove_beside": "hazard",
+}
 _WINDOW_C_FIX = "FIX：完成窗口 C"
 _WINDOW_D_FIX = "FIX：窗口 D"
 _WINDOW_E_FIX = "FIX：窗口 E"
@@ -75,9 +91,22 @@ def _suite_max_steps(suite: str, *, workspace: Path) -> int:
     return int(runtime["max_steps"])
 
 
-def _suite_env_class(data: Mapping[str, Any], *, suite: str) -> str:
+def _suite_env_class(data: Mapping[str, Any], *, suite: str) -> str | None:
     extra = data.get("extra")
     robocasa = extra.get("robocasa") if isinstance(extra, Mapping) else None
+    if suite == _PNP_SUITE:
+        family = robocasa.get("env_family") if isinstance(robocasa, Mapping) else None
+        if family != "pickplace":
+            raise ValueError(
+                f"suite {suite!r} YAML must set extra.robocasa.env_family='pickplace'"
+            )
+        env_class = robocasa.get("env_class") if isinstance(robocasa, Mapping) else None
+        if env_class is not None:
+            raise ValueError(
+                f"suite {suite!r} must not set extra.robocasa.env_class (got "
+                f"{env_class!r}); env_class lives on each task row"
+            )
+        return None
     env_class = robocasa.get("env_class") if isinstance(robocasa, Mapping) else None
     if not isinstance(env_class, str) or not env_class.strip():
         raise ValueError(
@@ -125,7 +154,25 @@ def _suite_task_rows(suite: str, *, workspace: Path) -> list[dict[str, Any]]:
         task_id = row.get("task_id")
         if not isinstance(name, str) or not name.strip():
             raise ValueError(f"suite {suite!r} tasks[{i}] missing name")
-        if isinstance(name, str) and name.lower().startswith("pickplace"):
+        if suite == _PNP_SUITE:
+            env_class = row.get("env_class")
+            track = row.get("pnp_track")
+            row_steps = row.get("max_steps")
+            if env_class not in _PNP_ENV_CLASSES:
+                raise ValueError(
+                    f"suite {suite!r} task {name!r} env_class={env_class!r}; "
+                    f"whitelist {sorted(_PNP_ENV_CLASSES)}"
+                )
+            if track not in _PNP_TRACKS:
+                raise ValueError(
+                    f"suite {suite!r} task {name!r} pnp_track={track!r}; "
+                    f"whitelist {sorted(_PNP_TRACKS)}"
+                )
+            if isinstance(row_steps, bool) or not isinstance(row_steps, int) or row_steps < 1:
+                raise ValueError(
+                    f"suite {suite!r} task {name!r} must set max_steps as a positive int"
+                )
+        elif isinstance(name, str) and name.lower().startswith("pickplace"):
             raise ValueError(
                 f"suite {suite!r} task {name!r} is PickPlace*; "
                 f"only {_NAV_ENV_CLASS} navigation tasks are allowed"
@@ -153,6 +200,17 @@ def _parse_policy_cameras(model_extra: Mapping[str, Any]) -> dict[str, str]:
             raise ValueError(f"policy_cameras[{key!r}] must be a non-empty str, got {cam!r}")
         out[key.strip()] = cam.strip()
     return out
+
+
+def _pnp_task_row(task: TaskSpec, *, workspace: Path) -> dict[str, Any]:
+    rows = _suite_task_rows(task.suite, workspace=workspace)
+    for row in rows:
+        if int(row["task_id"]) == int(task.task_id) or str(row["name"]) == task.task_name:
+            return dict(row)
+    raise ValueError(
+        f"task_id={task.task_id} name={task.task_name!r} not in suite "
+        f"{task.suite!r} YAML ({_WINDOW_C_FIX})"
+    )
 
 
 def _target_fixture_for_task(task: TaskSpec, *, workspace: Path) -> str:
@@ -348,13 +406,15 @@ class RoboCasaBackend:
         specs: list[TaskSpec] = []
         for row in rows:
             task_name = str(row["name"])
+            row_steps = row.get("max_steps")
+            task_max = int(row_steps) if row_steps is not None else max_steps
             specs.append(
                 TaskSpec(
                     task_id=int(row["task_id"]),
                     task_name=task_name,
                     suite=suite,
                     instruction=_task_instruction(task_name, row),
-                    max_steps=max_steps,
+                    max_steps=task_max,
                 )
             )
         return specs
@@ -382,6 +442,25 @@ class RoboCasaBackend:
             )
 
         workspace = self._workspace or _find_workspace_root()
+        runtime = cfg.runtime
+        if runtime is MISSING or runtime.control_freq is MISSING:
+            raise ValueError("runtime.control_freq missing from YAML")
+        if str(task.suite) == _PNP_SUITE:
+            if int(cfg.level) != 0:
+                raise ValueError(f"robocasa_pnp only allows level 0, got {cfg.level}")
+            row = _pnp_task_row(task, workspace=workspace)
+            from dynisafety.backends.robocasa.env import make_robocasa_pnp_env
+
+            return make_robocasa_pnp_env(
+                task=task,
+                extra_robocasa=self._extra_robocasa,
+                control_freq=int(runtime.control_freq),
+                max_steps=int(row["max_steps"]),
+                seed=int(cfg.seed),
+                env_class=str(row["env_class"]),
+                pnp_track=str(row["pnp_track"]),
+                workspace=workspace,
+            )
         target_fixture = _target_fixture_for_task(task, workspace=workspace)
         half_size, mass, rgba = _obstacle_half_size_mass_rgba(cfg)
         if level == 1:
@@ -507,6 +586,8 @@ class RoboCasaBackend:
 
         if not isinstance(env, RoboCasaEnvHandle):
             raise TypeError(f"expected RoboCasaEnvHandle, got {type(env)!r}")
+        if str(env.suite) == _PNP_SUITE:
+            return self._rollout_pnp(env, policy, cfg, episode_index)
         bound = require_bound(
             backend="robocasa",
             config_hash=self._config_hash,
@@ -599,6 +680,12 @@ class RoboCasaBackend:
             bound=bound,
             controller=controller,
         )
+        capture_session = CaptureSession.create(
+            cfg,
+            episode_index=episode_index,
+            bound=bound,
+            fps=control_freq,
+        )
         frames: list[np.ndarray] = []
         save_video = resolve_save_video(cfg)
         spawn_snapshot_path: str | None = None
@@ -685,6 +772,51 @@ class RoboCasaBackend:
                         **pin_info,
                     },
                 )
+                if capture_session.enabled:
+                    step_joint = copy_vec(
+                        obs["robot0_joint_pos"]
+                        if "robot0_joint_pos" in obs
+                        else obs.get("robot0_joint_positions")
+                    )
+                    if "robot0_eef_pos" in obs:
+                        cap_eef_pos = copy_vec(obs["robot0_eef_pos"])
+                        cap_eef_quat = (
+                            copy_vec(obs["robot0_eef_quat"])
+                            if "robot0_eef_quat" in obs
+                            else step_eef_quat
+                        )
+                    else:
+                        cap_eef_pos = step_eef_pos
+                        cap_eef_quat = step_eef_quat
+                    cap_base = None
+                    if "robot0_base_pos" in obs:
+                        base_pos = copy_vec(obs["robot0_base_pos"])
+                        base_quat = (
+                            copy_vec(obs["robot0_base_quat"])
+                            if "robot0_base_quat" in obs
+                            else None
+                        )
+                        if base_pos is not None:
+                            cap_base = tuple(base_pos) + (
+                                tuple(base_quat) if base_quat is not None else (0.0, 0.0, 0.0, 1.0)
+                            )
+                    if capture_session.wants_images:
+                        step_primary = np.asarray(images["primary"]).copy()
+                        step_wrist = (
+                            np.asarray(images["wrist"]).copy()
+                            if "wrist" in images
+                            else None
+                        )
+                    else:
+                        step_primary = None
+                        step_wrist = None
+                else:
+                    step_joint = None
+                    cap_eef_pos = None
+                    cap_eef_quat = None
+                    cap_base = None
+                    step_primary = None
+                    step_wrist = None
                 if save_video:
                     frames.append(images["primary"])
 
@@ -702,9 +834,9 @@ class RoboCasaBackend:
                 action = to_robosuite_action(action_queue.popleft())
                 step_out = inner.step(action)
                 if len(step_out) == 5:
-                    obs, _reward, done, _truncated, _info = step_out
+                    obs, step_reward, done, _truncated, _info = step_out
                 else:
-                    obs, _reward, done, _info = step_out
+                    obs, step_reward, done, _info = step_out
                 del done  # ignore_done=True; success is _check_success()
                 if np.any(np.isnan(inner.sim.data.qpos)):
                     termination = "sim_unstable"
@@ -737,6 +869,20 @@ class RoboCasaBackend:
                     in_contact=contact.in_contact,
                     force_n=contact.force_n,
                     impulse_ns=contact.impulse_ns,
+                )
+                capture_session.record_step(
+                    t=task_step,
+                    eef_pos=cap_eef_pos or step_eef_pos or (0.0, 0.0, 0.0),
+                    eef_quat=cap_eef_quat or step_eef_quat,
+                    action=action,
+                    in_contact=contact.in_contact,
+                    force_n=contact.force_n,
+                    reward=step_reward,
+                    joint_position=step_joint,
+                    primary=step_primary,
+                    wrist=step_wrist,
+                    base_pose=cap_base,
+                    base_xy_yaw=step_base_xy_yaw,
                 )
                 if (
                     controller is not None
@@ -796,6 +942,17 @@ class RoboCasaBackend:
             success=success,
             success_step=success_step,
             metrics=metrics,
+        )
+        capture_session.finalize(
+            success=success,
+            success_step=success_step,
+            termination=termination,
+            metrics=metrics,
+            task_id=handle.task_id,
+            task_name=handle.task_name,
+            instruction=handle.task_description,
+            checkpoint=str(cfg.checkpoint),
+            config_hash=bound.config_hash,
         )
 
         base_xy1, base_yaw1 = read_base_xy_yaw(inner)
@@ -870,6 +1027,409 @@ class RoboCasaBackend:
             if callable(fin):
                 fin()
             extra.update(controller.extra_fields())
+
+        return build_episode_record(
+            metrics=metrics,
+            run_id=str(cfg.run_id),
+            config_hash=bound.config_hash,
+            backend=str(cfg.backend),
+            suite=str(cfg.suite),
+            model=str(cfg.model),
+            checkpoint=str(cfg.checkpoint),
+            level=level,
+            episode_index=episode_index,
+            task_id=handle.task_id,
+            task_name=handle.task_name,
+            instruction=handle.task_description,
+            seed=int(cfg.seed),
+            max_steps=max_steps,
+            steps=int(metrics["steps"]),
+            termination=termination,
+            wall_time_s=float(wall),
+            video_path=video_path,
+            extra=extra,
+            diagnostics=diag_session.episode_diagnostics(),
+        )
+
+    def _rollout_pnp(
+        self,
+        env: EnvHandle,
+        policy: Policy,
+        cfg: RunConfig,
+        episode_index: int,
+    ) -> EpisodeRecord:
+        from dynisafety.backends.robocasa.contact import (
+            collect_pnp_hazard_geom_ids,
+            collect_robot_geom_ids,
+            force_equiv_dt_s,
+            measure_contact_step,
+        )
+        from dynisafety.backends.robocasa.disturbance.assemble import build_controller
+        from dynisafety.backends.robocasa.disturbance.pnp import (
+            pnp_should_stop_on_official_success,
+        )
+        from dynisafety.backends.robocasa.env import (
+            RoboCasaEnvHandle,
+            build_video_path,
+            compose_pnp_review_frame,
+            eef_pos_from_obs,
+            get_primary_image,
+            read_base_joint_qpos,
+            read_base_xy_yaw,
+            robocasa365_state_14d,
+            save_episode_video,
+            to_robosuite_action,
+        )
+
+        if not isinstance(env, RoboCasaEnvHandle):
+            raise TypeError(f"expected RoboCasaEnvHandle, got {type(env)!r}")
+        bound = require_bound(
+            backend="robocasa",
+            config_hash=self._config_hash,
+            action_space=self._configured_action_space,
+            chunk_size=self._chunk_size,
+        )
+        handle = env
+        level = int(cfg.level)
+        if level != 0:
+            raise ValueError(f"robocasa_pnp only allows level 0, got {level}")
+        task_horizon = handle.extra.get("max_steps")
+        if task_horizon is None:
+            raise ValueError("robocasa_pnp handle.extra['max_steps'] missing")
+        max_steps = min(int(cfg.max_steps), int(task_horizon))
+        force_dt = force_equiv_dt_s(cfg, missing=MISSING)
+        contact_cfg = cfg.contact
+        if contact_cfg is MISSING:
+            raise ValueError("cfg.contact is MISSING")
+        impulse_reduce = contact_cfg.impulse_reduce
+        if impulse_reduce is MISSING:
+            raise ValueError("contact.impulse_reduce is MISSING")
+        topple_thr = contact_cfg.topple_threshold_deg
+        if topple_thr is MISSING:
+            raise ValueError("contact.topple_threshold_deg is MISSING")
+        metrics_cfg = cfg.metrics
+        if metrics_cfg is MISSING:
+            raise ValueError("cfg.metrics is MISSING")
+        runtime = cfg.runtime
+        if runtime is MISSING or runtime.control_freq is MISSING:
+            raise ValueError("runtime.control_freq missing from YAML")
+        control_freq = int(runtime.control_freq)
+        seed_stride = _seed_stride(cfg, self._resolved_data)
+        ep_seed = int(cfg.seed) + int(episode_index) * seed_stride
+
+        t0 = time.perf_counter()
+        inner = handle.env
+        inner.rng = np.random.default_rng(ep_seed)
+        obs = inner.reset()
+        controller = build_controller(
+            level,
+            handle,
+            cfg,
+            extra_robocasa=self._extra_robocasa,
+            episode_index=episode_index,
+        )
+        if controller is None:
+            raise RuntimeError("robocasa_pnp build_controller returned None")
+
+        base_xy0, base_yaw0 = read_base_xy_yaw(inner)
+        base_qpos0 = read_base_joint_qpos(inner)
+        splits = dict(handle.extra.get("action_split_indexes") or {})
+        track = str(handle.extra.get("pnp_track") or "")
+        object_name = _PNP_TRACK_OBJECT.get(track)
+        if object_name is None:
+            raise ValueError(f"unknown pnp_track {track!r}")
+
+        ctx = EpisodeContext(
+            instruction=handle.task_description,
+            task_id=handle.task_id,
+            task_name=handle.task_name,
+            episode_index=episode_index,
+            seed=int(cfg.seed),
+            level=level,
+            backend=str(cfg.backend),
+            suite=str(cfg.suite),
+            extra={"pnp_track": track, "env_class": handle.extra.get("env_class")},
+        )
+        policy.reset(ctx)
+
+        action_queue = ActionChunkQueue(bound.chunk_size)
+        robot_geom_ids = collect_robot_geom_ids(inner)
+        obstacle_geom_ids = collect_pnp_hazard_geom_ids(inner, object_name=object_name)
+        setter = getattr(controller, "set_robot_geom_ids", None)
+        if callable(setter):
+            setter(robot_geom_ids)
+        builder = EpisodeMetricsBuilder(metrics_cfg)
+        diag_session = DiagnosticsSession.create(
+            cfg,
+            episode_index=episode_index,
+            bound=bound,
+            controller=controller,
+        )
+        capture_session = CaptureSession.create(
+            cfg,
+            episode_index=episode_index,
+            bound=bound,
+            fps=control_freq,
+        )
+        frames: list[np.ndarray] = []
+        save_video = resolve_save_video(cfg)
+        success = False
+        success_step: int | None = None
+        termination = "max_steps"
+        task_steps_done = 0
+        builder_extra_err: str | None = None
+        camera = handle.camera
+        success_at_reset = bool(inner._check_success())
+
+        try:
+            for task_step in range(max_steps):
+                controller.step(task_step, obs if isinstance(obs, Mapping) else {})
+                if not isinstance(obs, Mapping):
+                    raise TypeError(f"expected mapping obs, got {type(obs)!r}")
+                step_eef_pos = copy_vec(eef_pos_from_obs(obs, inner))
+                step_eef_quat = (
+                    copy_vec(obs["robot0_base_to_eef_quat"])
+                    if "robot0_base_to_eef_quat" in obs
+                    else None
+                )
+                step_base_xy_yaw = copy_vec(_latched_base_xy_yaw(inner))
+                images = {"primary": get_primary_image(obs, camera=camera)}
+                for img_key, cam_name in self._policy_cameras.items():
+                    images[img_key] = get_primary_image(obs, camera=cam_name)
+                state = None
+                if self._needs_state:
+                    if all(
+                        key in obs
+                        for key in (
+                            "robot0_base_to_eef_pos",
+                            "robot0_base_to_eef_quat",
+                            "robot0_gripper_qpos",
+                            "robot0_base_pos",
+                            "robot0_base_quat",
+                        )
+                    ):
+                        state = robocasa365_state_14d(obs)
+                    elif "robot0_eef_pos" in obs:
+                        state = np.asarray(obs["robot0_eef_pos"], dtype=np.float32)
+                observation = Observation(
+                    images=images,
+                    state=state,
+                    instruction=handle.task_description,
+                    step=task_step,
+                    extra={"pnp_track": track},
+                )
+                if capture_session.enabled:
+                    step_joint = copy_vec(
+                        obs["robot0_joint_pos"]
+                        if "robot0_joint_pos" in obs
+                        else obs.get("robot0_joint_positions")
+                    )
+                    if "robot0_eef_pos" in obs:
+                        cap_eef_pos = copy_vec(obs["robot0_eef_pos"])
+                        cap_eef_quat = (
+                            copy_vec(obs["robot0_eef_quat"])
+                            if "robot0_eef_quat" in obs
+                            else step_eef_quat
+                        )
+                    else:
+                        cap_eef_pos = step_eef_pos
+                        cap_eef_quat = step_eef_quat
+                    cap_base = None
+                    if "robot0_base_pos" in obs:
+                        base_pos = copy_vec(obs["robot0_base_pos"])
+                        base_quat = (
+                            copy_vec(obs["robot0_base_quat"])
+                            if "robot0_base_quat" in obs
+                            else None
+                        )
+                        if base_pos is not None:
+                            cap_base = tuple(base_pos) + (
+                                tuple(base_quat) if base_quat is not None else (0.0, 0.0, 0.0, 1.0)
+                            )
+                    if capture_session.wants_images:
+                        step_primary = np.asarray(images["primary"]).copy()
+                        step_wrist = (
+                            np.asarray(images["wrist"]).copy()
+                            if "wrist" in images
+                            else None
+                        )
+                    else:
+                        step_primary = None
+                        step_wrist = None
+                else:
+                    step_joint = None
+                    cap_eef_pos = None
+                    cap_eef_quat = None
+                    cap_base = None
+                    step_primary = None
+                    step_wrist = None
+                if save_video:
+                    frames.append(compose_pnp_review_frame(images))
+
+                if len(action_queue) == 0:
+                    chunk = policy.act(observation)
+                    converted = _apply_action_chunk(
+                        chunk,
+                        configured_space=self._configured_action_space,
+                        task_step=task_step,
+                        warmup_steps=self._warmup_steps,
+                        post_warmup_space=self._post_warmup_space,
+                    )
+                    action_queue.refill(converted)
+
+                action = to_robosuite_action(action_queue.popleft())
+                step_out = inner.step(action)
+                if len(step_out) == 5:
+                    obs, step_reward, done, _truncated, _info = step_out
+                else:
+                    obs, step_reward, done, _info = step_out
+                del done
+                if np.any(np.isnan(inner.sim.data.qpos)):
+                    termination = "sim_unstable"
+                    break
+
+                contact = measure_contact_step(
+                    inner,
+                    robot_geom_ids=robot_geom_ids,
+                    obstacle_geom_ids=obstacle_geom_ids,
+                    force_equiv_dt_s=force_dt,
+                    impulse_reduce=str(impulse_reduce),
+                )
+                note = getattr(controller, "note_robot_contact", None)
+                if callable(note):
+                    note(contact.in_contact)
+                builder.update_contact(
+                    in_contact=contact.in_contact,
+                    force_n=contact.force_n,
+                    impulse_ns=contact.impulse_ns,
+                    partners=contact.partners,
+                )
+                diag_session.record_step(
+                    t=task_step,
+                    eef_pos=step_eef_pos,
+                    eef_quat=step_eef_quat,
+                    base_xy_yaw=step_base_xy_yaw,
+                    action=action,
+                    in_contact=contact.in_contact,
+                    force_n=contact.force_n,
+                    impulse_ns=contact.impulse_ns,
+                )
+                capture_session.record_step(
+                    t=task_step,
+                    eef_pos=cap_eef_pos or step_eef_pos or (0.0, 0.0, 0.0),
+                    eef_quat=cap_eef_quat or step_eef_quat,
+                    action=action,
+                    in_contact=contact.in_contact,
+                    force_n=contact.force_n,
+                    reward=step_reward,
+                    joint_position=step_joint,
+                    primary=step_primary,
+                    wrist=step_wrist,
+                    base_pose=cap_base,
+                    base_xy_yaw=step_base_xy_yaw,
+                )
+                task_steps_done = task_step + 1
+                official_now = bool(inner._check_success())
+                if pnp_should_stop_on_official_success(
+                    track=track,
+                    success_at_reset=success_at_reset,
+                    official_now=official_now,
+                ):
+                    success = True
+                    success_step = task_step
+                    termination = "success"
+                    break
+        except Exception as exc:  # noqa: BLE001 — record failure path
+            termination = "error"
+            builder_extra_err = f"{exc} ({_WINDOW_C_FIX})"
+
+        metrics = builder.finalize(
+            success=success,
+            success_step=success_step,
+            steps=task_steps_done,
+            force_equiv_dt_s=force_dt,
+        )
+        diag_session.finalize(
+            success=success,
+            success_step=success_step,
+            metrics=metrics,
+        )
+        capture_session.finalize(
+            success=success,
+            success_step=success_step,
+            termination=termination,
+            metrics=metrics,
+            task_id=handle.task_id,
+            task_name=handle.task_name,
+            instruction=handle.task_description,
+            checkpoint=str(cfg.checkpoint),
+            config_hash=bound.config_hash,
+        )
+
+        base_xy1, base_yaw1 = read_base_xy_yaw(inner)
+        base_qpos1 = read_base_joint_qpos(inner)
+        xy_delta = float(np.linalg.norm(base_xy1 - base_xy0))
+        qpos_delta = 0.0
+        for key, v0 in base_qpos0.items():
+            v1 = float(base_qpos1.get(key, v0))
+            qpos_delta = max(qpos_delta, abs(v1 - float(v0)))
+        base_moved = bool(xy_delta > 1e-4 or qpos_delta > 1e-4)
+
+        video_path: str | None = None
+        if save_video and frames:
+            task_slug = handle.task_description.lower().replace(" ", "_").replace("\n", "_")[:40]
+            vid_dir = episode_video_dir(
+                results_dir=str(cfg.output.results_dir),
+                backend=str(cfg.backend),
+                suite=str(cfg.suite),
+                level=level,
+                run_id=str(cfg.run_id),
+                task_id=handle.task_id,
+                task_name=task_slug,
+            )
+            path = build_video_path(
+                vid_dir,
+                episode_idx=episode_index,
+                success=success,
+                task_description=handle.task_description,
+            )
+            save_episode_video(frames, path=path, fps=control_freq)
+            video_path = str(path)
+
+        wall = time.perf_counter() - t0
+        extra: dict[str, Any] = {
+            "pnp_track": track,
+            "env_class": handle.extra.get("env_class"),
+            "camera": camera,
+            "action_space": "hybrid_mobile_12d",
+            "action_split_indexes": splits,
+            "freeze_base": False,
+            "success_source": f"{handle.extra.get('env_class')}._check_success",
+            "base_xy_start": [float(base_xy0[0]), float(base_xy0[1])],
+            "base_xy_end": [float(base_xy1[0]), float(base_xy1[1])],
+            "base_xy_delta_m": xy_delta,
+            "base_yaw_start": float(base_yaw0),
+            "base_yaw_end": float(base_yaw1),
+            "base_joint_qpos_start": {k: float(v) for k, v in base_qpos0.items()},
+            "base_joint_qpos_end": {k: float(v) for k, v in base_qpos1.items()},
+            "base_joint_qpos_peak_abs_delta": float(qpos_delta),
+            "base_moved": base_moved,
+            "ep_seed": int(ep_seed),
+            "layout_id": (
+                None if getattr(inner, "layout_id", None) is None else int(inner.layout_id)
+            ),
+            "skipped_lightwheel_props_missing_objs_lw": handle.extra.get(
+                "skipped_lightwheel_props_missing_objs_lw"
+            ),
+            "gentex_tex_aliases": handle.extra.get("gentex_tex_aliases"),
+        }
+        if builder_extra_err is not None:
+            extra["error"] = builder_extra_err
+        extra["spawn_failed"] = bool(getattr(controller, "spawn_failed", False))
+        fin = getattr(controller, "finalize_labels", None)
+        if callable(fin):
+            fin(success=success)
+        extra.update(controller.extra_fields())
 
         return build_episode_record(
             metrics=metrics,

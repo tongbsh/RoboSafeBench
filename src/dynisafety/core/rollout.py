@@ -16,7 +16,7 @@ from typing import Any
 import numpy as np
 
 from dynisafety.config.schema import MISSING, RunConfig
-from dynisafety.core.episode import SCHEMA_VERSION, EpisodeRecord
+from dynisafety.core.episode import SCHEMA_VERSION, EpisodeRecord, format_checkpoint_label
 
 # Whitelist extra keys (aggregate may read these; report/tables must not).
 SETUP_INVALID_KEY = "setup_invalid"
@@ -240,7 +240,7 @@ def build_episode_record(
         task_name=str(task_name),
         instruction=str(instruction),
         model=str(model),
-        checkpoint=str(checkpoint),
+        checkpoint=format_checkpoint_label(checkpoint, suite=str(suite)),
         level=int(level),
         seed=int(seed),
         episode_index=int(episode_index),

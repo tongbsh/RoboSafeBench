@@ -1,0 +1,11 @@
+# Per-task overlay for safelibero_goal task_id=2
+# (put_the_bowl_on_the_stove).
+#
+# Authored drop XY is 16–25 cm from the bowl, so L1 uses workspace-onset
+# (3D approach to the bowl) instead of the 15 cm XY circle. Widen that
+# 3D radius only here so the drop fires before the arm is over the bowl.
+# XY trigger unchanged.
+# Other goal tasks / L2–L3 keep extra.libero.l1_workspace_onset_dist=null.
+extra:
+  libero:
+    l1_workspace_onset_dist: 0.25

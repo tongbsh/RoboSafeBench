@@ -27,6 +27,7 @@ from dynisafety.backends.simplerenv.targets import (
 )
 from dynisafety.config.schema import RunConfig
 from dynisafety.core.disturbance import require_configured as _require
+from dynisafety.core.newton_force import normalize_l3_force_scheme
 
 _SPAWN_DIVERSITY_KEYS: tuple[str, ...] = (
     "enabled",
@@ -185,6 +186,16 @@ def _l3_reach_block(extra: Mapping[str, Any]) -> dict[str, Any]:
             ),
         },
     }
+
+
+def _l3_force_scheme(extra: Mapping[str, Any]) -> str:
+    raw = _se_nested(extra, "simplerenv")
+    if not isinstance(raw, Mapping) or "l3_force_scheme" not in raw:
+        raise ValueError("extra.simplerenv.l3_force_scheme missing from resolved config")
+    return normalize_l3_force_scheme(
+        raw["l3_force_scheme"],
+        field_name="extra.simplerenv.l3_force_scheme",
+    )
 
 
 def build_controller(
@@ -544,4 +555,5 @@ def _build_l3(
         min_eef_clearance=float(l3_block["min_eef_clearance"]),
         min_task_clearance=float(l3_block["min_task_clearance"]),
         tip_overshoot=float(l3_block["tip_overshoot"]),
+        force_scheme=_l3_force_scheme(resolved_extra),
     )

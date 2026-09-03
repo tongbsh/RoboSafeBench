@@ -18,7 +18,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from dynisafety.analysis.load import BoundEpisode, group_key_tuple
+from dynisafety.analysis.load import BoundEpisode, group_key_tuple, is_safety_layer_model
 from dynisafety.analysis.render import render_table
 from dynisafety.core.joint_outcomes import ssr
 from dynisafety.core.metrics import cr, sr
@@ -476,6 +476,8 @@ _HOLDOUT_NOTES: tuple[str, ...] = (
 
 _COV_NOTES: tuple[str, ...] = (
     "Coverage is the honest status of the current artifacts, not a metric.",
+    "Safety-layer arms ({base}_oracle_*) are dropped from rank unless "
+    "--models names them. Comparing a filter to a bare VLA is not a rank.",
 )
 
 
@@ -548,6 +550,7 @@ def write_rank(
     metrics: Sequence[str] = DEFAULT_METRICS,
     holdout_suites: Sequence[str] = (),
     runs_csv: Path | str | None = None,
+    exclude_safety_layers: bool = True,
 ) -> dict[str, pd.DataFrame]:
     """Write rank cells, pairwise correlations, coverage, and a heatmap."""
     out = Path(out_dir)
@@ -560,6 +563,8 @@ def write_rank(
             group_cols=("backend", "model", "level", "seed", "suite"),
             metrics=metrics,
         )
+    if exclude_safety_layers and not cells.empty and "model" in cells.columns:
+        cells = cells.loc[~cells["model"].map(is_safety_layer_model)].copy()
     ranks = rank_models(cells, slice_cols=("backend", "level", "seed", "suite"))
     pairs = table_rank_backend_pairs(cells)
     seeds = table_rank_seed_pairs(cells)

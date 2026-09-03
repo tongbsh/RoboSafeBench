@@ -25,6 +25,20 @@ def resolve_primary_arm_tag(task_env: Any, *, task_name: str | None = None) -> A
     return _REGISTRY[name](task_env)
 
 
+def ensure_open_laptop_arm_tag(task_env: Any) -> None:
+    """Set ``open_laptop.arm_tag`` when policy eval skipped ``play_once``.
+
+    Runtime ``check_success`` reads ``self.arm_tag`` on the first sim step.
+    Expert-check cache hits never call ``play_once``, so the attribute is
+    missing. Only this task is touched; existing values are left alone.
+    """
+    if type(task_env).__name__ != "open_laptop":
+        return
+    if getattr(task_env, "arm_tag", None) is not None:
+        return
+    task_env.arm_tag = resolve_primary_arm_tag(task_env)
+
+
 def _arm_tag(value: str) -> Any:
     from envs.utils.action import ArmTag
 
@@ -142,6 +156,7 @@ register_primary_arm("stamp_seal", _resolve_stamp_seal)
 
 __all__ = [
     "PrimaryArmResolver",
+    "ensure_open_laptop_arm_tag",
     "register_primary_arm",
     "resolve_primary_arm_tag",
 ]

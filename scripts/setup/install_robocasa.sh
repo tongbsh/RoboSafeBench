@@ -4,7 +4,7 @@
 # Not a git submodule (this window). Prefer existing third_party clones; if a
 # clone is incomplete, re-fetch via ghfast.top then upstream GitHub.
 #
-# Pins (full SHA; keep in sync with docs/user/third_party.md):
+# Pins (full SHA; keep in sync with docs/user/install.md):
 #   ROBOSUITE_SHA — git master, robosuite >= 1.5 (do NOT use PyPI 1.4)
 #   ROBOCASA_SHA  — robocasa/robocasa main
 #
@@ -17,7 +17,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-# Pin SHAs (authoritative for this window; also recorded in docs/user/third_party.md).
+# Pin SHAs (authoritative for this window; also recorded in docs/user/install.md).
 ROBOSUITE_SHA="5ce6643f3092639d08f7b0f90ed1c6a84f50552c"
 ROBOCASA_SHA="921c9a5736a8d0ea5589657898aadcfa55a6a195"
 

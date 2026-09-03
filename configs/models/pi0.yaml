@@ -33,7 +33,9 @@ server:
 checkpoint:
   default: "${env:PI0_CKPT|${workspace}/external/checkpoints/openpi_cache/openpi-assets/checkpoints/pi0_libero}"
 resources:
-  max_jobs_per_gpu: 2
+  # Same openpi serve and same thin-client eval loop as pi05; see that YAML for
+  # the measurement behind 6 (CPU-bound rollout, ~0.6 GB VRAM per eval slot).
+  max_jobs_per_gpu: 6
 backends: [libero]
 extra:
   ws_codec: openpi

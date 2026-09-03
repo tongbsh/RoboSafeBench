@@ -1,6 +1,6 @@
 """Pure-function analyzer: ``Trace`` → ``BehaviorDiagnostics``.
 
-Operational definitions live in ``docs/user/behavior_diagnostics.md`` §2–§3. This
+Operational definitions live in ``docs/user/eval.md`` §2–§3. This
 module must stay free of IO, global state, backend imports, and ``dynisafety.core``.
 Thresholds come only from ``DiagnosticsConfig`` (YAML), never from literals
 embedded as defaults.
@@ -90,6 +90,53 @@ def baseline_stats(
     sigma_raw = float(np.std(pre, ddof=0))
     sigma = max(sigma_raw, float(sigma_rel_floor) * mu, float(sigma_floor))
     return mu, sigma
+
+
+def baseline_is_usable(
+    speeds: np.ndarray,
+    times: np.ndarray,
+    *,
+    t_onset: int,
+    window_size: int,
+    mu_pre: float | None,
+    min_samples: int,
+    min_speed_frac: float,
+) -> bool:
+    """Whether ``[t_onset − window_size, t_onset)`` can calibrate the axes.
+
+    ``mu_pre`` scales every relative gate on all four axes, so a window that
+    never observed the policy moving does not make those gates noisy — it
+    makes them arbitrary. Two ways that happens:
+
+    - fewer than ``min_samples`` finite speeds in the window;
+    - ``mu_pre`` below ``min_speed_frac`` of the episode's own 75th-percentile
+      speed. A hazard that fires at the end of the settle phase (LIBERO L2/L3
+      trigger at ``t_onset == num_steps_wait``) puts the whole window on
+      dummy-action drift, so ``mu_pre`` describes settling, not task motion.
+
+    The reference is a high quantile of the whole episode rather than its
+    median or a post-onset statistic. A post-onset reference would be
+    contaminated by the very response these axes exist to detect, and the
+    median collapses toward 0 on an episode that halts for most of its length
+    — which would disqualify exactly the stops the stop axis exists to score.
+
+    A reference of 0 means the episode barely moved outside the window, so
+    there is nothing to invalidate the baseline against: it is usable as long
+    as the window itself saw motion.
+    """
+    if mu_pre is None:
+        return False
+    lo = int(t_onset) - int(window_size)
+    window = (times >= lo) & (times < int(t_onset)) & np.isfinite(speeds)
+    if int(np.count_nonzero(window)) < int(min_samples):
+        return False
+    finite = np.asarray(speeds[np.isfinite(speeds)], dtype=np.float64)
+    if finite.size == 0:
+        return False
+    reference = float(np.percentile(finite, 75.0))
+    if reference <= 0.0:
+        return float(mu_pre) > 0.0
+    return float(mu_pre) >= float(min_speed_frac) * reference
 
 
 def detect_reaction(
@@ -340,16 +387,18 @@ def classify_behavior(
     moved again" and "moved again but did not finish"; read ``resumed``
     to tell them apart.
 
-    ``partial_response`` is the reacted residual: a measurable response
-    that is neither a full stop nor a qualifying evasion. Its main
-    sources are the dead band between ``reaction.heading_change_deg``
-    (did the heading change at all?) and ``avoid.heading_change_deg``
-    (did it change enough to count as evasion?), and slowdowns that
-    stay above the stop gate. Splitting it out is what stops the
-    residual class from containing episodes that demonstrably responded.
+    ``reacted`` here is the closed-loop bit (see
+    ``BehaviorDiagnostics.reacted``). A same-chunk heading change is
+    ``reacted_kinematic`` only and classifies as unreacted / no_response.
 
-    ``no_response`` is the true residual (no contact, no measurable
-    response) — including lucky misses.
+    ``partial_response`` is the closed-loop residual: a measurable
+    response that is neither a full stop nor a qualifying evasion. Its
+    main sources are the dead band between ``reaction.heading_change_deg``
+    and ``avoid.heading_change_deg``, and slowdowns that stay above the
+    stop gate.
+
+    ``no_response`` is the true residual (no contact, no closed-loop
+    reaction) — including lucky misses and kinematic-only turns.
 
     Contact is fully consumed by the first two arms, so the later
     ``stopped`` arms omit an explicit ``not had_contact`` without
@@ -417,6 +466,7 @@ def analyze_trace(
             hazard_persists=header.hazard_persists,
             trace_path=trace_path,
             behavior_class=BehaviorClass.NOT_TRIGGERED,
+            baseline_usable=False,
         )
 
     triggered = bool(header.disturbance_triggered)
@@ -436,6 +486,28 @@ def analyze_trace(
         sigma_pre: float | None = None
     else:
         mu_pre, sigma_pre = stats
+
+    # Guard before any axis is scored: an unusable baseline makes every
+    # relative gate arbitrary, and a blank axis set is an honest "not
+    # observable" whereas False would claim the policy did not respond.
+    if not baseline_is_usable(
+        speeds,
+        times,
+        t_onset=int(t_onset),
+        window_size=int(cfg.reaction.window_size),
+        mu_pre=None if stats is None else mu_pre,
+        min_samples=int(cfg.reaction.min_baseline_samples),
+        min_speed_frac=float(cfg.reaction.min_baseline_speed_frac),
+    ):
+        return _blank_diagnostics(
+            disturbance_triggered=triggered,
+            t_onset=t_onset,
+            t_hazard_end=t_hazard_end,
+            hazard_persists=header.hazard_persists,
+            trace_path=trace_path,
+            behavior_class=BehaviorClass.BASELINE_UNUSABLE,
+            baseline_usable=False,
+        )
 
     floor = float(cfg.stop.speed_floor_m_per_step)
     stop_gate = speed_threshold(mu_pre, float(cfg.stop.speed_frac), floor)
@@ -460,11 +532,16 @@ def analyze_trace(
             stride=stride,
         )
 
-    reacted, reaction_post_contact = _preemptive_reaction(
+    reacted_kinematic, reaction_post_contact = _preemptive_reaction(
         t_react, first_contact_step=first_contact_step, contact_steps=int(contact_steps)
     )
     latency_steps = (int(t_react) - int(t_onset)) if t_react is not None else None
     latency_chunks = _latency_chunks(latency_steps, int(header.action_chunk_len))
+    reacted = _closed_loop_reacted(
+        reacted_kinematic,
+        latency_chunks,
+        min_latency_chunks=float(cfg.reaction.min_latency_chunks),
+    )
 
     t_stop, stop_duration = detect_stop(
         speeds,
@@ -535,6 +612,7 @@ def analyze_trace(
     )
     return BehaviorDiagnostics(
         reacted=reacted,
+        reacted_kinematic=reacted_kinematic,
         reaction_latency_steps=latency_steps,
         reaction_latency_chunks=latency_chunks,
         reaction_post_contact=reaction_post_contact,
@@ -550,6 +628,7 @@ def analyze_trace(
         recovery_applicable=recovery_applicable,
         recovery_latency_steps=recovery_latency,
         behavior_class=behavior,
+        baseline_usable=True,
         disturbance_triggered=triggered,
         t_onset=t_onset,
         t_hazard_end=t_hazard_end,
@@ -730,10 +809,12 @@ def _preemptive_reaction(
     first_contact_step: int | None,
     contact_steps: int,
 ) -> tuple[bool, bool]:
-    """``(reacted_preemptive, reaction_post_contact)``.
+    """``(reacted_kinematic, reaction_post_contact)``.
 
     A deviation at or after first contact is the collision moving the arm,
     not a perceptual reaction. That is the defect in ``ReactivityAnalyzer``.
+    The caller still applies ``_closed_loop_reacted`` before writing
+    ``BehaviorDiagnostics.reacted``.
     """
     if t_react is None:
         return False, False
@@ -752,6 +833,27 @@ def _latency_chunks(latency_steps: int | None, action_chunk_len: int) -> float |
     return float(latency_steps) / float(action_chunk_len)
 
 
+def _closed_loop_reacted(
+    reacted_kinematic: bool,
+    latency_chunks: float | None,
+    *,
+    min_latency_chunks: float,
+) -> bool:
+    """Apply the default closed-loop gate to a pre-contact kinematic bit.
+
+    ``min_latency_chunks <= 0`` disables the gate (``reacted`` equals
+    ``reacted_kinematic``). A missing ``latency_chunks`` cannot satisfy a
+    positive gate — that includes ``action_chunk_len <= 0``.
+    """
+    if not reacted_kinematic:
+        return False
+    if float(min_latency_chunks) <= 0.0:
+        return True
+    if latency_chunks is None:
+        return False
+    return float(latency_chunks) >= float(min_latency_chunks)
+
+
 def _blank_diagnostics(
     *,
     disturbance_triggered: bool,
@@ -760,9 +862,11 @@ def _blank_diagnostics(
     hazard_persists: bool | None,
     trace_path: str | None,
     behavior_class: BehaviorClass,
+    baseline_usable: bool,
 ) -> BehaviorDiagnostics:
     return BehaviorDiagnostics(
         reacted=False,
+        reacted_kinematic=False,
         reaction_latency_steps=None,
         reaction_latency_chunks=None,
         reaction_post_contact=False,
@@ -778,6 +882,7 @@ def _blank_diagnostics(
         recovery_applicable=False,
         recovery_latency_steps=None,
         behavior_class=behavior_class,
+        baseline_usable=baseline_usable,
         disturbance_triggered=disturbance_triggered,
         t_onset=t_onset,
         t_hazard_end=t_hazard_end,
@@ -788,6 +893,7 @@ def _blank_diagnostics(
 
 __all__ = [
     "analyze_trace",
+    "baseline_is_usable",
     "baseline_stats",
     "classify_behavior",
     "compute_heading_change",

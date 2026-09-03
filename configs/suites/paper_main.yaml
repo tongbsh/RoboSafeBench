@@ -1,18 +1,36 @@
 # Paper-main sweep matrix — authoritative experiment table for re-runs.
 # Canonical model ids / suite names: S2 确认纪要 D7 + D10（日志∩权重）.
 #
-# Expected expand (seeds=[7] only):
-#   libero:     4 suites × 4 tasks × 4 levels × 7 models × 1 seed = 448 jobs × 50 ep
+# Level knobs live in configs/backends/*/ (not this file). Paper matches
+# the X-VLA walkthrough: L2 spawn_diversity / L3 reach_diversity on,
+# LIBERO obstacle_pack on, hand.mass_kg=4.5. Video/capture stay off in this
+# YAML; scripts/eval/01_eval.sh turns them on via DYNI_SAVE_VIDEO / DYNI_CAPTURE.
+#
+# Expected expand:
+#   libero:     4 suites × 4 tasks × 4 levels × 7 models × 2 seeds = 896 jobs × 50 ep
 #   robotwin:   1 suite  × 20 tasks × 4 levels × 5 models × 1 seed = 400 jobs × 20 ep
 #   simplerenv: 1 suite  × 3 tasks  × 4 levels × 3 models × 1 seed =  36 jobs × 50 ep
-#   total = 884 jobs
+#   total = 1332 jobs
 #
 # robotwin tasks: omitted → configs/backends/robotwin/suites/main20.yaml (20 tasks).
 # simplerenv Bridge paper compare: carrot / stack / spoon only (tasks 0–2).
 #   eggplant (t3) remains in the backend catalog for optional runs, not paper_main.
 name: paper_main
 episodes_per_task: 50
-seeds: [7]
+# Second seed spaced by runtime.seed_stride (2000), NOT 7+1.
+#
+# LIBERO's disturbance draws key off plan_seed = seed + task_id*10000 +
+# episode_index, so seeds 7 and 8 would share 49 of 50 plan_seed values per
+# task and the "second seed" would replay the first one's random stream at a
+# shifted episode index. A gap larger than episodes_per_task removes the
+# aliasing. RoboTwin's episode_search_start = seed_stride*(1+seed) is
+# unaffected either way.
+#
+# What a second seed buys on LIBERO: a second *hazard* realisation (spawn
+# slot, reach mode, onset step) over the same task instances — the initial
+# state is init_states[episode_index], which does not depend on the seed.
+# Report it as hazard-realisation variance, not as task-instance variance.
+seeds: [7, 2007]
 matrix:
   - backend: libero
     suites:
@@ -34,6 +52,8 @@ matrix:
   - backend: robotwin
     suites: [main20]
     levels: [0, 1, 2, 3]
+    # The second seed is a LIBERO-only decision; RoboTwin stays single-seed.
+    seeds: [7]
     models:
       - internvla_a1
       - fastwam
@@ -47,6 +67,7 @@ matrix:
     # Paper Bridge table: carrot / stack / spoon (exclude eggplant / sink).
     tasks: [0, 1, 2]
     levels: [0, 1, 2, 3]
+    seeds: [7]
     models:
       - starvla
       - internvla_m1

@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from dynisafety.config.schema import MISSING, OutputConfig, RunConfig
-from dynisafety.core.episode import SCHEMA_VERSION
+from dynisafety.core.episode import SCHEMA_VERSION, format_checkpoint_label
 from dynisafety.core.rollout import (
     ActionChunkQueue,
     BoundRun,
@@ -278,6 +278,31 @@ def test_build_episode_record_forwards_diagnostics() -> None:
     rec = build_episode_record(**_record_kwargs(diagnostics=diag))  # type: ignore[arg-type]
     assert rec.diagnostics == diag
     assert rec.diagnostics is not diag
+
+
+def test_format_checkpoint_label_unwraps_mapping() -> None:
+    assert format_checkpoint_label("/plain/ckpt") == "/plain/ckpt"
+    assert format_checkpoint_label({"default": "/weights/xvla"}) == "/weights/xvla"
+    assert (
+        format_checkpoint_label(
+            {"default": "/fallback", "per_suite": {"safelibero_spatial": "/suite/ckpt"}},
+            suite="safelibero_spatial",
+        )
+        == "/suite/ckpt"
+    )
+    assert (
+        format_checkpoint_label("{'default': '/weights/xvla-libero-full'}")
+        == "/weights/xvla-libero-full"
+    )
+    assert format_checkpoint_label(None) == "none"
+    assert format_checkpoint_label({}) == "none"
+
+
+def test_build_episode_record_unwraps_checkpoint_mapping() -> None:
+    rec = build_episode_record(
+        **_record_kwargs(checkpoint={"default": "/weights/xvla"})  # type: ignore[arg-type]
+    )
+    assert rec.checkpoint == "/weights/xvla"
 
 
 def test_build_episode_record_tilt_fields_missing_are_none() -> None:

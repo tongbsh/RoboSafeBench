@@ -49,6 +49,9 @@ def _diag_yaml_dict(*, sensitivity: float = 2.0, sigma_rel_floor: float = 0.05) 
             "min_persist_steps": 3,
             "heading_change_deg": 15.0,
             "sigma_rel_floor": float(sigma_rel_floor),
+            "min_latency_chunks": 1,
+            "min_baseline_samples": 5,
+            "min_baseline_speed_frac": 0.4,
         },
         "stop": {
             "speed_frac": 0.10,
@@ -66,6 +69,14 @@ def _diag_yaml_dict(*, sensitivity: float = 2.0, sigma_rel_floor: float = 0.05) 
             "min_post_hazard_steps": 30,
         },
         "hazard_end": {"settle_quiet_steps": 10, "settle_quiet_m": 0.002},
+        "counterfactual": {
+            "sensitivity": 2.0,
+            "null_quantile": 0.95,
+            "floor_m": 0.005,
+            "min_persist_steps": 3,
+            "require_control_success": True,
+            "action_floor": 0.05,
+        },
     }
 
 
@@ -165,6 +176,7 @@ def test_load_baseline_diagnostics_matches_repo_base_yaml() -> None:
     raw = yaml.safe_load((REPO / "configs" / "base.yaml").read_text(encoding="utf-8"))
     assert cfg.reaction.sensitivity == raw["diagnostics"]["reaction"]["sensitivity"]
     assert cfg.reaction.sigma_rel_floor == raw["diagnostics"]["reaction"]["sigma_rel_floor"]
+    assert cfg.reaction.min_latency_chunks == raw["diagnostics"]["reaction"]["min_latency_chunks"]
     assert cfg.stop.speed_frac == raw["diagnostics"]["stop"]["speed_frac"]
     assert cfg.avoid.heading_change_deg == raw["diagnostics"]["avoid"]["heading_change_deg"]
     assert cfg.recovery.min_post_hazard_steps == raw["diagnostics"]["recovery"]["min_post_hazard_steps"]

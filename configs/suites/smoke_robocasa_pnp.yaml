@@ -1,0 +1,11 @@
+# RoboCasa PnP self-check. Do NOT add to paper_main. Does not replace smoke_robocasa.
+# Single cell: robocasa / robocasa_pnp / task 0 / level 0 / random_mobile / 1 episode.
+name: smoke_robocasa_pnp
+episodes_per_task: 1
+seeds: [7]
+matrix:
+  - backend: robocasa
+    suites: [robocasa_pnp]
+    tasks: [0]
+    levels: [0]
+    models: [random_mobile]

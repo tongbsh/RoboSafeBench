@@ -1,4 +1,5 @@
 # eval --task 16 stem is main20_16 (see task_yaml_stem). Keep in sync with open_laptop.yaml.
+# l2_landing_push_m is overlap-gated (same as open_laptop.yaml).
 scene:
   obstacle_avoid_margin: 0.08
   obstacle_avoid_shape: aabb

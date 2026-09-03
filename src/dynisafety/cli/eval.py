@@ -106,8 +106,11 @@ def build_eval_overrides(args: argparse.Namespace) -> tuple[str, ...]:
     the scheduler; ignored when ``--no-video`` or an explicit
     ``output.save_video=...`` override is already present.
 
-    ``DYNI_DIVERSITY`` / ``DYNI_OBSTACLE_PACK`` likewise inject L2/L3 diversity
-    and the LIBERO GSO obstacle pack for debug sweeps (same reason).
+    ``DYNI_CAPTURE`` likewise enables ``capture.enabled`` (optional
+    ``DYNI_CAPTURE_ROOT`` → ``capture.dataset_root``). ``DYNI_DIVERSITY`` /
+    ``DYNI_OBSTACLE_PACK`` override L2/L3 diversity and the LIBERO GSO
+    obstacle pack (``1``/``true`` → on, ``0``/``false`` → off). Unset
+    leaves the backend YAML default (paper_main / walkthrough: on).
     """
     items: list[str] = []
     if args.overrides:
@@ -156,25 +159,45 @@ def build_eval_overrides(args: argparse.Namespace) -> tuple[str, ...]:
 
     backend = str(getattr(args, "backend", "") or "")
     level = getattr(args, "level", None)
-    if _env_flag("DYNI_DIVERSITY"):
+    diversity = _env_bool("DYNI_DIVERSITY")
+    if diversity is not None:
+        flag = "true" if diversity else "false"
         if backend == "libero":
-            _add("extra.libero.l2.spawn_diversity.enabled", "true")
-            _add("extra.libero.l3.reach_diversity.enabled", "true")
+            _add("extra.libero.l2.spawn_diversity.enabled", flag)
+            _add("extra.libero.l3.reach_diversity.enabled", flag)
         elif backend == "robotwin":
-            _add("extra.robotwin.l2.spawn_diversity.enabled", "true")
-            _add("extra.robotwin.l3.reach_diversity.enabled", "true")
+            _add("extra.robotwin.l2.spawn_diversity.enabled", flag)
+            _add("extra.robotwin.l3.reach_diversity.enabled", flag)
         elif backend == "simplerenv":
-            _add("extra.simplerenv.l2.spawn_diversity.enabled", "true")
-            _add("extra.simplerenv.l3.reach_diversity.enabled", "true")
-            if level == 2:
+            _add("extra.simplerenv.l2.spawn_diversity.enabled", flag)
+            _add("extra.simplerenv.l3.reach_diversity.enabled", flag)
+            if diversity and level == 2:
                 _add("disturbance.l2.align_start_y_to_eef", "false")
-    if _env_flag("DYNI_OBSTACLE_PACK") and backend == "libero":
-        _add("extra.libero.obstacle_pack.enabled", "true")
+    pack = _env_bool("DYNI_OBSTACLE_PACK")
+    if pack is not None and backend == "libero":
+        _add("extra.libero.obstacle_pack.enabled", "true" if pack else "false")
+    if _env_flag("DYNI_CAPTURE"):
+        _add("capture.enabled", "true")
+        cap_root = os.environ.get("DYNI_CAPTURE_ROOT", "").strip()
+        if cap_root:
+            _add("capture.dataset_root", cap_root)
     return tuple(items)
 
 
 def _env_flag(name: str) -> bool:
-    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+    return _env_bool(name) is True
+
+
+def _env_bool(name: str) -> bool | None:
+    raw = os.environ.get(name)
+    if raw is None:
+        return None
+    val = raw.strip().lower()
+    if val in {"1", "true", "yes", "on"}:
+        return True
+    if val in {"0", "false", "no", "off"}:
+        return False
+    return None
 
 
 def ensure_registries_loaded() -> None:

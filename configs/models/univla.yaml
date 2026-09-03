@@ -16,8 +16,7 @@ server:
   startup_timeout_s: 600
   # argv tail for the launcher; {checkpoint} resolves from checkpoint.per_suite
   # and {unnorm_key}/{inference_mode} from server.per_suite below.
-  # Mirrors scripts/univla/start_univla_server.sh (center_crop stayed off for
-  # the paper runs, so no --center_crop here).
+  # Official UniVLA LIBERO eval defaults to center_crop=True (SFT image aug).
   args:
     - "--pretrained_checkpoint"
     - "{checkpoint}"
@@ -29,6 +28,7 @@ server:
     - "12"
     - "--inference_mode"
     - "{inference_mode}"
+    - "--center_crop"
     - "--port"
     - "{port}"
   # The launcher requires --unnorm_key explicitly; each SFT checkpoint ships a
@@ -61,8 +61,18 @@ checkpoint:
     safelibero_long: "${workspace}/external/checkpoints/univla/sft-libero/univla-libero-10"
     bridge: "${workspace}/external/checkpoints/univla/sft-simpler-bridge"
 resources:
+  # Conservative baseline for SimplerEnv, whose eval workers render on the GPU.
+  # LIBERO raises it under per_backend below.
   max_jobs_per_gpu: 2
 backends: [libero, simplerenv]
+per_backend:
+  libero:
+    # Thin websocket client per eval slot (~0.9 core, ~0.6 GB EGL), same shape
+    # as pi0 / pi05 / xvla; see pi05.yaml for the measurement. UniVLA's serve
+    # is the heaviest of the LIBERO set (~14 GB per suite), which costs VRAM on
+    # the serving card but not per eval slot.
+    resources:
+      max_jobs_per_gpu: 6
 extra:
   act_timeout_s: 180
   reset_path: /reset

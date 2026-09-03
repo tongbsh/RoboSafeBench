@@ -1,0 +1,66 @@
+# π₀.₅ + 上帝视角 Oracle Stop-Wait-Resume + AEGIS (sim_gt CBF-QP).
+# Same serve / checkpoint / adapter as configs/models/pi05.yaml.
+# Safety hooks stay in LiberoBackend.rollout (not in the adapter); knobs
+# match configs/backends/libero/oracle/stop_wait_resume.yaml +
+# configs/backends/libero/aegis/enable.yaml so paper_main backend YAML
+# (diversity / GSO pack / hand.mass_kg) is unchanged.
+#
+# Distinct stem so run_id / --resume / 02_report do not collide with raw π₀.₅
+# cells already in out/eval/libero.
+name: pi05_oracle_swr_aegis
+transport: websocket
+adapter: dynisafety.policies.adapters.pi05:Pi05Adapter
+action_space: delta_ee_7d
+chunk_size: 5
+observation:
+  images: [primary, wrist]
+  needs_state: true
+server:
+  env: openpi
+  root: "${env:OPENPI_ROOT|${workspace}/external/model_repos/openpi}"
+  launch: scripts/serve_policy.py
+  default_port: 8000
+  health_path: /health
+  startup_timeout_s: 600
+  process_env:
+    XLA_PYTHON_CLIENT_PREALLOCATE: "false"
+  args:
+    - "--port"
+    - "{port}"
+    - "policy:checkpoint"
+    - "--policy.config"
+    - "pi05_libero"
+    - "--policy.dir"
+    - "{checkpoint}"
+checkpoint:
+  default: "${env:PI05_CKPT|${workspace}/external/checkpoints/openpi_cache/openpi-assets/checkpoints/pi05_libero/pi05_libero}"
+resources:
+  # LIBERO rollout is CPU-bound (MuJoCo + EGL), not GPU-bound: 3×4090 sit at 0%
+  # SM while the box uses ~5 of 60 cores. One serve per GPU feeds all slots.
+  max_jobs_per_gpu: 6
+backends: [libero]
+extra:
+  ws_codec: openpi
+  openpi_client_src: "${env:OPENPI_CLIENT_SRC|${workspace}/external/model_repos/openpi/packages/openpi-client/src}"
+  server_host: 127.0.0.1
+  needs_server: true
+  eval_env: openvla-oft
+  serve_env: openpi
+  feasibility_condition: oracle_swr_aegis
+  libero:
+    oracle:
+      enabled: true
+      config_path: configs/safety/oracle_stop_wait_resume.yaml
+    aegis:
+      enabled: true
+      activate_after: settled_or_done
+      obstacle_source: sim_gt
+      config_path: configs/safety/aegis.yaml
+      eef_offset_local: [0.0, 0.0, -0.08]
+      eef_axes_diag: [0.06, 0.12, 0.11]
+      eef_axes_diag_by_instruction_substr:
+        orange juice: [0.06, 0.12, 0.2]
+        milk: [0.06, 0.12, 0.2]
+        alphabet soup: [0.06, 0.12, 0.2]
+      obstacle_axes_diag_default: [0.06, 0.06, 0.08]
+      use_geom_size_for_obstacle: true

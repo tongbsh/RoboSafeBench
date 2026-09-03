@@ -1,4 +1,8 @@
 # RoboTwin × L3 — CLI-effective (D4: entry_steps=6000; §0.1 alpha=0.9).
+# ENTER (start→hover) is the visible inbound; APPROACH is only a ~2 cm drop.
+# 6000 is the published RoboTwin clock (~24 s at 250 Hz), not a LIBERO align
+# (LIBERO entry_steps is 0/15; clocks are not interchangeable seconds).
+# Spawn is extra.robotwin.l3_spawn_world_xy (FOV rim, not table-center).
 # approach/exit/dwell_height/spawn_* → extra.robotwin (schema gap D6).
 # disturbance.l2 block: schema-valid spawn-mirror fields used by manager.arm L3
 # (l2_start_mode / flip / min_distance stay in extra.robotwin — not in L2 schema).
@@ -11,14 +15,19 @@ disturbance:
     alpha: 0.9
     move_start_step: 1
     entry_steps: 6000
-    dwell_steps: 3
+    # Miss: hover one sim step then withdraw.
+    # kinematic_first_hit hit: after official force, vanish.
+    # dynamic_release hit: last-free + palm; official force after physics.
+    dwell_steps: 1
     enter_height: 0.10
     start_offset: [0.0, 0.0, 0.12]
     flip_side: false
     start_mode: head_on
     start_dist_mult: 1.6
     # Official metrics + handle_collision: ignore wrist cameras (not L2's
-    # l12_collision_exclude). Empty list = no filter. Does not apply an impulse gate.
+    # l12_collision_exclude). Empty list = no filter.
+    # dynamic_release (default extra.robotwin.l3_force_scheme): impulse gate
+    # applies only after last-free release. kinematic_first_hit: no impulse gate.
     ignore_collision_link_substrings: [camera]
 
 hand:
@@ -26,18 +35,27 @@ hand:
 
 # path_intercept + primary-arm reach slots. target_mode=current keeps
 # today's l3_alpha interpolate. All keys required.
+# move_start_step stays on the sim clock (ENTER pacing). The four-axis
+# gate is extra.robotwin.l3.move_start_task_step — same contract as L2.
+# Delay only; do not replan start/hover/dwell at onset (t=0 path).
 # Layer B is reach-origin only (robotwin_l3_origin_is_valid), same reason
 # as L2: the approach is supposed to cross the table.
+# Diversity changes start slot + intercept depth only. Hover stays above
+# dwell so ENTER (entry_steps) still flies start→hover; APPROACH is the
+# short drop. pin_approach_steps is schema-compat with LIBERO/SimplerEnv
+# and is ignored here (those backends put the inbound on APPROACH).
 extra:
   robotwin:
     l3:
+      # Delay ENTER until the policy has a pre-onset window (window_size=10).
+      move_start_task_step: 20
       target_mode: current
       intercept_alpha: 0.5
       min_eef_clearance: 0.12
       min_task_clearance: 0.0
       tip_overshoot: 0.0
       reach_diversity:
-        enabled: false
+        enabled: true
         lateral_width_m: 0.15
         near_alpha: 0.30
         mid_alpha: 0.50

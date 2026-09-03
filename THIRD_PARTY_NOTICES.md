@@ -10,14 +10,14 @@ LIBERO / dyniSafety_libero, robosuite, RoboCasa, and MANO/SMPL+H. Nested license
 if you vendor or redistribute them.
 
 Operational pins, patches, and install commands:
-[`docs/user/third_party.md`](docs/user/third_party.md).
+[`docs/user/install.md`](docs/user/install.md).
 
 ---
 
 ## 1. SimplerEnv-OpenVLA
 
 - **Location:** `third_party/SimplerEnv-OpenVLA` (git submodule)
-- **Upstream:** `git@github.com:DelinQu/SimplerEnv-OpenVLA.git`
+- **Upstream:** `https://github.com/DelinQu/SimplerEnv-OpenVLA.git`
 - **Pin:** `ccfe3809766839a2fcfb7a3d3c9abff585189188`
 - **License file:** `third_party/SimplerEnv-OpenVLA/LICENSE`
 - **License:** MIT License  
@@ -71,13 +71,11 @@ restate the entire license body here.
 
 ---
 
-## 3. RoboTwin (DyniSafety private mirror)
+## 3. RoboTwin
 
 - **Location:** `third_party/RoboTwin` (git submodule)
-- **Lineage:** [RoboTwin-Platform/RoboTwin](https://github.com/RoboTwin-Platform/RoboTwin);
-  pin is a **private DyniSafety mirror** (tag `dynisafety-pin-20260806`), not a
-  claim of bit-identity with a public upstream SHA.
-- **Pin:** `afd5f1bbc5759ac1512dc42b3cdaf8a218fb7c00`
+- **Upstream:** [RoboTwin-Platform/RoboTwin](https://github.com/RoboTwin-Platform/RoboTwin)
+- **Pin:** `afd5f1bbc5759ac1512dc42b3cdaf8a218fb7c00` (tag `dynisafety-pin-20260806`)
 - **License file:** `third_party/RoboTwin/LICENSE`
 - **License:** MIT License  
   Copyright (c) 2025 Tianxing Chen (陈天行)
@@ -297,6 +295,21 @@ under CC BY 4.0 and are **not** committed to this repository.
   (mug-like). See `manifest.yaml` in the pack directory.
 
 The CC BY 4.0 text is not restated in full here; obtain it from Creative Commons.
+
+---
+
+## 5d. Microsoft Rocketbox (optional L3 clothed visual)
+
+- **Upstream:** [microsoft/Microsoft-Rocketbox](https://github.com/microsoft/Microsoft-Rocketbox) (MIT)
+- **Status in DyniSafety:** **not redistributed**. Convert locally to OBJ+PNG
+  under the gitignored path
+  `<workspace>/external/assets/rocketbox/Chef_Female_01/`.
+- **Converter:** `scripts/setup/export_rocketbox_obj.py` (FBX via assimp,
+  TGA → PNG). Does not modify SMPL/MANO weights.
+- **Use:** Optional L3 appearance (`extra.robocasa.l3.rocketbox_visuals`)
+  at authored meters. Collision `half_size` stays in YAML.
+
+Keep the upstream `LICENSE.md` next to the converted files.
 
 ---
 

@@ -785,7 +785,7 @@ def check_assets(
                         if big_ok
                         else (
                             f"bash {workspace}/scripts/setup/install_robotwin.sh  "
-                            "# then place upstream assets (~16GB); see docs/user/third_party.md"
+                            "# then place upstream assets (~16GB); see docs/user/install.md"
                         )
                     ),
                     severity=sev_opt,
@@ -1000,8 +1000,8 @@ def check_checkpoints(
                     None
                     if ok
                     else (
-                        f"python {workspace}/scripts/setup/download_assets.py --list && "
-                        f"python {workspace}/scripts/setup/download_assets.py --asset <name>"
+                        f"python {workspace}/scripts/setup/download_assets.py "
+                        f"--model {path.stem}"
                     )
                 ),
                 severity=sev_opt,

@@ -151,6 +151,10 @@ catalog:
     kind: feasibility
     name: pi05_aegis_vision_authorized
     writes: [eval, logs]
+  - script: scripts/extra/feasibility/run_pi05_oracle_swr_aegis.sh
+    kind: feasibility
+    name: pi05_oracle_swr_aegis
+    writes: [eval, logs]
   - script: scripts/extra/feasibility/run_authorized_aegis_feasibility.sh
     kind: feasibility
     name: aegis_authorized_run

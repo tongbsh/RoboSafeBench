@@ -47,6 +47,25 @@ def _obstacle_root_body_name(env: Any) -> str | None:
     return None
 
 
+def collect_pnp_hazard_geom_ids(env: Any, *, object_name: str = "hazard") -> set[int]:
+    """Collision geoms of the injected PickPlace ``hazard`` object."""
+    objects = getattr(env, "objects", None)
+    if not isinstance(objects, dict):
+        return set()
+    obj = objects.get(object_name)
+    if obj is None:
+        return set()
+    root = getattr(obj, "root_body", None)
+    if root is None:
+        return set()
+    from dynisafety.backends.robocasa.disturbance._support import collect_body_geom_ids
+
+    try:
+        return collect_body_geom_ids(env, str(root))
+    except Exception:
+        return set()
+
+
 def collect_obstacle_geom_ids(env: Any) -> set[int]:
     """Geoms of the embedded L1/L2 floor actor (including visual copies)."""
     model = env.sim.model

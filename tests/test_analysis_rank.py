@@ -299,10 +299,11 @@ def test_cli_writes_n_a_and_does_not_touch_results(tmp_path: Path) -> None:
     out = tmp_path / "out"
     rc = analysis_main(["rank", "--results", str(results), "--out", str(out)])
     assert rc == 0
-    assert (out / "table_rank_coverage.csv").is_file()
-    assert (out / "table_rank_seed_pairs.csv").is_file()
-    assert (out / "plots" / "rank_spearman_ssr.png").is_file()
-    cov = pd.read_csv(out / "table_rank_coverage.csv")
+    stage = out / "rank"
+    assert (stage / "table_rank_coverage.csv").is_file()
+    assert (stage / "table_rank_seed_pairs.csv").is_file()
+    assert (stage / "plots" / "rank_spearman_ssr.png").is_file()
+    cov = pd.read_csv(stage / "table_rank_coverage.csv")
     assert int(cov.iloc[0]["n_seeds"]) == 1
     assert (run_dir / "episodes.jsonl").read_bytes() == original
     assert fingerprint_results(results) == before
@@ -318,3 +319,26 @@ def test_write_rank_roundtrip(tmp_path: Path) -> None:
     loaded = pd.read_csv(tmp_path / "table_rank_backend_pairs.csv")
     assert float(loaded.iloc[0]["spearman"]) == pytest.approx(1.0)
     assert float(written["table_rank_backend_pairs"].iloc[0]["spearman"]) == pytest.approx(1.0)
+
+
+def test_write_rank_drops_safety_layer_by_default(tmp_path: Path) -> None:
+    bound = [
+        _bound(_ep(model="pi05", success=True, episode_index=0)),
+        _bound(_ep(model="pi05_oracle_swr_aegis", success=True, episode_index=1)),
+        _bound(_ep(model="starvla", success=False, episode_index=2)),
+    ]
+    written = write_rank(bound, tmp_path, metrics=("ssr",))
+    models = set(written["table_rank_models"]["model"].astype(str))
+    assert "pi05_oracle_swr_aegis" not in models
+    assert "pi05" in models
+    assert "starvla" in models
+
+
+def test_write_rank_keeps_safety_layer_when_requested(tmp_path: Path) -> None:
+    bound = [
+        _bound(_ep(model="pi05", success=True, episode_index=0)),
+        _bound(_ep(model="pi05_oracle_swr_aegis", success=True, episode_index=1)),
+    ]
+    written = write_rank(bound, tmp_path, metrics=("ssr",), exclude_safety_layers=False)
+    models = set(written["table_rank_models"]["model"].astype(str))
+    assert "pi05_oracle_swr_aegis" in models

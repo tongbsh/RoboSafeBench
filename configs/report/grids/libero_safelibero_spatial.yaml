@@ -1,7 +1,7 @@
 # Coverage grid for `dynisafety report` — GENERATED, do not hand-edit.
 # Source: configs/suites/paper_main.yaml (backend=libero, suite=safelibero_spatial)
 # Regenerate: python tools/make_report_grids.py --suite paper_main
-# Expected rows: 7 models x 4 tasks x 4 levels x 1 seeds = 112 runs x 50 episodes
+# Expected rows: 7 models x 4 tasks x 4 levels x 2 seeds = 224 runs x 50 episodes
 backend: libero
 suite: safelibero_spatial
 models:
@@ -28,4 +28,5 @@ levels:
 - 3
 seeds:
 - 7
+- 2007
 n_episodes: 50

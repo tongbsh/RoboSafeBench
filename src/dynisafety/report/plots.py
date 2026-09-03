@@ -31,7 +31,7 @@ _STACK_LABELS = {
     "cif": "CIF",
 }
 
-# 9-class palette / labels (docs/user/behavior_diagnostics.md §3). Shared by both
+# 9-class palette / labels (docs/user/eval.md §3). Shared by both
 # new figures so the CFF split in failure_decomposition.png matches the
 # distribution figure.
 _BC_ORDER = (
@@ -44,6 +44,7 @@ _BC_ORDER = (
     "partial_response",
     "no_response",
     "not_triggered",
+    "baseline_unusable",
 )
 _BC_COLORS = {
     "collide_unreacted": "#8c1515",
@@ -55,6 +56,7 @@ _BC_COLORS = {
     "partial_response": "#fdae6b",
     "no_response": "#636363",
     "not_triggered": "#d9d9d9",
+    "baseline_unusable": "#bdbdbd",
 }
 _BC_LABELS = {
     "collide_unreacted": "Collide (no reaction)",
@@ -66,10 +68,15 @@ _BC_LABELS = {
     "partial_response": "Partial",
     "no_response": "No response",
     "not_triggered": "Not triggered",
+    "baseline_unusable": "Baseline unusable",
 }
 _QUADRANTS = ("SS", "US", "CFF", "CIF")
 # CFF process split (the reviewer-facing claim): not "Safe Stop".
 _CFF_CLASSES = ("stop_no_recover", "evade_fail", "partial_response", "no_response")
+# Classes that carry no axis observation. They have a quadrant like any other
+# episode, but placing them in a process figure would read as an observed
+# behavior rather than a missing one.
+_UNOBSERVED_CLASSES = ("not_triggered", "baseline_unusable")
 
 
 def plot_level_curves(
@@ -665,8 +672,9 @@ def plot_failure_decomposition(
     panel is titled to make the split obvious — ``stop_no_recover`` (halted,
     never finished), ``evade_fail`` (cleared contact, task unfinished),
     ``partial_response`` (measurable but incomplete), ``no_response`` (failed
-    with an unchanged trajectory). ``not_triggered`` is excluded (it sits
-    outside the four-quadrant denominator).
+    with an unchanged trajectory). ``not_triggered`` and ``baseline_unusable``
+    are excluded: neither carries an axis observation, so drawing them here
+    would read as an observed behavior.
     """
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -676,7 +684,7 @@ def plot_failure_decomposition(
         _unavailable_figure(out_path, f"failure decomposition ({UNAVAILABLE})")
         return
     work = episodes_df.loc[episodes_df["diag_behavior_class"].notna()].copy()
-    work = work[work["diag_behavior_class"].astype(str) != "not_triggered"]
+    work = work[~work["diag_behavior_class"].astype(str).isin(_UNOBSERVED_CLASSES)]
     if work.empty:
         _unavailable_figure(out_path, f"failure decomposition ({UNAVAILABLE})")
         return
@@ -698,7 +706,7 @@ def plot_failure_decomposition(
         squeeze=False,
         sharey=True,
     )
-    class_order = [c for c in _BC_ORDER if c != "not_triggered"]
+    class_order = [c for c in _BC_ORDER if c not in _UNOBSERVED_CLASSES]
 
     for i, quad in enumerate(_QUADRANTS):
         ax = axes[0][i]

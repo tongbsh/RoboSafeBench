@@ -18,7 +18,22 @@ PORT="${1:?usage: serve.sh <port> <checkpoint_dir>}"
 CKPT="${2:?usage: serve.sh <port> <checkpoint_dir>}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+# scripts/extra/models/lingbot_va is four levels below the workspace.
+# A three-level walk stops at scripts/ and looks for
+# scripts/external/model_repos/lingbot-va (missing). Walk until markers exist.
+REPO_ROOT=""
+_probe="${SCRIPT_DIR}"
+while [[ -n "${_probe}" && "${_probe}" != "/" ]]; do
+  if [[ -f "${_probe}/configs/paths.yaml" && -d "${_probe}/src/dynisafety" ]]; then
+    REPO_ROOT="${_probe}"
+    break
+  fi
+  _probe="$(dirname "${_probe}")"
+done
+if [[ -z "${REPO_ROOT}" ]]; then
+  echo "lingbot serve: could not locate workspace root from ${SCRIPT_DIR}" >&2
+  exit 1
+fi
 LINGBOT_ROOT="${LINGBOT_VA_ROOT:-${REPO_ROOT}/external/model_repos/lingbot-va}"
 
 [[ -d "$CKPT" ]] || { echo "lingbot serve: checkpoint dir not found: $CKPT" >&2; exit 1; }

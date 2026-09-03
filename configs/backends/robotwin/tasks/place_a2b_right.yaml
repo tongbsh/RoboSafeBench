@@ -1,7 +1,10 @@
 # main20 / task_id=21 — max_steps from _eval_step_limit.yml; primary_arm externalized for S3e registry (D3=B).
+# XVLA closest approach ~13 cm; shared 0.10 would miss those onsets.
 runtime:
   max_steps: 400
 disturbance:
+  l1:
+    trigger_dist: 0.15
   obstacle:
     target_mode: source_object
 extra:

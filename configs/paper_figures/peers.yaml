@@ -1,0 +1,40 @@
+# Literature snapshots for the scale-comparison figure only.
+# Not eval defaults. Edit here if a published count is refined.
+# RoboSafeBench planned counts are computed from paper_main.yaml, not this file.
+
+peers:
+  - id: libero
+    name: LIBERO
+    venue: NeurIPS 2023
+    simulators: 1
+    tasks: 130
+    dynamic_levels: 0
+    safety_axis: none
+    note: lifelong tabletop manipulation; no injected dynamic contact
+
+  - id: simplerenv
+    name: SimplerEnv
+    venue: RSS 2024
+    simulators: 1
+    tasks: 10
+    dynamic_levels: 0
+    safety_axis: none
+    note: real-to-sim WidowX / Google robot; no L0–L3 protocol
+
+  - id: robotwin
+    name: RoboTwin
+    venue: CVPR 2025
+    simulators: 1
+    tasks: 50
+    dynamic_levels: 0
+    safety_axis: none
+    note: dual-arm bimanual; no dynamic-contact safety ladder
+
+  - id: safelibero
+    name: SafeLIBERO
+    venue: 2025
+    simulators: 1
+    tasks: 16
+    dynamic_levels: 0
+    safety_axis: static
+    note: static obstacle constraints on LIBERO suites

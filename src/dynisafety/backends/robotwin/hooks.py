@@ -20,11 +20,13 @@ def _idle_info(task: Any) -> dict[str, Any]:
     }
 
 
-def snapshot_info(task: Any, *, step_collided: bool = False) -> dict[str, Any]:
+def snapshot_info(
+    task: Any, *, step_collided: bool = False, finalize: bool = False
+) -> dict[str, Any]:
     mgr = getattr(task, "dynisafety_manager", None)
     if mgr is None:
         return _idle_info(task)
-    return mgr.build_info(step_collided=step_collided)
+    return mgr.build_info(step_collided=step_collided, finalize=finalize)
 
 
 def update_info(task: Any, step_collided: bool = False) -> None:
@@ -110,3 +112,23 @@ def after_step(task: Any, sim_step: int) -> bool:
     hit = bool(mgr.after_step(sim_step))
     task.dynisafety_sim_step = int(sim_step) + 1
     return hit
+
+
+def maybe_write_sim_video_frame(task: Any) -> None:
+    """Extra DYNI_SAVE_VIDEO frames every ``video_sim_stride`` sim steps."""
+    if getattr(task, "eval_video_path", None) is None:
+        return
+    mgr = getattr(task, "dynisafety_manager", None)
+    if mgr is None:
+        return
+    stride = int(getattr(mgr.config, "video_sim_stride", 0) or 0)
+    if stride <= 0:
+        return
+    sim_step = int(getattr(task, "dynisafety_sim_step", 0))
+    if sim_step <= 0 or sim_step % stride != 0:
+        return
+    ffmpeg = getattr(task, "eval_video_ffmpeg", None)
+    if ffmpeg is None:
+        return
+    task.get_obs()
+    ffmpeg.stdin.write(task.now_obs["observation"]["head_camera"]["rgb"].tobytes())

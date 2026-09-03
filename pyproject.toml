@@ -27,7 +27,7 @@ dependencies = [
 # RoboCasa: pip install -e . --no-deps && pip install -r requirements/robocasa.txt
 # Prefer: conda env from environment/dynisafety-<backend>.yml
 #   then pip install -r requirements/<backend>.txt && pip install -e ".[<backend>]"
-# Full install path: scripts/setup/install_*.sh (see docs/user/third_party.md).
+# Full install path: scripts/setup/install_*.sh (see docs/user/install.md).
 [project.optional-dependencies]
 libero = [
     "mujoco>=3.1,<3.7",

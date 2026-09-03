@@ -6,10 +6,10 @@
 
 规范流程、冻结契约和安装规则在仓库文档里，这里不重复：
 
-- [docs/user/adding_a_model.md](../../docs/user/adding_a_model.md) — 6 步流程
-- [docs/user/contracts.md](../../docs/user/contracts.md) — 冻结契约
-- [docs/user/installation.md](../../docs/user/installation.md) — 每个环境只装一个 backend；extras 互斥
-- [docs/user/benchmark_design.md](../../docs/user/benchmark_design.md)、[docs/user/metrics.md](../../docs/user/metrics.md)
+- [docs/user/repo.md](../../docs/user/repo.md) — 6 步流程
+- [docs/user/eval.md](../../docs/user/eval.md) — 冻结契约
+- [docs/user/install.md](../../docs/user/install.md) — 每个环境只装一个 backend；extras 互斥
+- [docs/user/eval.md](../../docs/user/eval.md)、[docs/user/eval.md](../../docs/user/eval.md)
 
 ## 这是什么（以及不是什么）
 
@@ -164,6 +164,8 @@ dynisafety eval \
 
 sweep 会把 `HOST` / `PORT` 注入为 `extra.server_host` / `extra.server_port`。
 
+`server.launch` 必须是相对 `server.root` 的路径：调度器用 `Path(root) / launch` 拼启动脚本。树内真实 HTTP 对照：`configs/models/turbovla.yaml`（`root` = 仓库根，`launch` = `scripts/turbovla/deploy_turbovla_dynisafety_server.py`），payload 与本示例相同（`images` / `state` / `instruction` / `horizon`，响应 `actions`）。
+
 ## 验证阶梯
 
 在仓库根目录：
@@ -204,6 +206,7 @@ python -c "from pathlib import Path; from dynisafety.policies.registry import av
 - `name:` 与 YAML 文件名 stem 不一致。
 - 增加第五个图像键（只允许 `primary` / `wrist` / `left` / `right`）。
 - 以为 `dynisafety models` 会列出目录。请用上面的 `available()`。
+- 把 `server.launch` 写到 `server.root` 外面。调度器不会从仓库根另搜一遍。
 
 ## 文件地图
 

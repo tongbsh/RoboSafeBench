@@ -13,6 +13,16 @@ from dynisafety.cli.eval import dispatch_eval, register_eval_parser
 from dynisafety.cli.report import dispatch_report, register_report_parser
 from dynisafety.cli.serve import dispatch_serve, register_serve_parser
 from dynisafety.cli.sweep import dispatch_sweep, register_sweep_parser
+from dynisafety.diagnostics.recompute import (
+    dispatch_diagnostics,
+    register_diagnostics_parser,
+)
+from dynisafety.paper_figures.cli import (
+    dispatch as dispatch_paper_figures,
+)
+from dynisafety.paper_figures.cli import (
+    register_paper_figures_parser,
+)
 from dynisafety.parallel_eval.cli import (
     dispatch_parallel_eval,
     register_parallel_eval_parser,
@@ -40,6 +50,8 @@ def _build_parser() -> argparse.ArgumentParser:
     register_config_parser(sub)
     register_report_parser(sub)
     register_analysis_parser(sub)
+    register_diagnostics_parser(sub)
+    register_paper_figures_parser(sub)
     return parser
 
 
@@ -65,6 +77,10 @@ def main(argv: list[str] | None = None) -> int:
         return dispatch_report(args)
     if args.command == "analysis":
         return dispatch_analysis(args)
+    if args.command == "diagnostics":
+        return dispatch_diagnostics(args)
+    if args.command == "paper-figures":
+        return dispatch_paper_figures(args)
     print(f"dynisafety {args.command}: not implemented yet (stub)", file=sys.stderr)
     return 0
 

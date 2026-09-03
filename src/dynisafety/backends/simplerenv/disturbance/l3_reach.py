@@ -12,6 +12,7 @@ from typing import Any
 
 import numpy as np
 
+from dynisafety.backends.simplerenv.disturbance.diversity_clearance import LEGACY_UNVALIDATED
 from dynisafety.core.disturbance import lerp, minimum_jerk
 
 SLOTS: tuple[str, ...] = ("left", "opposite", "right")
@@ -368,12 +369,18 @@ def simplerenv_l3_fallback_chain(
         ordered.append((mode, style))
 
     _offer(requested_mode, "straight")
+    _offer(requested_mode, "raised")
+    _offer(requested_mode, "via")
     slot, depth = _split_mode(requested_mode)
+    preferred: list[str] = []
     if slot in SLOTS and depth in DEPTHS:
-        _offer(requested_mode, "raised")
-        _offer(requested_mode, "via")
-        _offer(f"{_OPPOSITE_SLOT[slot]}_{depth}", "straight")
-    _offer("opposite_mid", "straight")
+        preferred.append(f"{_OPPOSITE_SLOT[slot]}_{depth}")
+    preferred.append("opposite_mid")
+    rest = [mode for mode in MODES if mode != requested_mode and mode not in preferred]
+    for mode in preferred + rest:
+        _offer(mode, "straight")
+        _offer(mode, "raised")
+        _offer(mode, "via")
     ordered.append((LEGACY_MODE, None))
     return tuple(ordered)
 
@@ -429,14 +436,25 @@ def simplerenv_l3_accept_reach(
         label = mode if style is None else f"{mode}:{style}"
         tried.append(label)
         if mode == LEGACY_MODE:
-            reason = None if requested_mode == LEGACY_MODE and len(tried) == 1 else "all_candidates_rejected"
+            cand = make_candidate(mode, "straight")
+            fields = _candidate_fields(cand)
+            validated = False
+            if fields.get("path") is not None:
+                validated = bool(validate(fields.get("start"), fields.get("path")))
+            if requested_mode == LEGACY_MODE and len(tried) == 1:
+                reason = None if validated else LEGACY_UNVALIDATED
+            elif validated:
+                reason = first_reason or "all_candidates_rejected"
+            else:
+                reason = LEGACY_UNVALIDATED
             return {
                 "requested_mode": requested_mode,
                 "accepted_mode": LEGACY_MODE,
                 "path_style": None,
                 "fallback_reason": reason,
                 "fallback_chain": tuple(tried),
-                **_candidate_fields(make_candidate(mode, "straight")),
+                "legacy_validated": validated,
+                **fields,
             }
         use_style = "straight" if style is None else style
         cand = make_candidate(mode, use_style)

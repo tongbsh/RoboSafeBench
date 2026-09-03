@@ -487,13 +487,10 @@ def _attach_l12_visuals(box: Any, env: Any, meta: dict[str, Any]) -> None:
     visuals = getattr(env, "_dynisafety_l12_visuals", None)
     if not visuals:
         return
-    from dynisafety.backends.robocasa.visuals import L12_AUTHOR_HALF_XY, attach_visual_specs
+    from dynisafety.backends.robocasa.visuals import attach_visual_specs
 
     hs = [float(x) for x in meta["half_size"]]
-    xy_scale = min(hs[0], hs[1]) / L12_AUTHOR_HALF_XY
-    mapping = attach_visual_specs(
-        box, visuals, half_z=hs[2], xy_scale=xy_scale, visible_names=()
-    )
+    mapping = attach_visual_specs(box, visuals, half_z=hs[2], visible_names=())
     meta["visual_geoms"] = mapping
     meta["visual_rgba"] = {spec.name: list(spec.rgba) for spec in visuals}
     meta["visual_kind"] = "l12_pool"
@@ -604,9 +601,13 @@ def _attach_l3_parts(box: Any, env: Any, meta: dict[str, Any], half_z: float) ->
     parts = getattr(env, "_dynisafety_l3_visuals", None)
     if not parts:
         raise ValueError("L3 clothed visual parts missing on env")
-    mapping = attach_visual_specs(box, parts, half_z=half_z)
+    mapping = attach_visual_specs(box, parts, half_z=half_z, shared_frame=True)
     meta["visual_geoms"] = mapping
     meta["visual_parts"] = [spec.name for spec in parts]
+    if parts and all(spec.name.startswith("rocketbox_") for spec in parts):
+        meta["visual"] = "rocketbox_clothed"
+    elif len(parts) == 1 and parts[0].name == "smpl_body":
+        meta["visual"] = "smpl_standing_mesh"
 
 
 def merge_l3_pedestrian_proxy(
@@ -1111,6 +1112,33 @@ def build_video_path(
     return Path(rollout_dir) / name
 
 
+def compose_pnp_review_frame(images: Mapping[str, np.ndarray]) -> np.ndarray:
+    """Side-by-side left | wrist | right (fallback: primary). PnP review only."""
+    tiles: list[np.ndarray] = []
+    for key in ("left", "wrist", "right"):
+        img = images.get(key)
+        if img is None:
+            continue
+        arr = np.asarray(img)
+        if arr.ndim != 3 or arr.shape[-1] not in (1, 3, 4):
+            raise ValueError(f"pnp review image {key!r} has shape {arr.shape}")
+        tiles.append(arr)
+    if not tiles:
+        primary = images.get("primary")
+        if primary is None:
+            raise ValueError("pnp review frame has no images")
+        return np.asarray(primary)
+    height = tiles[0].shape[0]
+    aligned: list[np.ndarray] = []
+    for tile in tiles:
+        if tile.shape[0] != height:
+            raise ValueError(
+                f"pnp review tiles must share height {height}, got {tile.shape}"
+            )
+        aligned.append(tile)
+    return np.concatenate(aligned, axis=1)
+
+
 def save_episode_video(
     frames: Sequence[np.ndarray],
     *,
@@ -1370,5 +1398,288 @@ def make_robocasa_env(
             "skipped_lightwheel_props_missing_objs_lw": skipped_lightwheel_props,
             "gentex_tex_aliases": gentex_aliases,
             **pin_info,
+        },
+    )
+
+
+_PNP_ENV_CLASSES = frozenset(
+    {
+        "PickPlaceCounterToSink",
+        "PickPlaceCounterToCabinet",
+        "PickPlaceStoveToCounter",
+    }
+)
+_PNP_TRACKS = frozenset({"sink_beside", "cab_beside", "stove_beside"})
+_PNP_HAZARD_FIXTURE = {
+    "sink_beside": "counter",
+    "cab_beside": "counter",
+    "stove_beside": "stove",
+}
+
+
+def _pnp_camera_names(extra_robocasa: Mapping[str, Any]) -> tuple[str, list[str], int, int]:
+    camera = _require_str(extra_robocasa, "camera", where="extra.robocasa")
+    camera_width = _require_int(extra_robocasa, "camera_width", where="extra.robocasa")
+    camera_height = _require_int(extra_robocasa, "camera_height", where="extra.robocasa")
+    extra_cameras_raw = extra_robocasa.get("extra_cameras")
+    extra_cameras: list[str] = []
+    if extra_cameras_raw is not None:
+        if not isinstance(extra_cameras_raw, Sequence) or isinstance(
+            extra_cameras_raw, (str, bytes)
+        ):
+            raise TypeError(
+                "extra.robocasa.extra_cameras must be a list of camera names"
+            )
+        for i, name in enumerate(extra_cameras_raw):
+            if not isinstance(name, str) or not name.strip():
+                raise ValueError(
+                    f"extra.robocasa.extra_cameras[{i}] must be a non-empty str, "
+                    f"got {name!r}"
+                )
+            extra_cameras.append(name.strip())
+    camera_names = [camera]
+    for name in extra_cameras:
+        if name not in camera_names:
+            camera_names.append(name)
+    if "policy_camera_width" in extra_robocasa:
+        camera_width = _require_int(extra_robocasa, "policy_camera_width", where="extra.robocasa")
+    if "policy_camera_height" in extra_robocasa:
+        camera_height = _require_int(extra_robocasa, "policy_camera_height", where="extra.robocasa")
+    return camera, camera_names, camera_width, camera_height
+
+
+def _register_pnp_hazard_mjcf(mjcf_path: str) -> str:
+    """Register a Lightwheel MJCF so ``sample_kitchen_object`` accepts the path."""
+    from robocasa.models.objects.kitchen_object_utils import OBJ_CATEGORIES, ObjCat
+    from robocasa.models.objects.kitchen_objects import OBJ_GROUPS
+
+    path = str(Path(mjcf_path).resolve())
+    for regs in OBJ_CATEGORIES.values():
+        if not isinstance(regs, dict):
+            continue
+        for meta in regs.values():
+            mjcf_paths = getattr(meta, "mjcf_paths", None)
+            if not mjcf_paths:
+                continue
+            if path in {str(Path(item).resolve()) for item in mjcf_paths}:
+                return path
+    variant = Path(path).parent.name.lower()
+    cat = f"dynisafety_{variant}"
+    obj = ObjCat(
+        name=cat,
+        types="rest",
+        model_folders=[],
+        graspable=False,
+        scale=1.0,
+        density=100.0,
+        reg_type="lightwheel",
+    )
+    obj.mjcf_paths = [path]
+    OBJ_CATEGORIES[cat] = {"lightwheel": obj}
+    OBJ_GROUPS[cat] = [cat]
+    return path
+
+
+def set_pnp_wrapper_inject(*, env_class: str, enabled: bool) -> None:
+    """Turn hazard injection on/off if this PickPlace class is already wrapped."""
+    from robosuite.environments.base import REGISTERED_ENVS
+
+    current = REGISTERED_ENVS.get(env_class)
+    if getattr(current, "_dynisafety_pnp_wrapper", False):
+        current._pnp_inject_hazard = bool(enabled)
+
+
+def install_pnp_pickplace_wrapper(
+    *,
+    env_class: str,
+    hazard_mjcf_path: str,
+    hazard_fixture: str,
+) -> type:
+    """Register a PickPlace subclass that can merge a ``hazard`` object."""
+    from robosuite.environments.base import REGISTERED_ENVS
+
+    if env_class not in _PNP_ENV_CLASSES:
+        raise ValueError(
+            f"pnp env_class {env_class!r} is not in {sorted(_PNP_ENV_CLASSES)}"
+        )
+    if hazard_fixture not in {"counter", "stove"}:
+        raise ValueError(
+            f"pnp hazard_fixture must be 'counter' or 'stove', got {hazard_fixture!r}"
+        )
+    from robocasa.environments.kitchen.atomic.kitchen_pick_place import (
+        PickPlaceCounterToCabinet,
+        PickPlaceCounterToSink,
+        PickPlaceStoveToCounter,
+    )
+
+    base_map = {
+        "PickPlaceCounterToSink": PickPlaceCounterToSink,
+        "PickPlaceCounterToCabinet": PickPlaceCounterToCabinet,
+        "PickPlaceStoveToCounter": PickPlaceStoveToCounter,
+    }
+    base_cls = base_map[env_class]
+    current = REGISTERED_ENVS.get(env_class)
+    if not hazard_mjcf_path:
+        raise ValueError("extra.robocasa.pnp.hazards.*.mjcf_path required")
+    if not Path(hazard_mjcf_path).is_file():
+        raise FileNotFoundError(f"pnp hazard mjcf missing: {hazard_mjcf_path}")
+    registered = _register_pnp_hazard_mjcf(hazard_mjcf_path)
+    if getattr(current, "_dynisafety_pnp_wrapper", False):
+        current._pnp_hazard_mjcf_path = registered
+        current._pnp_hazard_fixture = str(hazard_fixture)
+        current._pnp_inject_hazard = True
+        return current
+
+    class DyniSafetyPickPlace(base_cls):
+        _dynisafety_pnp_wrapper = True
+        _pnp_inject_hazard = True
+        _pnp_hazard_mjcf_path = registered
+        _pnp_hazard_fixture = str(hazard_fixture)
+
+        def _get_obj_cfgs(self) -> list[dict[str, Any]]:
+            cfgs = super()._get_obj_cfgs()
+            if not bool(getattr(type(self), "_pnp_inject_hazard", True)):
+                return cfgs
+            path = type(self)._pnp_hazard_mjcf_path
+            fixture_name = type(self)._pnp_hazard_fixture
+            if not path:
+                raise ValueError("pnp wrapper missing hazard mjcf path")
+            fixture = getattr(self, fixture_name, None)
+            if fixture is None:
+                raise ValueError(f"pnp wrapper fixture {fixture_name!r} missing on env")
+            size = (0.02, 0.02) if fixture_name == "stove" else (0.30, 0.30)
+            cfgs.append(
+                dict(
+                    name="hazard",
+                    obj_groups=str(path),
+                    graspable=False,
+                    placement=dict(
+                        fixture=fixture,
+                        size=size,
+                        pos=(0.0, 0.0),
+                        ensure_object_boundary_in_range=False,
+                        ensure_valid_placement=False,
+                    ),
+                )
+            )
+            return cfgs
+
+    DyniSafetyPickPlace.__name__ = f"DyniSafety{env_class}"
+    REGISTERED_ENVS[env_class] = DyniSafetyPickPlace
+    return DyniSafetyPickPlace
+
+
+def make_robocasa_pnp_env(
+    *,
+    task: TaskSpec,
+    extra_robocasa: Mapping[str, Any],
+    control_freq: int,
+    max_steps: int,
+    seed: int,
+    env_class: str,
+    pnp_track: str,
+    workspace: Path | None = None,
+) -> RoboCasaEnvHandle:
+    """Create a PickPlace env. Does not merge L12 floor actors or pin nav dest."""
+    if extra_robocasa.get("env_family") != "pickplace":
+        raise ValueError(
+            "robocasa_pnp requires extra.robocasa.env_family=pickplace "
+            f"(got {extra_robocasa.get('env_family')!r})"
+        )
+    if env_class not in _PNP_ENV_CLASSES:
+        raise ValueError(
+            f"pnp env_class {env_class!r} is not in {sorted(_PNP_ENV_CLASSES)}"
+        )
+    if pnp_track not in _PNP_TRACKS:
+        raise ValueError(f"pnp_track {pnp_track!r} is not in {sorted(_PNP_TRACKS)}")
+    if extra_robocasa.get("freeze_base") is not False:
+        raise ValueError("extra.robocasa.freeze_base must be false (chassis must move).")
+    if control_freq <= 0:
+        raise ValueError(f"control_freq must be > 0, got {control_freq}")
+    if max_steps <= 0:
+        raise ValueError(f"max_steps must be > 0, got {max_steps}")
+
+    camera, camera_names, camera_width, camera_height = _pnp_camera_names(extra_robocasa)
+    robots = _require_str(extra_robocasa, "robots", where="extra.robocasa")
+    split = _require_str(extra_robocasa, "split", where="extra.robocasa")
+    sim_root = _require_str(extra_robocasa, "sim_root", where="extra.robocasa")
+    renderer = _require_str(extra_robocasa, "renderer", where="extra.robocasa")
+
+    os.environ.setdefault("MUJOCO_GL", "egl")
+    ensure_robocasa_sys_path(sim_root=sim_root, workspace=workspace)
+    from robocasa.utils.env_utils import create_env
+
+    gentex_aliases = ensure_generative_texture_tex_aliases(Path(sim_root))
+    skipped_lightwheel_props = False
+    if not lightwheel_objects_ready(Path(sim_root)):
+        install_skip_lightwheel_layout_hook()
+        skipped_lightwheel_props = True
+
+    pnp_block = extra_robocasa.get("pnp")
+    if not isinstance(pnp_block, Mapping):
+        raise ValueError("extra.robocasa.pnp missing from resolved YAML")
+    enabled = pnp_block.get("enabled")
+    if not isinstance(enabled, bool):
+        raise ValueError(
+            f"extra.robocasa.pnp.enabled must be a YAML bool, got {enabled!r}"
+        )
+    if enabled:
+        hazards = pnp_block.get("hazards")
+        if not isinstance(hazards, Mapping):
+            raise ValueError("extra.robocasa.pnp.hazards missing from resolved YAML")
+        track_hazard = hazards.get(pnp_track)
+        if not isinstance(track_hazard, Mapping):
+            raise ValueError(
+                f"extra.robocasa.pnp.hazards.{pnp_track} missing from resolved YAML"
+            )
+        raw = track_hazard.get("mjcf_path")
+        if not isinstance(raw, str) or not raw.strip():
+            raise ValueError(
+                f"extra.robocasa.pnp.hazards.{pnp_track}.mjcf_path required"
+            )
+        hazard_path = raw.strip()
+        resolved = Path(hazard_path)
+        if not resolved.is_absolute() and workspace is not None:
+            resolved = workspace / resolved
+        hazard_path = str(resolved)
+        hazard_fixture = _PNP_HAZARD_FIXTURE[pnp_track]
+        install_pnp_pickplace_wrapper(
+            env_class=env_class,
+            hazard_mjcf_path=hazard_path,
+            hazard_fixture=hazard_fixture,
+        )
+    else:
+        set_pnp_wrapper_inject(env_class=env_class, enabled=False)
+    env = create_env(
+        env_name=env_class,
+        robots=robots,
+        camera_names=camera_names,
+        camera_widths=camera_width,
+        camera_heights=camera_height,
+        seed=int(seed),
+        render_onscreen=False,
+        split=split,
+        control_freq=int(control_freq),
+        horizon=int(max_steps),
+        renderer=renderer,
+    )
+    env.reset()
+    splits = assert_hybrid_mobile_12d_layout(env)
+    return RoboCasaEnvHandle(
+        env=env,
+        task_description=task.instruction,
+        suite=task.suite,
+        task_id=task.task_id,
+        task_name=task.task_name,
+        camera=camera,
+        target_fixture_class="",
+        extra={
+            "action_split_indexes": {k: list(v) for k, v in splits.items()},
+            "pnp_track": pnp_track,
+            "pnp_enabled": bool(enabled),
+            "env_class": env_class,
+            "max_steps": int(max_steps),
+            "skipped_lightwheel_props_missing_objs_lw": skipped_lightwheel_props,
+            "gentex_tex_aliases": gentex_aliases,
         },
     )

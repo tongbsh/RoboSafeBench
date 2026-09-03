@@ -132,7 +132,18 @@ class SuddenDropController(BaseDisturbanceController):
         self._xy_latched = False
         self._probe_pending = False
         self._placed_sim_step: int | None = None
+        self.drop_step: int | None = None
         self.hide()
+
+    @property
+    def disturbance_onset_step(self) -> int | None:
+        """Task-step onset. Survives ``on_released_to_physics`` (probe clock)."""
+        return self.drop_step
+
+    def lock_drop_task_step(self, task_step: int) -> None:
+        """Latch the first task-step sighting of a drop. Never overwrite."""
+        if self.drop_step is None:
+            self.drop_step = int(task_step)
 
     def apply_drop_xy(self, xy: np.ndarray) -> None:
         self.drop_pos[0] = float(xy[0])

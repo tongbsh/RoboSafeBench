@@ -40,10 +40,32 @@ def test_dyni_diversity_simplerenv_disables_align(monkeypatch) -> None:
     assert "extra.libero.obstacle_pack.enabled=true" not in items
 
 
-def test_dyni_flags_off_by_default(monkeypatch) -> None:
+def test_dyni_flags_unset_do_not_inject(monkeypatch) -> None:
     monkeypatch.delenv("DYNI_DIVERSITY", raising=False)
     monkeypatch.delenv("DYNI_OBSTACLE_PACK", raising=False)
     monkeypatch.delenv("DYNI_SAVE_VIDEO", raising=False)
+    monkeypatch.delenv("DYNI_CAPTURE", raising=False)
+    monkeypatch.delenv("DYNI_CAPTURE_ROOT", raising=False)
     items = build_eval_overrides(_args(backend="libero", level=2))
-    assert not any("spawn_diversity.enabled=true" in x for x in items)
-    assert not any("obstacle_pack.enabled=true" in x for x in items)
+    assert not any("spawn_diversity.enabled=" in x for x in items)
+    assert not any("obstacle_pack.enabled=" in x for x in items)
+    assert not any(x.startswith("capture.enabled=") for x in items)
+
+
+def test_dyni_diversity_and_pack_off_libero(monkeypatch) -> None:
+    monkeypatch.setenv("DYNI_DIVERSITY", "0")
+    monkeypatch.setenv("DYNI_OBSTACLE_PACK", "0")
+    monkeypatch.delenv("DYNI_SAVE_VIDEO", raising=False)
+    items = build_eval_overrides(_args(backend="libero", level=2))
+    assert "extra.libero.l2.spawn_diversity.enabled=false" in items
+    assert "extra.libero.l3.reach_diversity.enabled=false" in items
+    assert "extra.libero.obstacle_pack.enabled=false" in items
+
+
+def test_dyni_capture_enables_and_optional_root(monkeypatch) -> None:
+    monkeypatch.setenv("DYNI_CAPTURE", "1")
+    monkeypatch.setenv("DYNI_CAPTURE_ROOT", "/tmp/wrm-capture")
+    monkeypatch.delenv("DYNI_SAVE_VIDEO", raising=False)
+    items = build_eval_overrides(_args(backend="libero", level=0))
+    assert "capture.enabled=true" in items
+    assert "capture.dataset_root=/tmp/wrm-capture" in items

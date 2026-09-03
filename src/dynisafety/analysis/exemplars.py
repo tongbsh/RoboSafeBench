@@ -330,11 +330,13 @@ def write_exemplars(
         include_not_triggered=include_not_triggered,
     )
     rows: list[ExemplarRow] = []
+    written: set[Path] = set()
     for item in chosen:
         plot_rel: str | None = None
         trace = load_trace(item)
         if trace is not None:
             dest = plots_dir / _plot_filename(item)
+            written.add(dest)
             cls = behavior_class_of(item.episode) or "unknown"
             plot_exemplar_trajectory(
                 trace,
@@ -347,6 +349,13 @@ def write_exemplars(
             )
             plot_rel = str(dest.relative_to(out))
         rows.append(_row_from_bound(item, plot_path=plot_rel))
+
+    # A previous run's exemplars are not overwritten when this run picks a
+    # different episode — or when a behavior class stops occurring at all.
+    # Leaving them behind ships figures for classes the tables report as 0.
+    for stale in plots_dir.glob("*.png"):
+        if stale not in written:
+            stale.unlink()
 
     table = pd.DataFrame([row.to_dict() for row in rows])
     if table.empty:

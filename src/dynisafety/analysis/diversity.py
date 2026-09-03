@@ -1,6 +1,6 @@
 """Read-only L2/L3 diversity analysis from ``extra.spawn_plan`` / ``extra.l3_plan``.
 
-Field convention lives in ``docs/user/spawn_plan.md``. This module never imports a
+Field convention lives in ``docs/user/eval.md``. This module never imports a
 backend and never writes a default mode when the extra key is absent — missing
 plan means diversity was off (or the jsonl predates the planner), rendered as
 n/a, not 0.0.
@@ -334,12 +334,21 @@ def table_diversity_by_mode(
     *,
     group_cols: Sequence[str] = _PAPER_GROUP_COLS,
 ) -> pd.DataFrame:
-    """``accepted_mode`` × SR / CR / SSR / quadrants / 9-class counts."""
+    """``accepted_mode`` × ``path_style`` × SR / CR / SSR / quadrants / 9-class counts.
+
+    ``path_style`` is a grouping key, not a collapsed attribute. The mode name
+    only encodes ``slot`` and a coarse style, so ``*_linear`` on L2 actually
+    realises both ``linear`` and ``trapezoid`` paths, and L3 ``right_*`` mixes
+    ``straight`` / ``raised`` / ``via`` while ``left_*`` is pure ``straight``.
+    Grouping on the mode alone pooled those and rendered the style column n/a,
+    which hid a confound between the slot axis and the path axis.
+    """
     class_cols = [f"n_class_{name}" for name in _CLASS_VALUES]
     columns = [
         *group_cols,
         "family",
         "accepted_mode",
+        "is_legacy",
         "slot",
         "path_style",
         "depth",
@@ -357,20 +366,22 @@ def table_diversity_by_mode(
     buckets: dict[tuple[Any, ...], list[tuple[BoundEpisode, DiversityPlan]]] = defaultdict(list)
     for item, plan in planned:
         mode = plan.accepted_mode or "_unknown"
-        key = (*group_key_tuple(item.episode, group_cols), plan.family, mode)
+        style = plan.path_style or _NONE_SLOT
+        key = (*group_key_tuple(item.episode, group_cols), plan.family, mode, style)
         buckets[key].append((item, plan))
     rows: list[dict[str, Any]] = []
     for key in sorted(buckets, key=lambda k: tuple(str(x) for x in k)):
         pairs = buckets[key]
         eps = [b.episode for b, _ in pairs]
         plans = [p for _, p in pairs]
-        row: dict[str, Any] = {col: val for col, val in zip(group_cols, key[:-2], strict=True)}
+        row: dict[str, Any] = {col: val for col, val in zip(group_cols, key[:-3], strict=True)}
         row.update(
             {
-                "family": key[-2],
-                "accepted_mode": key[-1],
+                "family": key[-3],
+                "accepted_mode": key[-2],
+                "is_legacy": _unique_or_none([p.is_legacy for p in plans]),
                 "slot": _unique_or_none([p.slot for p in plans]),
-                "path_style": _unique_or_none([p.path_style for p in plans]),
+                "path_style": key[-1],
                 "depth": _unique_or_none([p.depth for p in plans]),
             }
         )
@@ -526,7 +537,14 @@ _ACCEPT_NOTES: tuple[str, ...] = (
 )
 
 _MODE_NOTES: tuple[str, ...] = (
-    "Cross of accepted_mode with SR / CR / SSR. Do not rank modes across backends.",
+    "Cross of accepted_mode × path_style with SR / CR / SSR. "
+    "Do not rank modes across backends.",
+    "path_style is a grouping key: the mode name does not determine it "
+    "(L2 *_linear realises linear and trapezoid; L3 left_* is straight-only "
+    "while right_* / opposite_* also draw raised and via). Comparing slots "
+    "without holding path_style fixed confounds the two axes.",
+    "is_legacy rows are fallback plans, not requested modes — keep them out of "
+    "any per-mode comparison.",
     "n_class_* is n/a when the cell has no diagnostics field.",
     "L2 modes: {left,center,right}_{arc,linear}. L3 modes: {left,opposite,right}_{near,mid}.",
 )

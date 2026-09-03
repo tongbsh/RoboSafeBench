@@ -1,4 +1,4 @@
-# P5 threshold calibration for behavior diagnostics (docs/user/behavior_diagnostics.md §8).
+# P5 threshold calibration for behavior diagnostics (docs/user/eval.md §8).
 #
 # Same tasks and seed as paper_main's libero/safelibero_spatial cell, so the
 # thresholds are calibrated on the distribution they will be reported on rather

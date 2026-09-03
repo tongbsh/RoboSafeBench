@@ -16,6 +16,7 @@ from dynisafety.backends.robocasa.disturbance._support import (
 from dynisafety.backends.robocasa.disturbance.l1 import FrontalSuddenAppearController
 from dynisafety.backends.robocasa.disturbance.l2 import BaseDirectedApproachController
 from dynisafety.backends.robocasa.disturbance.l3 import ApproachingHumanController
+from dynisafety.backends.robocasa.disturbance.pnp import PnPHazardController, build_pnp_controller
 from dynisafety.backends.robocasa.env import RoboCasaEnvHandle, hide_l0_obstacle_actor
 from dynisafety.config.schema import MISSING, RunConfig
 from dynisafety.core.disturbance import require_configured
@@ -24,7 +25,10 @@ from dynisafety.core.disturbance import require_map_key as _require_map_key
 _require = require_configured
 
 RoboCasaController = (
-    FrontalSuddenAppearController | BaseDirectedApproachController | ApproachingHumanController
+    FrontalSuddenAppearController
+    | BaseDirectedApproachController
+    | ApproachingHumanController
+    | PnPHazardController
 )
 
 
@@ -147,6 +151,10 @@ def build_controller(
     extra_robocasa: Mapping[str, Any],
     episode_index: int = 0,
 ) -> RoboCasaController | None:
+    if str(handle.suite) == "robocasa_pnp":
+        return build_pnp_controller(
+            level, handle, extra_robocasa, episode_index=episode_index
+        )
     if level not in ROBOCASA_CAPABILITIES.levels:
         raise ValueError(
             f"level={level} not in RoboCasa capabilities {ROBOCASA_CAPABILITIES.levels}"
