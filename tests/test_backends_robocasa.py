@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 from pathlib import Path
 
 import numpy as np
@@ -1010,3 +1011,149 @@ def test_l3_clothed_parts_stand_on_floor() -> None:
         zmax = max(zmax, max(zs))
     assert zmin == pytest.approx(0.0, abs=2e-3)
     assert zmax <= 1.70 + 1e-6
+
+
+def test_pnp_line_xy_keeps_lerp_when_surface_gap_already_holds() -> None:
+    from dynisafety.backends.robocasa.disturbance.pnp import (
+        lerp_xy,
+        line_xy_with_surface_gap,
+        surface_gap,
+    )
+
+    eef = np.array([0.0, 0.0], dtype=np.float64)
+    obj = np.array([1.0, 0.0], dtype=np.float64)
+    lerp = lerp_xy(eef, obj, 0.7)
+    got = line_xy_with_surface_gap(
+        eef, obj, 0.7, target_radius=0.05, hazard_radius=0.04, min_gap=0.04
+    )
+    assert got is not None
+    assert got.tolist() == pytest.approx(lerp.tolist())
+    assert surface_gap(center_dist=float(np.linalg.norm(got - obj)), target_radius=0.05, hazard_radius=0.04) >= 0.04
+
+
+def test_pnp_line_xy_slides_toward_eef_when_lerp_too_close() -> None:
+    from dynisafety.backends.robocasa.disturbance.pnp import (
+        lerp_xy,
+        line_xy_with_surface_gap,
+        min_center_distance,
+        surface_gap,
+    )
+
+    eef = np.array([0.0, 0.0], dtype=np.float64)
+    obj = np.array([0.30, 0.0], dtype=np.float64)
+    lerp = lerp_xy(eef, obj, 0.7)
+    d_min = min_center_distance(target_radius=0.08, hazard_radius=0.05, gap=0.04)
+    assert float(np.linalg.norm(lerp - obj)) < d_min
+    got = line_xy_with_surface_gap(
+        eef, obj, 0.7, target_radius=0.08, hazard_radius=0.05, min_gap=0.04
+    )
+    assert got is not None
+    assert got[0] == pytest.approx(obj[0] - d_min)
+    assert got[1] == pytest.approx(0.0)
+    assert float(np.linalg.norm(got - obj)) == pytest.approx(d_min)
+    assert surface_gap(
+        center_dist=float(np.linalg.norm(got - obj)),
+        target_radius=0.08,
+        hazard_radius=0.05,
+    ) == pytest.approx(0.04)
+    assert 0.0 <= got[0] <= obj[0]
+
+
+def test_pnp_line_xy_returns_none_when_segment_shorter_than_gap() -> None:
+    from dynisafety.backends.robocasa.disturbance.pnp import line_xy_with_surface_gap
+
+    eef = np.array([0.0, 0.0], dtype=np.float64)
+    obj = np.array([0.10, 0.0], dtype=np.float64)
+    got = line_xy_with_surface_gap(
+        eef, obj, 0.7, target_radius=0.08, hazard_radius=0.05, min_gap=0.04
+    )
+    assert got is None
+
+
+def test_pnp_footprint_xy_ignores_height() -> None:
+    from dynisafety.backends.robocasa.disturbance.pnp import (
+        footprint_xy_radius_from_box_half_extents,
+    )
+
+    # OilBottle001 reg_bbox half-extents ~5.3 x 5.3 x 9.7 cm.
+    got = footprint_xy_radius_from_box_half_extents(0.0534, 0.0534)
+    assert got == pytest.approx(math.hypot(0.0534, 0.0534))
+    assert got < 0.08
+    assert got > 0.05
+
+
+def test_pnp_candidates_keep_line_first_when_gap_holds() -> None:
+    from dynisafety.backends.robocasa.disturbance.pnp import (
+        lerp_xy,
+        placement_candidate_xys,
+    )
+
+    eef = np.array([0.0, 0.0], dtype=np.float64)
+    obj = np.array([1.0, 0.0], dtype=np.float64)
+    lerp = lerp_xy(eef, obj, 0.7)
+    rng = np.random.default_rng(0)
+    cands, slid = placement_candidate_xys(
+        eef,
+        obj,
+        0.7,
+        target_radius=0.05,
+        hazard_radius=0.04,
+        min_gap=0.04,
+        n_attempts=4,
+        search_radius_m=0.08,
+        rng=rng,
+    )
+    assert slid is False
+    assert len(cands) == 4
+    assert cands[0].tolist() == pytest.approx(lerp.tolist())
+    # First ring heading is +90° from object→EEF, so it sits beside the object.
+    assert cands[1][0] == pytest.approx(1.0)
+    assert cands[1][1] == pytest.approx(-0.13)
+
+
+def test_pnp_candidates_ring_when_segment_too_short() -> None:
+    from dynisafety.backends.robocasa.disturbance.pnp import (
+        min_center_distance,
+        placement_candidate_xys,
+        ring_xy,
+        approach_unit_xy,
+    )
+
+    eef = np.array([0.0, 0.0], dtype=np.float64)
+    obj = np.array([0.10, 0.0], dtype=np.float64)
+    d_min = min_center_distance(target_radius=0.08, hazard_radius=0.05, gap=0.04)
+    rng = np.random.default_rng(1)
+    cands, slid = placement_candidate_xys(
+        eef,
+        obj,
+        0.7,
+        target_radius=0.08,
+        hazard_radius=0.05,
+        min_gap=0.04,
+        n_attempts=3,
+        search_radius_m=0.08,
+        rng=rng,
+    )
+    assert slid is False
+    assert len(cands) == 3
+    unit = approach_unit_xy(eef, obj)
+    assert cands[0].tolist() == pytest.approx(ring_xy(obj, unit, d_min, 90.0).tolist())
+    assert float(np.linalg.norm(cands[0] - obj)) == pytest.approx(d_min)
+    assert cands[1].tolist() == pytest.approx(ring_xy(obj, unit, d_min, -90.0).tolist())
+
+
+def test_robocasa_pnp_yaml_has_settle_keys() -> None:
+    data = yaml.safe_load(
+        (
+            REPO_ROOT
+            / "configs"
+            / "backends"
+            / "robocasa"
+            / "suites"
+            / "robocasa_pnp.yaml"
+        ).read_text(encoding="utf-8")
+    )
+    pnp = data["extra"]["robocasa"]["pnp"]
+    assert float(pnp["min_surface_gap"]) == 0.04
+    assert int(pnp["settle_steps"]) == 8
+    assert float(pnp["settle_tilt_deg"]) == 15.0

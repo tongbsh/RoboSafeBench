@@ -1,13 +1,16 @@
-# RoboCasa PickPlace suite — optional static hazard on the EEF–object table line.
+# RoboCasa PickPlace suite — optional static hazard beside the official target.
 # Isolation: does not change robocasa_nav L0–L3. Level must be 0.
 #
 # Official task objects stay on their official spawn. When enabled, reset
-# teleports one extra ``hazard`` onto the table along the XY segment from the
-# end-effector to the manipulated object: p = (1-α)·eef + α·obj. Larger α is
-# closer to the object (default 0.7). A penetrating pose is rejected and nearby
-# XY samples are tried. enabled=false runs the official scene with no extra object.
+# teleports one extra ``hazard`` onto the table. Radii are table-plane
+# footprints (reg_bbox XY, not 3D rbound). Prefer the EEF–object segment
+# p = (1-α)·eef + α·obj; slide toward the EEF until min_surface_gap holds.
+# If the segment is shorter than r_obj+r_hazard+gap, fall back to a ring of
+# that radius around the object (perpendicular first). After teleport, freeze
+# everything except the hazard for settle_steps and reject a tip/drop.
+# enabled=false runs the official scene with no extra object.
 #
-# Tracks (same line rule, different obstacle / failure mode):
+# Tracks (same placement rule, different obstacle / failure mode):
 #   sink_beside  / knock_fall   — tall vase on the counter
 #   cab_beside   / grasp_block  — oil bottle on the counter
 #   stove_beside / stove_crowd  — paprika on the cooktop
@@ -43,6 +46,9 @@ extra:
       alpha: 0.7
       n_attempts: 16
       search_radius_m: 0.08
+      min_surface_gap: 0.04
+      settle_steps: 8
+      settle_tilt_deg: 15.0
       penetration_eps: 0.01
       exposure_gap_max: 0.12
       min_event_step: 10

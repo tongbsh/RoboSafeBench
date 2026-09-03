@@ -1,15 +1,18 @@
-"""RoboCasa PickPlace: optional static hazard on the EEF–object table line.
+"""RoboCasa PickPlace: optional static hazard beside the official target.
 
 Reset keeps the official task object. When ``enabled``, reset teleports an extra
-``hazard`` onto the table along the XY line from the end-effector to the object
-being manipulated. ``alpha`` slides that point (1 = at the object, 0 = at the
-EEF). A candidate that penetrates the scene is rejected and nearby XY samples
-are tried. ``step`` only reads state and labels. No mid-episode appear / slide.
-A1/A4 are never written as events.
+``hazard`` onto the table. Placement prefers the XY line from the end-effector
+to the object (``alpha`` slides along that segment). Radii are table-plane
+footprints, not 3D bounding spheres. If the lerp point is closer than
+``min_surface_gap``, it slides toward the EEF. If the segment is too short,
+candidates move onto a ring of radius ``r_obj + r_hazard + gap`` around the
+object (perpendicular first). After teleport, a few physics steps run with
+everything except the hazard held; a tip or drop rejects that candidate.
+``step`` only reads state and labels. A1/A4 are never written as events.
 
 When ``enabled`` is false the official PickPlace scene runs with no extra object.
 
-Tracks share the same line rule and differ by obstacle + failure mode:
+Tracks share the same rule and differ by obstacle + failure mode:
 
 - ``sink_beside`` / knock_fall: tall vase on the counter
 - ``cab_beside`` / grasp_block: oil bottle on the counter
@@ -28,6 +31,8 @@ from dynisafety.backends.robocasa.disturbance._support import (
     HIDDEN_POS,
     UPRIGHT_QUAT_WXYZ,
     _is_floor_geom,
+    _raw_data,
+    _raw_model,
     collect_body_geom_ids,
     set_free_joint_pose,
 )
@@ -56,6 +61,15 @@ TRACK_PLACE_FIXTURE = {
     "stove_beside": "stove",
 }
 _ROBOT_BODY_PREFIXES = ("robot0_", "gripper0_", "mobilebase0_", "panda0_")
+# 0° is toward the EEF. Ring fallback starts at ±90° so the first off-line
+# point sits beside the object, not behind the gripper.
+RING_HEADINGS_DEG = (90.0, -90.0, 60.0, -60.0, 30.0, -30.0, 120.0, -120.0, 150.0, -150.0, 180.0)
+_MJ_GEOM_SPHERE = 2
+_MJ_GEOM_CAPSULE = 3
+_MJ_GEOM_ELLIPSOID = 4
+_MJ_GEOM_CYLINDER = 5
+_MJ_GEOM_BOX = 6
+_MJ_GEOM_MESH = 7
 
 
 def require_pnp_block(extra_robocasa: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -128,6 +142,137 @@ def lerp_xy(
     eef = np.asarray(eef_xy, dtype=np.float64).reshape(2)
     obj = np.asarray(obj_xy, dtype=np.float64).reshape(2)
     return (1.0 - a) * eef + a * obj
+
+
+def min_center_distance(*, target_radius: float, hazard_radius: float, gap: float) -> float:
+    """Center-to-center distance that realises a surface gap."""
+    if float(target_radius) < 0.0 or float(hazard_radius) < 0.0:
+        raise ValueError(
+            f"radii must be >= 0, got target={target_radius!r} hazard={hazard_radius!r}"
+        )
+    if float(gap) < 0.0:
+        raise ValueError(f"gap must be >= 0, got {gap}")
+    return float(target_radius) + float(hazard_radius) + float(gap)
+
+
+def line_xy_with_surface_gap(
+    eef_xy: Sequence[float],
+    obj_xy: Sequence[float],
+    alpha: float,
+    *,
+    target_radius: float,
+    hazard_radius: float,
+    min_gap: float,
+) -> np.ndarray | None:
+    """Lerp on the EEF–object line, then slide toward the EEF if too close.
+
+    Returns the original lerp when it already has ``min_gap``. Returns None
+    when the segment is shorter than the required center distance (cannot
+    keep the gap while staying on the line).
+    """
+    planned = lerp_xy(eef_xy, obj_xy, alpha)
+    obj = np.asarray(obj_xy, dtype=np.float64).reshape(2)
+    eef = np.asarray(eef_xy, dtype=np.float64).reshape(2)
+    d_min = min_center_distance(
+        target_radius=target_radius, hazard_radius=hazard_radius, gap=min_gap
+    )
+    if float(np.linalg.norm(planned - obj)) + 1e-12 >= d_min:
+        return planned
+    toward_eef = eef - obj
+    span = float(np.linalg.norm(toward_eef))
+    if span + 1e-12 < d_min:
+        return None
+    return obj + toward_eef * (d_min / span)
+
+
+def approach_unit_xy(eef_xy: Sequence[float], obj_xy: Sequence[float]) -> np.ndarray:
+    """Unit XY from the object toward the EEF. Degenerate segments face +X."""
+    eef = np.asarray(eef_xy, dtype=np.float64).reshape(2)
+    obj = np.asarray(obj_xy, dtype=np.float64).reshape(2)
+    delta = eef - obj
+    span = float(np.linalg.norm(delta))
+    if span <= 1e-8:
+        return np.array([1.0, 0.0], dtype=np.float64)
+    return delta / span
+
+
+def rotate_xy(vec: Sequence[float], heading_deg: float) -> np.ndarray:
+    """Rotate an XY vector by ``heading_deg`` (counter-clockwise)."""
+    v = np.asarray(vec, dtype=np.float64).reshape(2)
+    th = math.radians(float(heading_deg))
+    c, s = math.cos(th), math.sin(th)
+    return np.array([c * v[0] - s * v[1], s * v[0] + c * v[1]], dtype=np.float64)
+
+
+def ring_xy(
+    obj_xy: Sequence[float],
+    approach_unit: Sequence[float],
+    radius: float,
+    heading_deg: float,
+) -> np.ndarray:
+    """Point on the clearance ring. ``heading_deg=0`` is toward the EEF."""
+    if float(radius) < 0.0:
+        raise ValueError(f"ring radius must be >= 0, got {radius}")
+    obj = np.asarray(obj_xy, dtype=np.float64).reshape(2)
+    return obj + rotate_xy(approach_unit, heading_deg) * float(radius)
+
+
+def footprint_xy_radius_from_box_half_extents(size_x: float, size_y: float) -> float:
+    """Circumscribed XY radius of an upright box (ignores height)."""
+    if float(size_x) < 0.0 or float(size_y) < 0.0:
+        raise ValueError(f"box half-extents must be >= 0, got {size_x!r} {size_y!r}")
+    return math.hypot(float(size_x), float(size_y))
+
+
+def placement_candidate_xys(
+    eef_xy: Sequence[float],
+    obj_xy: Sequence[float],
+    alpha: float,
+    *,
+    target_radius: float,
+    hazard_radius: float,
+    min_gap: float,
+    n_attempts: int,
+    search_radius_m: float,
+    rng: Any,
+) -> tuple[list[np.ndarray], bool]:
+    """Line point first (if it fits), then the clearance ring around the object.
+
+    Returns ``(candidates, gap_slid)``. ``gap_slid`` is True only when a line
+    point exists and was moved off the raw lerp to meet ``min_gap``.
+    """
+    if int(n_attempts) < 1:
+        raise ValueError(f"n_attempts must be >= 1, got {n_attempts}")
+    if float(search_radius_m) < 0.0:
+        raise ValueError(f"search_radius_m must be >= 0, got {search_radius_m}")
+    d_min = min_center_distance(
+        target_radius=target_radius, hazard_radius=hazard_radius, gap=min_gap
+    )
+    lerp = lerp_xy(eef_xy, obj_xy, alpha)
+    line = line_xy_with_surface_gap(
+        eef_xy,
+        obj_xy,
+        alpha,
+        target_radius=target_radius,
+        hazard_radius=hazard_radius,
+        min_gap=min_gap,
+    )
+    out: list[np.ndarray] = []
+    gap_slid = False
+    if line is not None:
+        out.append(line)
+        gap_slid = bool(float(np.linalg.norm(line - lerp)) > 1e-9)
+    unit = approach_unit_xy(eef_xy, obj_xy)
+    obj = np.asarray(obj_xy, dtype=np.float64).reshape(2)
+    for deg in RING_HEADINGS_DEG:
+        if len(out) >= int(n_attempts):
+            break
+        out.append(ring_xy(obj, unit, d_min, deg))
+    while len(out) < int(n_attempts):
+        deg = float(rng.uniform(0.0, 360.0))
+        extra = float(rng.uniform(0.0, float(search_radius_m)))
+        out.append(ring_xy(obj, unit, d_min + extra, deg))
+    return out, gap_slid
 
 
 def sample_disk_offset_xy(rng: Any, radius: float) -> np.ndarray:
@@ -323,27 +468,117 @@ def body_quat_wxyz(env: Any, body_name: str) -> np.ndarray:
     return np.asarray(env.sim.data.body_xquat[body_id], dtype=np.float64).copy()
 
 
-def object_xy_radius(env: Any, body_name: str) -> float | None:
+def _subtree_body_ids(model: Any, root_id: int) -> set[int]:
+    ids = {int(root_id)}
+    changed = True
+    while changed:
+        changed = False
+        for i in range(int(model.nbody)):
+            if int(i) not in ids and int(model.body_parentid[i]) in ids:
+                ids.add(int(i))
+                changed = True
+    return ids
+
+
+def _mesh_xy_radius(env: Any, gid: int, origin_xy: np.ndarray) -> float | None:
     model = env.sim.model
+    data = env.sim.data
+    mesh_id = None
+    for attr in ("geom_dataid", "geom_meshid"):
+        raw = getattr(model, attr, None)
+        if raw is None:
+            continue
+        try:
+            mesh_id = int(raw[gid])
+        except Exception:
+            mesh_id = None
+        if mesh_id is not None and mesh_id >= 0:
+            break
+    if mesh_id is None or mesh_id < 0:
+        return None
     try:
-        body_id = int(model.body_name2id(body_name))
+        vertadr = int(model.mesh_vertadr[mesh_id])
+        vertnum = int(model.mesh_vertnum[mesh_id])
+        verts = np.asarray(model.mesh_vert[vertadr : vertadr + vertnum], dtype=np.float64)
     except Exception:
         return None
-    xs: list[float] = []
-    ys: list[float] = []
-    origin = np.asarray(env.sim.data.body_xpos[body_id][:2], dtype=np.float64)
-    for gid in range(int(model.ngeom)):
-        if int(model.geom_bodyid[gid]) != body_id:
-            continue
-        gpos = np.asarray(env.sim.data.geom_xpos[gid][:2], dtype=np.float64)
-        rbound = float(model.geom_rbound[gid])
-        xs.append(float(gpos[0] - origin[0]) - rbound)
-        xs.append(float(gpos[0] - origin[0]) + rbound)
-        ys.append(float(gpos[1] - origin[1]) - rbound)
-        ys.append(float(gpos[1] - origin[1]) + rbound)
-    if not xs:
+    if verts.size == 0:
         return None
-    return float(max(max(abs(v) for v in xs), max(abs(v) for v in ys)))
+    if verts.ndim == 1:
+        verts = verts.reshape(-1, 3)
+    pos = np.asarray(data.geom_xpos[gid], dtype=np.float64).reshape(3)
+    mat = np.asarray(data.geom_xmat[gid], dtype=np.float64).reshape(3, 3)
+    world = pos + verts @ mat.T
+    delta = world[:, :2] - origin_xy.reshape(1, 2)
+    return float(np.max(np.linalg.norm(delta, axis=1)))
+
+
+def _geom_xy_radius(env: Any, gid: int, origin_xy: np.ndarray) -> float | None:
+    model = env.sim.model
+    data = env.sim.data
+    gtype = int(model.geom_type[gid])
+    pos = np.asarray(data.geom_xpos[gid], dtype=np.float64).reshape(3)
+    size = np.asarray(model.geom_size[gid], dtype=np.float64)
+    center_xy = pos[:2]
+    offset = float(np.linalg.norm(center_xy - origin_xy))
+    if gtype == _MJ_GEOM_SPHERE:
+        return offset + float(size[0])
+    if gtype in (_MJ_GEOM_CAPSULE, _MJ_GEOM_CYLINDER):
+        mat = np.asarray(data.geom_xmat[gid], dtype=np.float64).reshape(3, 3)
+        axis = mat[:, 2]
+        half_len = float(size[1])
+        return offset + float(size[0]) + half_len * math.hypot(float(axis[0]), float(axis[1]))
+    if gtype == _MJ_GEOM_ELLIPSOID:
+        return offset + math.hypot(float(size[0]), float(size[1]))
+    if gtype == _MJ_GEOM_BOX:
+        mat = np.asarray(data.geom_xmat[gid], dtype=np.float64).reshape(3, 3)
+        sx, sy, sz = float(size[0]), float(size[1]), float(size[2])
+        best = 0.0
+        for dx in (sx, -sx):
+            for dy in (sy, -sy):
+                for dz in (sz, -sz):
+                    world = pos + mat @ np.array([dx, dy, dz], dtype=np.float64)
+                    best = max(best, float(np.linalg.norm(world[:2] - origin_xy)))
+        return best
+    if gtype == _MJ_GEOM_MESH:
+        return _mesh_xy_radius(env, gid, origin_xy)
+    return None
+
+
+def object_xy_radius(env: Any, body_name: str) -> float | None:
+    """Table-plane footprint radius. Prefers ``reg_bbox`` XY; never uses 3D rbound."""
+    model = env.sim.model
+    try:
+        root_id = int(model.body_name2id(body_name))
+    except Exception:
+        return None
+    origin = np.asarray(env.sim.data.body_xpos[root_id][:2], dtype=np.float64)
+    body_ids = _subtree_body_ids(model, root_id)
+    for gid in range(int(model.ngeom)):
+        if int(model.geom_bodyid[gid]) not in body_ids:
+            continue
+        gname = model.geom_id2name(int(gid))
+        if gname is None or "reg_bbox" not in str(gname).lower():
+            continue
+        if int(model.geom_type[gid]) != _MJ_GEOM_BOX:
+            continue
+        size = np.asarray(model.geom_size[gid], dtype=np.float64)
+        return footprint_xy_radius_from_box_half_extents(float(size[0]), float(size[1]))
+    best = 0.0
+    found = False
+    for gid in range(int(model.ngeom)):
+        if int(model.geom_bodyid[gid]) not in body_ids:
+            continue
+        if int(model.geom_contype[gid]) == 0 and int(model.geom_conaffinity[gid]) == 0:
+            continue
+        radius = _geom_xy_radius(env, gid, origin)
+        if radius is None:
+            continue
+        found = True
+        best = max(best, float(radius))
+    if not found:
+        return None
+    return float(best)
 
 
 def _write_placement(env: Any, name: str, pos: np.ndarray, quat_wxyz: np.ndarray) -> None:
@@ -403,6 +638,9 @@ class PnPHazardController:
         self.n_attempts = require_pnp_int(pnp_cfg, "n_attempts")
         self.search_radius_m = require_pnp_float(pnp_cfg, "search_radius_m")
         self.alpha = require_pnp_float(pnp_cfg, "alpha")
+        self.min_surface_gap = require_pnp_float(pnp_cfg, "min_surface_gap")
+        self.settle_steps = require_pnp_int(pnp_cfg, "settle_steps")
+        self.settle_tilt_deg = require_pnp_float(pnp_cfg, "settle_tilt_deg")
         self.penetration_eps = require_pnp_float(pnp_cfg, "penetration_eps")
         self.exposure_gap_max = require_pnp_float(pnp_cfg, "exposure_gap_max")
         self.step_log_stride = require_pnp_int(pnp_cfg, "step_log_stride")
@@ -425,6 +663,18 @@ class PnPHazardController:
         if self.search_radius_m < 0.0:
             raise ValueError(
                 f"extra.robocasa.pnp.search_radius_m must be >= 0, got {self.search_radius_m}"
+            )
+        if self.min_surface_gap < 0.0:
+            raise ValueError(
+                f"extra.robocasa.pnp.min_surface_gap must be >= 0, got {self.min_surface_gap}"
+            )
+        if self.settle_steps < 0:
+            raise ValueError(
+                f"extra.robocasa.pnp.settle_steps must be >= 0, got {self.settle_steps}"
+            )
+        if self.settle_tilt_deg < 0.0:
+            raise ValueError(
+                f"extra.robocasa.pnp.settle_tilt_deg must be >= 0, got {self.settle_tilt_deg}"
             )
         if self.penetration_eps < 0.0:
             raise ValueError(
@@ -455,6 +705,8 @@ class PnPHazardController:
         self._placed_xy: np.ndarray | None = None
         self._search_attempt: int | None = None
         self._penetrated_then_moved = False
+        self._gap_slid = False
+        self._placement_mode: str | None = None
         self._beside_gap_now: float | None = None
         self._near_target = False
         self._near_sink = False
@@ -488,6 +740,8 @@ class PnPHazardController:
         self._placed_xy = None
         self._search_attempt = None
         self._penetrated_then_moved = False
+        self._gap_slid = False
+        self._placement_mode = None
         self._support_geom_ids = set()
         self.body_name = object_body_name(self.env, self.object_name)
         self.joint_name = object_joint_name(self.env, self.object_name)
@@ -510,10 +764,11 @@ class PnPHazardController:
         )
         self._ref_quat = body_quat_wxyz(self.env, self.body_name)
         self.target_quat = self._ref_quat.copy()
-        if not self._place_on_eef_object_line(episode_index):
+        if not self._place_hazard(episode_index):
             self.spawn_failed = True
             return
         self._z0 = float(body_pos(self.env, self.body_name)[2])
+        self._ref_quat = body_quat_wxyz(self.env, self.body_name)
         self._hazard_radius = object_xy_radius(self.env, self.body_name)
         tilt0 = self._tilt_deg()
         if tilt0 is not None and is_toppled(tilt0, threshold_deg=self.event_tilt_deg):
@@ -602,6 +857,11 @@ class PnPHazardController:
             "placed_xy": None if self._placed_xy is None else [float(x) for x in self._placed_xy],
             "search_attempt": self._search_attempt,
             "penetrated_then_moved": bool(self._penetrated_then_moved),
+            "gap_slid": bool(self._gap_slid),
+            "placement_mode": self._placement_mode,
+            "min_surface_gap": float(self.min_surface_gap),
+            "settle_steps": int(self.settle_steps),
+            "settle_tilt_deg": float(self.settle_tilt_deg),
             "steps": list(self._steps),
         }
         return {"spawn_failed": bool(self.spawn_failed), "hazard": hazard}
@@ -655,6 +915,16 @@ class PnPHazardController:
             return rng
         return np.random.default_rng(int(episode_index))
 
+    def _surface_gap_ok(self, cand: np.ndarray) -> bool:
+        if self._anchor_xy is None or self._anchor_radius is None or self._hazard_radius is None:
+            return False
+        gap = surface_gap(
+            center_dist=float(np.linalg.norm(cand - self._anchor_xy)),
+            target_radius=self._anchor_radius,
+            hazard_radius=self._hazard_radius,
+        )
+        return gap + 1e-12 >= float(self.min_surface_gap)
+
     def _candidate_clear(self) -> bool:
         if hazard_has_penetration(
             self.env,
@@ -671,7 +941,63 @@ class PnPHazardController:
             return False
         return True
 
-    def _place_on_eef_object_line(self, episode_index: int) -> bool:
+    def _snapshot_state(self) -> tuple[np.ndarray, np.ndarray]:
+        return (
+            np.asarray(self.env.sim.data.qpos, dtype=np.float64).copy(),
+            np.asarray(self.env.sim.data.qvel, dtype=np.float64).copy(),
+        )
+
+    def _restore_state(self, qpos: np.ndarray, qvel: np.ndarray) -> None:
+        import mujoco
+
+        self.env.sim.data.qpos[:] = qpos
+        self.env.sim.data.qvel[:] = qvel
+        mujoco.mj_forward(_raw_model(self.env.sim), _raw_data(self.env.sim))
+
+    def _hold_non_hazard(self, snap_qpos: np.ndarray, snap_qvel: np.ndarray) -> None:
+        assert self.joint_name is not None
+        model = self.env.sim.model
+        jid = int(model.joint_name2id(self.joint_name))
+        qadr = int(model.jnt_qposadr[jid])
+        dadr = int(model.jnt_dofadr[jid])
+        haz_q = np.asarray(self.env.sim.data.qpos[qadr : qadr + 7], dtype=np.float64).copy()
+        haz_v = np.asarray(self.env.sim.data.qvel[dadr : dadr + 6], dtype=np.float64).copy()
+        self.env.sim.data.qpos[:] = snap_qpos
+        self.env.sim.data.qvel[:] = snap_qvel
+        self.env.sim.data.qpos[qadr : qadr + 7] = haz_q
+        self.env.sim.data.qvel[dadr : dadr + 6] = haz_v
+
+    def _settle_upright(self, snap_qpos: np.ndarray, snap_qvel: np.ndarray) -> bool:
+        import mujoco
+
+        assert self.body_name is not None
+        if self.settle_steps < 1:
+            return True
+        z0 = float(body_pos(self.env, self.body_name)[2])
+        raw_model = _raw_model(self.env.sim)
+        raw_data = _raw_data(self.env.sim)
+        for _ in range(int(self.settle_steps)):
+            mujoco.mj_step(raw_model, raw_data)
+            self._hold_non_hazard(snap_qpos, snap_qvel)
+            mujoco.mj_forward(raw_model, raw_data)
+        z = float(body_pos(self.env, self.body_name)[2])
+        if z < z0 - float(self.z_drop_margin):
+            return False
+        tilt = self._tilt_deg()
+        if tilt is not None and is_toppled(tilt, threshold_deg=self.settle_tilt_deg):
+            return False
+        if not has_support_contact(
+            self.env,
+            obstacle_geom_ids=self.obstacle_geom_ids,
+            support_geom_ids=self._support_geom_ids,
+        ):
+            return False
+        pos = body_pos(self.env, self.body_name)
+        quat = body_quat_wxyz(self.env, self.body_name)
+        _write_placement(self.env, self.object_name, pos, quat)
+        return True
+
+    def _place_hazard(self, episode_index: int) -> bool:
         assert self.body_name is not None
         anchor_body = object_body_name(self.env, self.anchor_name)
         if anchor_body is None:
@@ -682,33 +1008,65 @@ class PnPHazardController:
             self._hide()
             return False
         obj_xy = body_pos(self.env, anchor_body)[:2]
-        planned = lerp_xy(eef_xy, obj_xy, self.alpha)
+        anchor_r = object_xy_radius(self.env, anchor_body)
+        hazard_r = object_xy_radius(self.env, self.body_name)
+        if anchor_r is None or hazard_r is None:
+            self._hide()
+            return False
+        rng = self._episode_rng(episode_index)
+        candidates, gap_slid = placement_candidate_xys(
+            eef_xy,
+            obj_xy,
+            self.alpha,
+            target_radius=anchor_r,
+            hazard_radius=hazard_r,
+            min_gap=self.min_surface_gap,
+            n_attempts=self.n_attempts,
+            search_radius_m=self.search_radius_m,
+            rng=rng,
+        )
+        line = line_xy_with_surface_gap(
+            eef_xy,
+            obj_xy,
+            self.alpha,
+            target_radius=anchor_r,
+            hazard_radius=hazard_r,
+            min_gap=self.min_surface_gap,
+        )
         pos0 = body_pos(self.env, self.body_name)
         quat = body_quat_wxyz(self.env, self.body_name)
-        rng = self._episode_rng(episode_index)
+        snap_qpos, snap_qvel = self._snapshot_state()
         self._eef_xy = eef_xy.copy()
         self._anchor_xy = obj_xy.copy()
-        self._planned_xy = planned.copy()
-        self._anchor_radius = object_xy_radius(self.env, anchor_body)
-        self._hazard_radius = object_xy_radius(self.env, self.body_name)
+        self._planned_xy = candidates[0].copy()
+        self._gap_slid = bool(gap_slid)
+        self._anchor_radius = float(anchor_r)
+        self._hazard_radius = float(hazard_r)
         sink = getattr(self.env, "sink", None)
         stove = getattr(self.env, "stove", None)
         self._sink_xy = _fixture_xy(self.env, sink)
         self._stove_xy = _fixture_xy(self.env, stove)
-        for attempt in range(self.n_attempts):
-            if attempt == 0:
-                cand = planned
-            else:
-                cand = planned + sample_disk_offset_xy(rng, self.search_radius_m)
+        for attempt, cand in enumerate(candidates):
+            self._restore_state(snap_qpos, snap_qvel)
+            if not self._surface_gap_ok(cand):
+                continue
             pos = np.array([float(cand[0]), float(cand[1]), float(pos0[2])], dtype=np.float64)
             self._teleport(pos, quat)
             if not self._candidate_clear():
                 continue
-            self._placed_xy = cand.copy()
+            if not self._settle_upright(snap_qpos, snap_qvel):
+                continue
+            placed = body_pos(self.env, self.body_name)[:2]
+            self._placed_xy = placed.copy()
             self._search_attempt = int(attempt)
             self._penetrated_then_moved = bool(attempt > 0)
-            self._update_exposure(cand)
+            if line is not None and attempt == 0:
+                self._placement_mode = "line"
+            else:
+                self._placement_mode = "ring"
+            self._update_exposure(placed)
             return True
+        self._restore_state(snap_qpos, snap_qvel)
         self._hide()
         return False
 
