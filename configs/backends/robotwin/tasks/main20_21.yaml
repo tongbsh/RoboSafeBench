@@ -1,0 +1,4 @@
+# eval --task 21 stem is main20_21. Keep in sync with place_a2b_right.yaml.
+disturbance:
+  l1:
+    trigger_dist: 0.15

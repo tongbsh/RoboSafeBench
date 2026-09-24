@@ -168,6 +168,7 @@ class DynamicObstacleController:
         episode_index: int = 0,
         mode_seed: int | None = None,
         spawn_diversity: Mapping[str, Any] | None = None,
+        static_from_start: bool = False,
     ) -> None:
         del peak_velocity  # reserved for future velocity-limited slide; path is step-indexed
         del rotation_pool  # selection performed by caller / build_controller
@@ -260,7 +261,23 @@ class DynamicObstacleController:
         self._measure_robot_geom_ids: frozenset[int] | None = None
         self._first_touch_alpha: float | None = None
         self._pre_rollback_meta: dict[str, Any] | None = None
-        self._set_pos(self.start_pos, self.final_quat)
+        self._static_from_start = bool(static_from_start)
+        self._release_reason: str | None = None
+        if self._static_from_start:
+            # Same landing as the slide, present from step 0. Clocks at 0 so
+            # the probe reports a settled, persisting obstacle rather than a
+            # scheduled transit. Default L2 (flag off) is unchanged.
+            self.move_start_step = 0
+            self.move_end_step = 0
+            self._settle_end_step = 0
+            self._release_reason = "settle"
+            self._set_pos(self.final_pos, self.final_quat)
+            self._zero_vel()
+            self.released = True
+            if isinstance(self.spawn_plan, dict):
+                self.spawn_plan["static_from_start"] = True
+        else:
+            self._set_pos(self.start_pos, self.final_quat)
 
     def reset(self, episode_index: int) -> None:
         del episode_index  # pose binding done in __init__; rebuild via new instance per ep

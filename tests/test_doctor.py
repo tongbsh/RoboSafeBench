@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+import pytest
+
 from dynisafety.cli.doctor import (
     BACKEND_ENV_NAME,
     check_assets,
@@ -108,7 +110,10 @@ def test_smoke_robocasa_suite_expands_one_l0_cell() -> None:
 
 def test_debug_xvla_dynamic_suite_is_paper_main_slice() -> None:
     configs = REPO_ROOT / "configs"
-    path = resolve_suite_path("debug_xvla_dynamic", configs_root=configs)
+    try:
+        path = resolve_suite_path("debug_xvla_dynamic", configs_root=configs)
+    except FileNotFoundError:
+        pytest.skip("local debug suite")
     suite = load_sweep_suite(path)
     jobs = expand_jobs(suite, configs_root=configs)
     assert suite.name == "debug_xvla_dynamic"
@@ -140,6 +145,44 @@ def test_paper_main_does_not_include_robocasa() -> None:
         encoding="utf-8"
     )
     assert "robocasa" not in text.lower()
+
+
+def test_libero_pi05_oracle_swr_aegis_suite_matches_paper_main_libero() -> None:
+    """Extension matrix: the safety-layer arm must cover exactly the base cells.
+
+    Base-vs-Oracle is a paired comparison, so the extension has to line up
+    cell-for-cell with the π₀.₅ arm it is compared against. paper_main runs
+    LIBERO at three seeds to report hazard-realisation variance; the
+    extension uses the same seeds.
+    """
+    configs = REPO_ROOT / "configs"
+    try:
+        path = resolve_suite_path("libero_pi05_oracle_swr_aegis", configs_root=configs)
+    except FileNotFoundError:
+        pytest.skip("local experiment suite")
+    suite = load_sweep_suite(path)
+    jobs = expand_jobs(suite, configs_root=configs)
+    paper = expand_jobs(
+        load_sweep_suite(resolve_suite_path("paper_main", configs_root=configs)),
+        configs_root=configs,
+    )
+    ext_seeds = {j.seed for j in jobs}
+    paper_pi05 = [
+        j
+        for j in paper
+        if j.backend == "libero" and j.model == "pi05" and j.seed in ext_seeds
+    ]
+    assert suite.name == "libero_pi05_oracle_swr_aegis"
+    assert suite.episodes_per_task == 50
+    assert len(jobs) == 192
+    assert len(paper_pi05) == 192
+    assert {j.episodes for j in jobs} == {50}
+    assert ext_seeds == {1, 7, 2007}
+    assert {j.model for j in jobs} == {"pi05_oracle_swr_aegis"}
+    assert {j.backend for j in jobs} == {"libero"}
+    ext_cells = {(j.suite, j.task_id, j.level, j.seed) for j in jobs}
+    paper_cells = {(j.suite, j.task_id, j.level, j.seed) for j in paper_pi05}
+    assert ext_cells == paper_cells
 
 
 def test_docs_do_not_port_libero_disturbances_into_robocasa() -> None:

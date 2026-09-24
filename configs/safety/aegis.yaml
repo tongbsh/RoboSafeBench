@@ -43,6 +43,10 @@ aegis:
   # Gripper dimension in delta_ee_7d / abs_ee_7d (never rewritten by the QP).
   gripper_index: 6
 
+  # ``full``: 6D motion + z (main_aegis.py). ``translational``: xyz only,
+  # rotation forced to 0 (main_aegis_translational.py; SafeLIBERO headline).
+  motion_mode: full
+
   # Numerical tolerances for debug flags (constraint_active / intervened).
   slack_active_eps: 1.0e-8
   intervene_atol: 1.0e-6

@@ -15,6 +15,7 @@ from dynisafety.backends.libero.contact import (
     collect_obstacle_geom_ids,
     collect_robot_geom_ids,
     collect_task_object_geom_ids,
+    libero_records_topple,
     measure_libero_episode_contact,
     measure_tilt_deg,
     merge_pre_rollback_contact,
@@ -25,6 +26,7 @@ from dynisafety.backends.libero.env import (
     build_video_path,
     dummy_action,
     ensure_libero_sys_path,
+    get_capture_cameras,
     get_primary_image,
     get_wrist_image,
     make_libero_env,
@@ -40,10 +42,22 @@ from dynisafety.backends.libero.obstacle_pack import (
     plan_for_task,
     with_remesh,
 )
-from dynisafety.backends.libero.safety import LiberoAegisSession, LiberoOracleSession
+from dynisafety.backends.libero.safety import (
+    LiberoAegisSession,
+    LiberoOracleSession,
+    LiberoYieldHomeSession,
+    aegis_enabled_from_extra,
+)
 from dynisafety.backends.libero.safety.phases import probe_controller_phase
+from dynisafety.backends.libero.safety.yield_home import (
+    apply_arm_qpos,
+    extend_sim_step_cap,
+    refresh_libero_obs,
+    reset_task_horizon_clock,
+)
+from dynisafety.capture import CaptureSession
 from dynisafety.config.schema import MISSING, RunConfig
-from dynisafety.core.contact import is_toppled, resolve_force_equiv_dt
+from dynisafety.core.contact import is_force_anomaly, is_toppled, resolve_force_equiv_dt
 from dynisafety.core.episode import EpisodeRecord
 from dynisafety.core.metrics import EpisodeMetricsBuilder
 from dynisafety.core.protocols import BackendCapabilities, EnvHandle, TaskSpec
@@ -108,6 +122,14 @@ def _sim_step_cap(handle: LiberoEnvHandle, *, max_steps: int, num_steps_wait: in
         floor = int(num_steps_wait) + int(max_steps)
         cap = min(cap, max(int(horizon) - 1, floor))
     return cap
+
+
+def _env_horizon(handle: LiberoEnvHandle) -> int | None:
+    env = handle.env
+    horizon = getattr(env, "horizon", None)
+    if horizon is None:
+        horizon = getattr(getattr(env, "env", None), "horizon", None)
+    return None if horizon is None else int(horizon)
 
 
 def _suite_max_steps(suite: str, *, workspace: Path | None = None) -> int:
@@ -483,6 +505,16 @@ class LiberoBackend:
         metrics_cfg = cfg.metrics
         if metrics_cfg is MISSING:
             raise ValueError("cfg.metrics is MISSING")
+        force_anomaly_n = metrics_cfg.force_anomaly_threshold_n
+        impulse_anomaly_ns = metrics_cfg.impulse_anomaly_threshold_ns
+        if force_anomaly_n is MISSING or impulse_anomaly_ns is MISSING:
+            raise ValueError(
+                "metrics.force_anomaly_threshold_n and "
+                "metrics.impulse_anomaly_threshold_ns required (YAML)"
+            )
+        force_anomaly_n = float(force_anomaly_n)
+        impulse_anomaly_ns = float(impulse_anomaly_ns)
+        force_anomaly_any = False
 
         t0 = time.perf_counter()
         handle.env.reset()
@@ -561,16 +593,26 @@ class LiberoBackend:
         if act_policy is not policy:
             act_policy.reset(ctx)
 
-        # Prompt A1: optional AEGIS after oracle (explicit extra.libero.aegis.enabled).
-        # Disabled → zero-overhead skip (no filter object / no ellipsoid work).
+        # Yield-home before AEGIS: CBF is post-resume only when yield applies
+        # (parked L2 residual). Oracle SWR stays mutually exclusive with yield.
+        yield_session = LiberoYieldHomeSession.create(
+            cfg=cfg,
+            extra_libero=self._extra_libero,
+            oracle_enabled=oracle_session.enabled,
+            aegis_enabled=aegis_enabled_from_extra(self._extra_libero),
+        )
         aegis_session = LiberoAegisSession.create(
             cfg=cfg,
             extra_libero=self._extra_libero,
             oracle_enabled=oracle_session.enabled,
             instruction=handle.task_description,
+            yield_home_enabled=yield_session.applies_to_level(),
         )
+        if isinstance(obs, Mapping):
+            yield_session.capture_home_if_needed(obs)
 
         action_queue = ActionChunkQueue(bound.chunk_size)
+        last_gripper: float | None = None
         arm_geom_ids = collect_robot_geom_ids(handle.env)
         # L1/L2 metrics: obstacle vs arm ∪ task objects (bowl contact is logged).
         # L3 person-safety metrics use arm/gripper only (see measure_l3_person_contact_step).
@@ -594,7 +636,11 @@ class LiberoBackend:
 
         topple_body_name: str | None = None
         topple_ref_quat: np.ndarray | None = None
-        if controller is not None and hasattr(controller, "_body_id"):
+        if (
+            libero_records_topple(level)
+            and controller is not None
+            and hasattr(controller, "_body_id")
+        ):
             body_id = int(controller._body_id)  # noqa: SLF001
             topple_body_name = handle.env.env.sim.model.body_id2name(body_id)
             if hasattr(controller, "final_quat"):
@@ -609,6 +655,11 @@ class LiberoBackend:
             bound=bound,
             controller=controller,
         )
+        capture_session = CaptureSession.create(
+            cfg,
+            episode_index=episode_index,
+            bound=bound,
+        )
         frames: list[np.ndarray] = []
         save_video = resolve_save_video(cfg)
 
@@ -618,6 +669,7 @@ class LiberoBackend:
         t = 0
         task_steps_done = 0
         vla_budget_used = 0
+        vla_budget_total = 0
         vla_budget_exempt_steps = 0
         sim_step_cap = _sim_step_cap(handle, max_steps=max_steps, num_steps_wait=num_steps_wait)
 
@@ -644,13 +696,85 @@ class LiberoBackend:
                 # reuse the same ndarray buffers in place.
                 step_eef_pos = copy_vec(obs["robot0_eef_pos"])
                 step_eef_quat = copy_vec(obs["robot0_eef_quat"])
+                # WRM extras: only copy images / joints when capture is on.
+                # get_*_image reads obs already in hand — no extra render.
+                if capture_session.enabled:
+                    step_joint = copy_vec(
+                        obs["robot0_joint_pos"]
+                        if "robot0_joint_pos" in obs
+                        else obs.get("robot0_joint_positions")
+                    )
+                    try:
+                        step_cameras = get_capture_cameras(handle.env, obs)
+                        if not step_cameras:
+                            step_cameras = None
+                    except Exception:
+                        step_cameras = None
+                    if capture_session.wants_images:
+                        try:
+                            step_primary = np.asarray(get_primary_image(obs)).copy()
+                        except Exception:
+                            step_primary = None
+                        try:
+                            step_wrist = np.asarray(get_wrist_image(obs)).copy()
+                        except Exception:
+                            step_wrist = None
+                    else:
+                        step_primary = None
+                        step_wrist = None
+                else:
+                    step_joint = None
+                    step_primary = None
+                    step_wrist = None
+                    step_cameras = None
 
                 observation: Observation | None = None
-                if oracle_session.enabled or len(action_queue) == 0:
+                phase_probe = None
+                if yield_session.enabled or aegis_session.enabled:
+                    phase_probe = probe_controller_phase(
+                        controller,
+                        level=level,
+                        task_step=task_step,
+                        settle_steps=aegis_session.settle_steps,
+                    )
+                yield_taking = yield_session.should_takeover(
+                    None if phase_probe is None else phase_probe.phase,
+                    controller=controller,
+                    task_step=task_step,
+                )
+                if yield_session.consume_resume_clear(taking=yield_taking):
+                    action_queue.clear()
+                    if aegis_session.filter is not None:
+                        # Re-init separating axis from the home pose, like a
+                        # fresh SafeLIBERO episode (upstream main_aegis.py).
+                        aegis_session.filter.reset()
+                    if yield_session.should_reset_task_clock():
+                        reset_task_horizon_clock(handle.env)
+                        vla_budget_used = 0
+                        sim_step_cap = extend_sim_step_cap(
+                            current_t=t,
+                            max_steps=max_steps,
+                            current_cap=sim_step_cap,
+                            horizon=_env_horizon(handle),
+                        )
+                        yield_session.note_clock_reset(wall_task_step=task_step)
+                        act_policy.reset(ctx)
+                # Disturbance / diagnostics keep the wall ``task_step``. After a
+                # yield resume the VLA and robosuite horizon counters restart so
+                # the policy still has a full ``max_steps`` from home.
+                policy_step = (
+                    vla_budget_used
+                    if yield_session.should_reset_task_clock()
+                    else task_step
+                )
+                if yield_taking:
+                    action_queue.clear()
+                    budget_exempt = True
+                elif oracle_session.enabled or len(action_queue) == 0:
                     observation = _build_observation(
                         obs,
                         instruction=handle.task_description,
-                        step=task_step,
+                        step=policy_step,
                         needs_wrist=self._needs_wrist,
                         needs_state=self._needs_state,
                         handle=handle,
@@ -674,50 +798,59 @@ class LiberoBackend:
                 ):
                     action_queue.clear()
 
-                if len(action_queue) == 0:
-                    if observation is None:
-                        raise RuntimeError("LIBERO act requested without Observation")
-                    chunk = act_policy.act(observation)
-                    oracle_session.note_after_act()
-                    converted = _apply_action_chunk(
-                        handle,
-                        chunk,
-                        obs=obs,
-                        configured_space=self._configured_action_space,
-                        task_step=task_step,
-                        warmup_steps=self._warmup_steps,
-                        post_warmup_space=self._post_warmup_space,
-                    )
-                    action_queue.refill(converted)
-
-                action = action_queue.popleft()
-                if aegis_session.enabled:
-                    # Phase from the same god-view probe Oracle uses; filter only
-                    # when activate_after allows (settled_or_done with oracle on).
-                    phase_probe = probe_controller_phase(
-                        controller,
-                        level=level,
-                        task_step=task_step,
-                        settle_steps=aegis_session.settle_steps,
-                    )
-                    # Space of the queued row matches conversion at enqueue time;
-                    # with no mid-chunk warmup switch this equals current effective.
-                    action_space_now = effective_action_space(
-                        configured_space=str(self._configured_action_space),
-                        step=task_step,
-                        warmup_steps=self._warmup_steps,
-                        post_warmup_space=self._post_warmup_space,
-                    )
-                    action = aegis_session.maybe_filter_action(
-                        action,
-                        obs=obs if isinstance(obs, Mapping) else {},
-                        env=handle.env,
+                action_space_now = effective_action_space(
+                    configured_space=str(self._configured_action_space),
+                    step=policy_step,
+                    warmup_steps=self._warmup_steps,
+                    post_warmup_space=self._post_warmup_space,
+                )
+                if yield_taking:
+                    action = yield_session.command(
+                        obs if isinstance(obs, Mapping) else {},
                         controller=controller,
-                        task_step=task_step,
-                        probe_phase=phase_probe.phase,
                         action_space=action_space_now,
+                        last_gripper=last_gripper,
                     )
-                obs, _reward, done, _info = handle.env.step(action.tolist())
+                    _set_use_delta(handle, use_delta=(action_space_now == "delta_ee_7d"))
+                    if yield_session.pending_qpos is not None:
+                        apply_arm_qpos(handle.env, yield_session.pending_qpos)
+                else:
+                    if len(action_queue) == 0:
+                        if observation is None:
+                            raise RuntimeError("LIBERO act requested without Observation")
+                        chunk = act_policy.act(observation)
+                        oracle_session.note_after_act()
+                        converted = _apply_action_chunk(
+                            handle,
+                            chunk,
+                            obs=obs,
+                            configured_space=self._configured_action_space,
+                            task_step=policy_step,
+                            warmup_steps=self._warmup_steps,
+                            post_warmup_space=self._post_warmup_space,
+                        )
+                        action_queue.refill(converted)
+
+                    action = action_queue.popleft()
+                    if aegis_session.enabled and yield_session.allows_aegis_filter():
+                        # Phase from the same god-view probe Oracle uses; filter only
+                        # when activate_after allows. Yield-home defers this until
+                        # resume so CBF never fights the joint snap.
+                        action = aegis_session.maybe_filter_action(
+                            action,
+                            obs=obs if isinstance(obs, Mapping) else {},
+                            env=handle.env,
+                            controller=controller,
+                            task_step=task_step,
+                            probe_phase=None if phase_probe is None else phase_probe.phase,
+                            action_space=action_space_now,
+                        )
+                if np.asarray(action).shape[-1] >= 7:
+                    last_gripper = float(np.asarray(action, dtype=np.float64).reshape(-1)[6])
+                obs, step_reward, done, _info = handle.env.step(action.tolist())
+                if yield_taking and yield_session.pending_qpos is not None:
+                    apply_arm_qpos(handle.env, yield_session.pending_qpos)
+                    obs = refresh_libero_obs(handle.env)
                 if np.any(np.isnan(handle.env.env.sim.data.qpos)):
                     termination = "sim_unstable"
                     break
@@ -751,6 +884,18 @@ class LiberoBackend:
                         )
                 contact = merge_pre_rollback_contact(contact, pre_rollback)
 
+                # MuJoCo penetration recovery can turn one step's impulse into
+                # a kilonewton "force". Latch it so the episode is reported as
+                # a solver artefact instead of contributing silently to the
+                # force tail. The force fields themselves are left untouched.
+                if is_force_anomaly(
+                    force_n=float(contact.force_n),
+                    impulse_ns=float(contact.impulse_ns),
+                    force_threshold_n=force_anomaly_n,
+                    impulse_threshold_ns=impulse_anomaly_ns,
+                ):
+                    force_anomaly_any = True
+
                 builder.update_contact(
                     in_contact=contact.in_contact,
                     force_n=contact.force_n,
@@ -766,11 +911,28 @@ class LiberoBackend:
                     force_n=contact.force_n,
                     impulse_ns=contact.impulse_ns,
                 )
+                capture_session.record_step(
+                    t=task_step,
+                    eef_pos=step_eef_pos,
+                    eef_quat=step_eef_quat,
+                    action=action,
+                    in_contact=contact.in_contact,
+                    force_n=contact.force_n,
+                    reward=step_reward,
+                    joint_position=step_joint,
+                    primary=step_primary,
+                    wrist=step_wrist,
+                    cameras=step_cameras,
+                )
 
                 drop_live = True
                 if controller is not None and hasattr(controller, "_dropped"):
                     drop_live = bool(controller._dropped)  # noqa: SLF001
-                if topple_body_name is not None and drop_live:
+                if (
+                    libero_records_topple(level)
+                    and topple_body_name is not None
+                    and drop_live
+                ):
                     tilt = measure_tilt_deg(
                         handle.env,
                         topple_body_name,
@@ -786,6 +948,7 @@ class LiberoBackend:
                     vla_budget_exempt_steps += 1
                 else:
                     vla_budget_used += 1
+                    vla_budget_total += 1
                 if done:
                     success = True
                     success_step = task_step
@@ -808,6 +971,17 @@ class LiberoBackend:
             success=success,
             success_step=success_step,
             metrics=metrics,
+        )
+        capture_session.finalize(
+            success=success,
+            success_step=success_step,
+            termination=termination,
+            metrics=metrics,
+            task_id=handle.task_id,
+            task_name=handle.task_name,
+            instruction=handle.task_description,
+            checkpoint=str(cfg.checkpoint),
+            config_hash=bound.config_hash,
         )
 
         video_path: str | None = None
@@ -837,13 +1011,17 @@ class LiberoBackend:
                 controller.active_obstacle_name if controller is not None else None
             ),
             "num_steps_wait": num_steps_wait,
-            "vla_budget_steps": int(vla_budget_used),
+            "vla_budget_steps": int(vla_budget_total),
             "vla_budget_exempt_steps": int(vla_budget_exempt_steps),
+            "force_anomaly": bool(force_anomaly_any),
         }
         if controller is not None:
             plan = getattr(controller, "l3_plan", None)
             if isinstance(plan, dict) and plan:
                 extra["l3_plan"] = dict(plan)
+            onset_plan = getattr(controller, "onset_plan", None)
+            if isinstance(onset_plan, dict) and onset_plan:
+                extra["onset_plan"] = dict(onset_plan)
             spawn_plan = getattr(controller, "spawn_plan", None)
             if isinstance(spawn_plan, dict) and spawn_plan:
                 extra["spawn_plan"] = dict(spawn_plan)
@@ -874,6 +1052,7 @@ class LiberoBackend:
             }
         extra.update(oracle_session.episode_extra())
         extra.update(aegis_session.episode_extra())
+        extra.update(yield_session.episode_extra())
         # Stamp matrix condition from resolved --set extra.feasibility_condition=...
         # (Prompt 14/A2; previously missing from EpisodeRecord.extra).
         fc = self._resolved_extra.get("feasibility_condition")

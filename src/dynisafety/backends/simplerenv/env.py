@@ -260,6 +260,71 @@ def get_primary_image(
     return np.asarray(get_image_from_maniskill2_obs_dict(env, obs, camera_name=camera_name))
 
 
+def resolve_primary_camera_name(env: Any, camera_name: str | None) -> str | None:
+    """Same id as ``get_image_from_maniskill2_obs_dict`` when ``camera_name`` is None."""
+    if camera_name:
+        return str(camera_name)
+    uid = getattr(getattr(env, "unwrapped", env), "robot_uid", None)
+    if uid is None:
+        uid = getattr(env, "robot_uid", None)
+    text = str(uid or "")
+    if "google_robot" in text:
+        return "overhead_camera"
+    if "widowx" in text:
+        return "3rd_view_camera"
+    return None
+
+
+def get_capture_cameras(
+    env: Any,
+    obs: Mapping[str, Any] | None,
+    *,
+    camera_name: str | None,
+) -> dict[str, dict[str, Any]]:
+    """Official ManiSkill2 ``camera_param`` for the eval third-person camera."""
+    if not isinstance(obs, Mapping):
+        return {}
+    params = obs.get("camera_param")
+    if not isinstance(params, Mapping) or not params:
+        return {}
+    name = resolve_primary_camera_name(env, camera_name)
+    if name is None or name not in params:
+        name = next(iter(params))
+    cam = params.get(name)
+    if not isinstance(cam, Mapping):
+        return {}
+    try:
+        K = np.asarray(cam["intrinsic_cv"], dtype=np.float64)
+        T_cw = np.asarray(cam["extrinsic_cv"], dtype=np.float64)
+    except (KeyError, TypeError, ValueError):
+        return {}
+    if K.shape != (3, 3) or T_cw.shape != (4, 4):
+        return {}
+    width = 0
+    height = 0
+    image = obs.get("image")
+    if isinstance(image, Mapping):
+        raw = image.get(name)
+        rgb = raw.get("rgb") if isinstance(raw, Mapping) else raw
+        try:
+            arr = np.asarray(rgb)
+        except (TypeError, ValueError):
+            arr = None
+        if arr is not None and arr.ndim >= 2:
+            height, width = int(arr.shape[0]), int(arr.shape[1])
+    return {
+        "primary": {
+            "name": str(name),
+            "K": K.copy(),
+            "T_cw": T_cw.copy(),
+            "width": width,
+            "height": height,
+            "convention": "opencv",
+            "image_transform": "identity",
+        }
+    }
+
+
 def get_eef_pos(env: Any) -> np.ndarray:
     """EEF world position from ManiSkill2 agent (or obs fallback)."""
     inner = getattr(env, "unwrapped", env)

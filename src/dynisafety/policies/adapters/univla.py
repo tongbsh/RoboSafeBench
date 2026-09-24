@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 import numpy as np
@@ -26,11 +27,16 @@ class UniVLAAdapter:
     """HTTP ``/reset`` + ``/act`` client (LIBERO / SimplerEnv).
 
     Requires ``extra.reset_path``, ``extra.act_path``, ``extra.act_timeout_s``.
+
+    Each eval-slot process keeps a stable ``session_id`` so a shared UniVLA
+    server can isolate latent history and the action-decoder temporal buffer.
+    Without that, ``max_jobs_per_gpu>1`` mixes episodes and collapses SR.
     """
 
     def __init__(self, cfg: ModelConfig, transport: Transport) -> None:
         self._cfg = cfg
         self._transport = transport
+        self._session_id = uuid.uuid4().hex
 
     @classmethod
     def from_config(cls, cfg: ModelConfig) -> UniVLAAdapter:
@@ -40,13 +46,14 @@ class UniVLAAdapter:
 
     def reset(self, ctx: EpisodeContext) -> None:
         del ctx
-        self._transport.reset({})
+        self._transport.reset({"session_id": self._session_id})
 
     def act(self, obs: Observation) -> ActionChunk:
         payload: dict[str, Any] = {
             "image": as_jsonable(require_image(obs, "primary")),
             "task": obs.instruction,
             "proprio": as_jsonable(require_state(obs).astype(np.float64)),
+            "session_id": self._session_id,
         }
         result = self._transport.infer(payload)
         if "action" not in result:

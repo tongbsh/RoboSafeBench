@@ -16,6 +16,10 @@ from dynisafety.backends.simplerenv.disturbance._support import (
     compute_obstacle_quat,
     set_actor_pose,
 )
+from dynisafety.backends.simplerenv.disturbance.diversity_clearance import (
+    fixture_top_at_xy,
+    mover_blocked_by_scene,
+)
 from dynisafety.backends.simplerenv.disturbance.l2_spawn import (
     LEGACY_MODE,
     simplerenv_l2_accept_spawn,
@@ -32,13 +36,8 @@ from dynisafety.backends.simplerenv.targets import (
     SceneAccess,
     get_actor_world_aabb,
     get_tabletop_xy_bounds,
-    xy_aabb_overlaps,
 )
 from dynisafety.core.disturbance import arc_lift, lerp
-
-_L2_NAME_SKIP = ("robot", "camera", "light", "dynisafety", "goal_site")
-_L2_LAYER_B_SKIP = _L2_NAME_SKIP + ("arena", "ground", "table")
-_BLOCKING_HEIGHT_MARGIN_Z = 0.02
 
 
 class SlidingObstacleController:
@@ -160,25 +159,16 @@ class SlidingObstacleController:
         table_z = float(access.table_height)
 
         def _fn(xy):
-            best = table_z
             try:
                 actors = access.get_scene().get_all_actors()
             except Exception:
-                return best
-            for scene_actor in actors:
-                if scene_actor is exclude:
-                    continue
-                name = str(getattr(scene_actor, "name", "")).lower()
-                if any(token in name for token in _L2_NAME_SKIP):
-                    continue
-                aabb = get_actor_world_aabb(scene_actor)
-                if aabb is None:
-                    continue
-                mins, maxs = aabb
-                if not (float(mins[0]) <= float(xy[0]) <= float(maxs[0]) and float(mins[1]) <= float(xy[1]) <= float(maxs[1])):
-                    continue
-                best = max(best, float(maxs[2]))
-            return best
+                return table_z
+            return fixture_top_at_xy(
+                xy,
+                table_height=table_z,
+                actors=actors,
+                exclude_actor=exclude,
+            )
 
         return _fn
 
@@ -209,25 +199,16 @@ class SlidingObstacleController:
             self.actor.set_pose(prev)
         if obstacle_aabb is None:
             return False
-        floor = float(access.table_height) + _BLOCKING_HEIGHT_MARGIN_Z
         try:
             actors = access.get_scene().get_all_actors()
         except Exception:
             return False
-        for scene_actor in actors:
-            if scene_actor is self.actor:
-                continue
-            name = str(getattr(scene_actor, "name", "")).lower()
-            if any(token in name for token in _L2_LAYER_B_SKIP):
-                continue
-            scene_aabb = get_actor_world_aabb(scene_actor)
-            if scene_aabb is None:
-                continue
-            if float(scene_aabb[1][2]) <= floor:
-                continue
-            if xy_aabb_overlaps(obstacle_aabb[0][:2], obstacle_aabb[1][:2], scene_aabb[0][:2], scene_aabb[1][:2]):
-                return True
-        return False
+        return mover_blocked_by_scene(
+            obstacle_aabb,
+            actors,
+            exclude_actor=self.actor,
+            table_height=float(access.table_height),
+        )
 
     def _validate_spawn_path(self, start, path) -> bool:
         path = np.asarray(path, dtype=np.float64)
@@ -378,6 +359,7 @@ class SlidingObstacleController:
                 "min_clearance_m": None,
                 "accepted_mode": LEGACY_MODE,
                 "fallback_reason": result.get("fallback_reason") or "all_candidates_rejected",
+                "legacy_validated": False,
             }
         path = np.ascontiguousarray(path, dtype=np.float64)
         start = np.array(path[0], dtype=np.float64, copy=True)
@@ -419,6 +401,7 @@ class SlidingObstacleController:
             "rollback_steps": 0,
             "jitter_suppressed": bool(jitter_suppressed),
             "body_to_bottom_offset_m": float(self._body_to_bottom_offset),
+            "legacy_validated": result.get("legacy_validated"),
         }
 
     def update_before_step(self, task_step: int) -> None:

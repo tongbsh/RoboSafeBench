@@ -3,6 +3,7 @@
 # `dynisafety eval`. Server-based models must already be serving (scripts/eval/serve.sh).
 #
 #   bash scripts/eval/cell.sh libero      openvla_oft  safelibero_spatial 3
+#   bash scripts/eval/cell.sh libero      turbovla     safelibero_spatial 0 --task 0 --episodes 5
 #   bash scripts/eval/cell.sh simplerenv  random       bridge             2 --episodes 3
 #   bash scripts/eval/cell.sh robotwin    internvla_a1 main20             0 --task 0 --episodes 2
 #   bash scripts/eval/cell.sh robocasa    random_mobile robocasa_nav      0 --task 0 --episodes 1
@@ -11,7 +12,7 @@
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/env.sh"
 
 if [[ $# -lt 4 ]]; then
-  sed -n '2,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,11p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   exit 2
 fi
 

@@ -148,6 +148,126 @@ def get_wrist_image(obs: Mapping[str, Any]) -> np.ndarray:
     return img[::-1, ::-1]
 
 
+_LIBERO_CAPTURE_CAMERAS = (
+    ("primary", "agentview", "agentview_image"),
+    ("wrist", "robot0_eye_in_hand", "robot0_eye_in_hand_image"),
+)
+
+# Matches robosuite ``get_camera_extrinsic_matrix`` OpenCV axis correction.
+_LIBERO_CAM_AXIS_CORRECTION = np.array(
+    [
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, -1.0, 0.0, 0.0],
+        [0.0, 0.0, -1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ],
+    dtype=np.float64,
+)
+
+
+def apply_rot180_opencv(
+    K: np.ndarray,
+    T_cw: np.ndarray,
+    width: int,
+    height: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Map official K / T_cw onto a 180°-rotated image (``img[::-1, ::-1]``)."""
+    k2 = np.asarray(K, dtype=np.float64).copy()
+    t2 = np.asarray(T_cw, dtype=np.float64).copy()
+    k2[0, 2] = float(width) - 1.0 - k2[0, 2]
+    k2[1, 2] = float(height) - 1.0 - k2[1, 2]
+    return k2, np.diag([-1.0, -1.0, 1.0, 1.0]) @ t2
+
+
+def _unwrap_mujoco_sim(env: Any) -> Any | None:
+    cur = env
+    for _ in range(6):
+        if cur is None:
+            return None
+        sim = getattr(cur, "sim", None)
+        if sim is not None and hasattr(sim, "model") and hasattr(sim, "data"):
+            return sim
+        cur = getattr(cur, "env", None)
+    return None
+
+
+def _libero_image_hw(obs: Mapping[str, Any] | None, key: str) -> tuple[int, int] | None:
+    if not isinstance(obs, Mapping) or key not in obs:
+        return None
+    try:
+        arr = np.asarray(obs[key])
+    except (TypeError, ValueError):
+        return None
+    if arr.ndim < 2:
+        return None
+    return int(arr.shape[0]), int(arr.shape[1])
+
+
+def _libero_camera_k(sim: Any, camera_name: str, height: int, width: int) -> np.ndarray:
+    try:
+        from robosuite.utils.camera_utils import get_camera_intrinsic_matrix
+
+        return np.asarray(
+            get_camera_intrinsic_matrix(sim, camera_name, height, width),
+            dtype=np.float64,
+        )
+    except Exception:
+        cam_id = int(sim.model.camera_name2id(camera_name))
+        fovy = float(np.asarray(sim.model.cam_fovy[cam_id]).reshape(-1)[0])
+        f = 0.5 * float(height) / np.tan(np.deg2rad(fovy) / 2.0)
+        return np.array(
+            [[f, 0.0, width * 0.5], [0.0, f, height * 0.5], [0.0, 0.0, 1.0]],
+            dtype=np.float64,
+        )
+
+
+def _libero_camera_t_cw(sim: Any, camera_name: str) -> np.ndarray:
+    try:
+        from robosuite.utils.camera_utils import get_camera_extrinsic_matrix
+
+        cam2world = np.asarray(get_camera_extrinsic_matrix(sim, camera_name), dtype=np.float64)
+    except Exception:
+        cam_id = int(sim.model.camera_name2id(camera_name))
+        pos = np.asarray(sim.data.cam_xpos[cam_id], dtype=np.float64).reshape(3)
+        xmat = np.asarray(sim.data.cam_xmat[cam_id], dtype=np.float64).reshape(3, 3)
+        cam2world = np.eye(4, dtype=np.float64)
+        cam2world[:3, :3] = xmat
+        cam2world[:3, 3] = pos
+        cam2world = cam2world @ _LIBERO_CAM_AXIS_CORRECTION
+    return np.linalg.inv(cam2world)
+
+
+def get_capture_cameras(env: Any, obs: Mapping[str, Any] | None) -> dict[str, dict[str, Any]]:
+    """Official LIBERO K / T_cw, aligned to the saved 180°-rotated videos."""
+    out: dict[str, dict[str, Any]] = {}
+    sim = _unwrap_mujoco_sim(env)
+    if sim is None:
+        return out
+    for slot, name, image_key in _LIBERO_CAPTURE_CAMERAS:
+        hw = _libero_image_hw(obs, image_key)
+        if hw is None:
+            continue
+        height, width = hw
+        try:
+            K = _libero_camera_k(sim, name, height, width)
+            T_cw = _libero_camera_t_cw(sim, name)
+            if K.shape != (3, 3) or T_cw.shape != (4, 4):
+                continue
+            K, T_cw = apply_rot180_opencv(K, T_cw, width, height)
+        except Exception:
+            continue
+        out[slot] = {
+            "name": name,
+            "K": K,
+            "T_cw": T_cw,
+            "width": int(width),
+            "height": int(height),
+            "convention": "opencv",
+            "image_transform": "rot180",
+        }
+    return out
+
+
 def dummy_action() -> list[float]:
     """No-op action for the stabilisation / wait phase."""
     return list(WAIT_PHASE_ACTION)

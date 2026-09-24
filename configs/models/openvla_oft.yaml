@@ -19,6 +19,11 @@ checkpoint:
     safelibero_goal: "moojink/openvla-7b-oft-finetuned-libero-goal"
     safelibero_long: "moojink/openvla-7b-oft-finetuned-libero-10"
 resources:
+  # Do NOT raise this to match the served LIBERO models (pi0 / pi05 / xvla).
+  # needs_server is false, so every eval slot loads the 7B OFT weights into its
+  # own process: ~15 GB plus activations and an EGL context, i.e. two slots
+  # already commit ~32 GB of a 48 GB card. This model is VRAM-bound, not
+  # CPU-bound, so extra slots OOM rather than speed anything up.
   max_jobs_per_gpu: 2
 backends: [libero]
 extra:

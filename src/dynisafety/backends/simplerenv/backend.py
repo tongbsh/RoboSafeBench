@@ -15,6 +15,7 @@ from dynisafety.backends.simplerenv.contact import force_equiv_dt_s, scene_times
 from dynisafety.backends.simplerenv.env import (
     SimplerEnvHandle,
     build_reset_options,
+    get_capture_cameras,
     get_eef_pos,
     get_eef_pos_8d,
     get_eef_state_7d,
@@ -33,6 +34,7 @@ from dynisafety.core.rollout import (
     require_bound,
     resolve_save_video,
 )
+from dynisafety.capture import CaptureSession
 from dynisafety.diagnostics import DiagnosticsSession, copy_vec
 from dynisafety.policies.action_space import convert_action, effective_action_space
 from dynisafety.policies.base import ActionChunk, EpisodeContext, Observation, Policy
@@ -381,6 +383,12 @@ class SimplerEnvBackend:
             bound=bound,
             controller=_disturbance_controller(handle.env),
         )
+        capture_session = CaptureSession.create(
+            cfg,
+            episode_index=episode_index,
+            bound=bound,
+            fps=int(control_freq),
+        )
         action_queue = ActionChunkQueue(bound.chunk_size)
         frames: list[np.ndarray] = []
         save_video = resolve_save_video(cfg)
@@ -407,6 +415,45 @@ class SimplerEnvBackend:
                 step_eef_pos = copy_vec(get_eef_pos(handle.env))
                 eef_state = get_eef_state_7d(obs if isinstance(obs, Mapping) else {})
                 step_eef_quat = copy_vec(eef_state[3:7]) if eef_state is not None else None
+                mapping = obs if isinstance(obs, Mapping) else {}
+                if capture_session.enabled:
+                    agent = mapping.get("agent")
+                    qpos = agent.get("qpos") if isinstance(agent, Mapping) else None
+                    step_joint = copy_vec(qpos)
+                    # ManiSkill eef_pos quat is wxyz; WRM tcp_pose wants xyzw.
+                    if step_eef_quat is not None and len(step_eef_quat) == 4:
+                        w, x, y, z = step_eef_quat
+                        cap_quat = (x, y, z, w)
+                    else:
+                        cap_quat = step_eef_quat
+                    try:
+                        step_cameras = get_capture_cameras(
+                            handle.env,
+                            mapping,
+                            camera_name=handle.camera_name,
+                        )
+                        if not step_cameras:
+                            step_cameras = None
+                    except Exception:
+                        step_cameras = None
+                    if capture_session.wants_images:
+                        try:
+                            step_primary = np.asarray(
+                                get_primary_image(
+                                    handle.env,
+                                    mapping,
+                                    camera_name=handle.camera_name,
+                                )
+                            ).copy()
+                        except Exception:
+                            step_primary = None
+                    else:
+                        step_primary = None
+                else:
+                    step_joint = None
+                    cap_quat = None
+                    step_primary = None
+                    step_cameras = None
                 include_images = True
                 needs_visual = getattr(policy, "needs_visual_observation", None)
                 if callable(needs_visual):
@@ -443,9 +490,9 @@ class SimplerEnvBackend:
                 action = action_queue.popleft()
                 step_out = handle.env.step(np.asarray(action, dtype=np.float64))
                 if len(step_out) == 5:
-                    obs, _reward, done, truncated, info = step_out
+                    obs, step_reward, done, truncated, info = step_out
                 else:  # pragma: no cover — gym classic
-                    obs, _reward, done, info = step_out
+                    obs, step_reward, done, info = step_out
                     truncated = False
 
                 dyn = {}
@@ -499,6 +546,18 @@ class SimplerEnvBackend:
                     impulse_ns=impulse_ns,
                     base_xy_yaw=None,
                 )
+                capture_session.record_step(
+                    t=task_step,
+                    eef_pos=step_eef_pos or (0.0, 0.0, 0.0),
+                    eef_quat=cap_quat,
+                    action=action,
+                    in_contact=in_contact,
+                    force_n=force_n,
+                    reward=step_reward,
+                    joint_position=step_joint,
+                    primary=step_primary,
+                    cameras=step_cameras,
+                )
 
                 try:
                     new_instr = handle.env.get_language_instruction()
@@ -540,6 +599,17 @@ class SimplerEnvBackend:
             success_step=success_step,
             metrics=metrics,
         )
+        capture_session.finalize(
+            success=success,
+            success_step=success_step,
+            termination=termination,
+            metrics=metrics,
+            task_id=handle.task.task_id,
+            task_name=handle.task.task_name,
+            instruction=str(instruction),
+            checkpoint=str(cfg.checkpoint),
+            config_hash=bound.config_hash,
+        )
 
         video_path: str | None = None
         if save_video and frames:
@@ -580,6 +650,27 @@ class SimplerEnvBackend:
             extra["l1_home_onset"] = bool(getattr(ctrl, "home_onset", False))
         if builder_extra_err is not None:
             extra["error"] = builder_extra_err
+        if level == 3:
+            wrap_extra = getattr(handle.env, "_l3_extra", None)
+            if isinstance(wrap_extra, dict):
+                extra.update(dict(wrap_extra))
+            last = getattr(handle.env, "_last_step_info", None)
+            if isinstance(last, dict):
+                for key in (
+                    "l3_force_scheme",
+                    "l3_kinematic_overlap_sim_steps",
+                    "l3_kinematic_peak_impulse_ns",
+                    "l3_kinematic_peak_force_n",
+                    "l3_release_speed_mps",
+                    "l3_force_inbound_speed_mps",
+                    "l3_partner_speed_mps",
+                    "l3_closing_speed_mps",
+                    "l3_force_from_release_momentum",
+                    "released_to_physics",
+                    "ghost_contact_sim_steps",
+                ):
+                    if key in last and key not in extra:
+                        extra[key] = last[key]
 
         return build_episode_record(
             metrics=metrics,

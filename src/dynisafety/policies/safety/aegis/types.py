@@ -19,6 +19,19 @@ class SolverFailurePolicy(str, Enum):
     RAISE = "raise"
 
 
+class MotionMode(str, Enum):
+    """How the CBF-QP rewrites the 7D action (upstream ``main_aegis*.py``).
+
+    ``full`` — 9-D QP over translation + rotation + separating axis
+    (``main_aegis.py``).
+    ``translational`` — 6-D QP over translation + separating axis; rotation
+    is zeroed (``main_aegis_translational.py``, SafeLIBERO headline recipe).
+    """
+
+    FULL = "full"
+    TRANSLATIONAL = "translational"
+
+
 @dataclass(frozen=True)
 class EllipsoidState:
     """Oriented ellipsoid in world frame (EEF or obstacle).

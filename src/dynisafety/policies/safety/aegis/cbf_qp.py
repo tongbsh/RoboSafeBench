@@ -12,7 +12,7 @@ from typing import Any
 import numpy as np
 
 from dynisafety.policies.safety.aegis.config import AegisConfig
-from dynisafety.policies.safety.aegis.types import CbfQpResult, EllipsoidState
+from dynisafety.policies.safety.aegis.types import CbfQpResult, EllipsoidState, MotionMode
 
 try:
     import cvxpy as cp
@@ -153,6 +153,11 @@ def solve_cbf_qp(
             'pip install "cvxpy>=1.4" osqp'
         )
 
+    if cfg.motion_mode is MotionMode.TRANSLATIONAL:
+        return _solve_cbf_qp_translational(
+            nominal_7d, eef, obstacle, z_direction, cfg
+        )
+
     action = np.asarray(nominal_7d, dtype=np.float64).reshape(7)
     r1 = eef.rotation
     z = np.asarray(z_direction, dtype=np.float64).reshape(3)
@@ -232,6 +237,94 @@ def solve_cbf_qp(
         failed=failed,
         a_u_v=np.asarray(a_u_v, dtype=np.float64),
         a_u_omega=np.asarray(a_u_omega, dtype=np.float64),
+        a_uz=np.asarray(a_uz, dtype=np.float64),
+        mu_row=mu_row,
+        u_ref=u_ref,
+    )
+
+
+def _solve_cbf_qp_translational(
+    nominal_7d: np.ndarray,
+    eef: EllipsoidState,
+    obstacle: EllipsoidState,
+    z_direction: np.ndarray,
+    cfg: AegisConfig,
+) -> CbfQpResult:
+    """Upstream ``main_aegis_translational.py``: QP over ``[u_v, u_z]`` only."""
+    if cp is None:
+        raise ImportError(
+            "cvxpy is required for AEGIS CBF-QP. Install with: "
+            'pip install "cvxpy>=1.4" osqp'
+        )
+
+    action = np.asarray(nominal_7d, dtype=np.float64).reshape(7)
+    r1 = eef.rotation
+    z = np.asarray(z_direction, dtype=np.float64).reshape(3)
+    z_norm = np.linalg.norm(z)
+    if z_norm < 1e-12:
+        raise ValueError("z_direction must be non-zero")
+    z = z / z_norm
+
+    a_v, _a_omega, a_uz, h, mu_row = compute_h_coeffs_3d(
+        eef.position,
+        eef.axes_diag,
+        r1,
+        obstacle.position,
+        obstacle.axes_diag,
+        obstacle.rotation,
+        z,
+    )
+    scale_u = float(cfg.u_to_action_scale)
+    scale_a = float(cfg.action_to_u_scale)
+    a_u_v = scale_u * a_v
+
+    v_ref = r1.T @ action[:3]
+    u_v_ref = scale_a * v_ref
+    u_z_nom = float(cfg.cbf_h_gain) * mu_row
+    u_ref6 = np.hstack([u_v_ref, u_z_nom])
+    u_ref = np.hstack([u_v_ref, np.zeros(3, dtype=np.float64), u_z_nom])
+
+    nominal_slack = float(a_u_v @ u_v_ref + a_uz @ u_z_nom + float(cfg.cbf_h_gain) * h)
+    constraint_active = nominal_slack < -float(cfg.slack_active_eps)
+
+    w = np.diag([float(cfg.cost_weight_motion)] * 3 + [float(cfg.cost_weight_z)] * 3)
+    u = cp.Variable(6)
+    objective = cp.Minimize(cp.quad_form(u - u_ref6, w))
+    constraints = [a_u_v @ u[:3] + a_uz @ u[3:] + float(cfg.cbf_h_gain) * h >= 0]
+    problem = cp.Problem(objective, constraints)
+
+    status = "solver_unavailable"
+    solved_u: np.ndarray | None = None
+    last_err: str | None = None
+    for solver in _solver_objects(cfg):
+        try:
+            problem.solve(solver=solver, warm_start=False)
+            status = str(problem.status)
+            if u.value is not None and status in (cp.OPTIMAL, cp.OPTIMAL_INACCURATE):
+                raw = np.asarray(u.value, dtype=np.float64).reshape(6)
+                solved_u = np.hstack([raw[:3], np.zeros(3, dtype=np.float64), raw[3:]])
+                break
+            if u.value is not None:
+                raw = np.asarray(u.value, dtype=np.float64).reshape(6)
+                solved_u = np.hstack([raw[:3], np.zeros(3, dtype=np.float64), raw[3:]])
+                break
+        except Exception as exc:  # noqa: BLE001 — surface as qp_failed
+            last_err = f"{type(exc).__name__}: {exc}"
+            status = f"error:{last_err}"
+            continue
+
+    if solved_u is None and not _solver_objects(cfg):
+        status = "solver_unavailable"
+
+    return CbfQpResult(
+        u=solved_u,
+        status=status,
+        h=h,
+        nominal_slack=nominal_slack,
+        constraint_active=constraint_active,
+        failed=solved_u is None,
+        a_u_v=np.asarray(a_u_v, dtype=np.float64),
+        a_u_omega=np.zeros(3, dtype=np.float64),
         a_uz=np.asarray(a_uz, dtype=np.float64),
         mu_row=mu_row,
         u_ref=u_ref,

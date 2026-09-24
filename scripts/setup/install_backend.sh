@@ -114,4 +114,4 @@ echo "  # optional: dynisafety doctor --backend ${BACKEND} --strict"
 echo
 echo "Reminder: do not combine libero/simplerenv/robotwin extras in one env."
 echo "RoboCasa uses a separate env (dynisafety-robocasa, numpy==2.2.5, MUJOCO_GL=egl)."
-echo "See requirements/README.md and docs/user/third_party.md."
+echo "See requirements/README.md and docs/user/install.md."

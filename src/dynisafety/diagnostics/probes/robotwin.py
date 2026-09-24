@@ -7,23 +7,15 @@ manager-shaped object (``controller`` + ``dynamic_level``) and unwraps.
 Mapping (controller internals → ``DisturbancePhase``). Attributes in
 parentheses are private.
 
-L1 SuddenDrop (``_dropped``, ``_placed_sim_step``, ``_xy_latched``).
-There is **no** ``drop_step`` and **no** ``disturbance_onset_step``:
+L1 SuddenDrop (``_dropped``, ``drop_step``, ``_placed_sim_step``).
+Onset is the durable task-clock ``drop_step`` /
+``disturbance_onset_step``. ``_placed_sim_step`` is a one-sim-step spawn
+probe latch and is **not** an onset (it is cleared on
+``on_released_to_physics``):
 
 - not ``_dropped`` → ``inactive`` (includes XY-latched but spawn-blocked)
-- ``t == _placed_sim_step`` → ``active``
-- later / ``_dropped`` after physics release → ``cleared``
-  (``_placed_sim_step`` is cleared back to ``None`` on
-  ``on_released_to_physics``; onset must be locked on first sighting)
-
-**OnsetReporting gap (probe-side compensation).** RoboTwin L1 does not
-implement a durable ``disturbance_onset_step`` / ``drop_step``. The only
-onset signal is ``_placed_sim_step``, which ``on_released_to_physics``
-nulls. ``SnapshotProbe`` latches the first non-``None`` onset so the four
-diagnostic axes survive the release. The correct long-term fix is a
-read-only property on the controller; that would touch red-line
-``backends/*/disturbance/**`` files, so the probe carries the
-compensation for now.
+- ``t == drop_step`` → ``active``
+- later / after physics release → ``cleared`` (``drop_step`` stays)
 
 L2 SlidingObstacle (``move_start_step``, ``move_end_step``,
 ``hold_end_step``, ``_released``, ``_frozen``, ``release_reason``):
@@ -52,7 +44,9 @@ L3 SharedReaching (**public** ``phase`` and ``phase_start``,
   only ``DONE`` is ``CLEARED``)
 - ``done`` → ``cleared`` (``hazard_persists=False``)
 
-Onset is ``move_start_step`` (L2/L3) or the locked ``_placed_sim_step`` (L1).
+Onset is ``disturbance_onset_step`` (L1 ``drop_step``, L2 first sliding
+task step, L3 first ENTER task step). Do not fall back to
+``move_start_step`` — that YAML key is a sim-clock path bound on L2 and L3.
 Read-only. Never imports ``dynisafety.backends``.
 """
 
@@ -77,15 +71,10 @@ class RoboTwinDisturbanceProbe(SnapshotProbe):
 
     def _read_onset(self) -> int | None:
         if self._level == 1:
-            return first_int(
-                self._ctrl,
-                "disturbance_onset_step",
-                "drop_step",
-                "_placed_sim_step",
-            )
+            return first_int(self._ctrl, "disturbance_onset_step", "drop_step")
         if self._level == 2:
-            return first_int(self._ctrl, "disturbance_onset_step", "move_start_step")
-        return first_int(self._ctrl, "disturbance_onset_step", "move_start_step")
+            return first_int(self._ctrl, "disturbance_onset_step")
+        return first_int(self._ctrl, "disturbance_onset_step")
 
     def _phase_at(self, task_step: int) -> tuple[DisturbancePhase, int | None]:
         if self._level == 1:

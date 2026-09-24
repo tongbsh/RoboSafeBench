@@ -9,6 +9,7 @@ help:
 	@echo "  make install-simplerenv     # scripts/setup/install_backend.sh simplerenv"
 	@echo "  make install-robotwin       # scripts/setup/install_backend.sh robotwin"
 	@echo "  make install-robocasa       # scripts/setup/install_backend.sh robocasa (numpy 2 env)"
+	@echo "  bash scripts/setup/install_conda_env.sh   # optional: pick backend+VLA; skip existing envs"
 	@echo "  make lint                   # ruff check src tests examples"
 	@echo "  make test                   # pytest -m 'not sim'"
 	@echo "  make coverage               # pytest not-sim with cov fail_under=80"

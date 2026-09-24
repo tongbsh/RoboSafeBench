@@ -386,6 +386,42 @@ def test_matrix_aegis_only_filters_every_step() -> None:
     assert session.filter_calls == 1
 
 
+def test_yield_home_aegis_gates_to_post_hazard() -> None:
+    """yield+AEGIS + oracle off still waits for settled (not the static对照)."""
+    extra = _aegis_extra(enabled=True, activate_after="settled_or_done")
+    session = LiberoAegisSession.create(
+        cfg=_cfg(2), extra_libero=extra, oracle_enabled=False, yield_home_enabled=True
+    )
+    assert session.oracle_enabled is False
+    assert session.yield_home_enabled is True
+    assert session.should_filter_phase(LiberoOraclePhase.INACTIVE) is False
+    assert session.should_filter_phase(LiberoOraclePhase.ENTERING_OR_ACTIVE) is False
+    assert session.should_filter_phase(LiberoOraclePhase.SETTLED_OR_DONE) is True
+    assert session.should_filter_phase(LiberoOraclePhase.WITHDRAWN) is True
+
+    env = _fake_env_with_obstacle()
+    ctrl = _l2_controller()
+    nominal = np.array([0.05, 0.0, 0.0, 0.0, 0.0, 0.0, -0.7], dtype=np.float64)
+    _ = session.maybe_filter_action(
+        nominal,
+        obs=_obs_dict(),
+        env=env,
+        controller=ctrl,
+        task_step=10,
+        probe_phase=LiberoOraclePhase.ENTERING_OR_ACTIVE,
+    )
+    assert session.filter_calls == 0
+    _ = session.maybe_filter_action(
+        nominal,
+        obs=_obs_dict(),
+        env=env,
+        controller=ctrl,
+        task_step=50,
+        probe_phase=LiberoOraclePhase.SETTLED_OR_DONE,
+    )
+    assert session.filter_calls == 1
+
+
 # --- geometry / extras / gripper --------------------------------------------
 
 
@@ -461,6 +497,24 @@ def test_create_requires_geometry_when_enabled() -> None:
             },
             oracle_enabled=False,
         )
+
+
+def test_yield_resume_resets_aegis_filter() -> None:
+    """backend.py must re-init the CBF z-axis when yield hands back the VLA."""
+    src = (REPO / "src/dynisafety/backends/libero/backend.py").read_text(encoding="utf-8")
+    assert "aegis_session.filter.reset()" in src
+    assert "consume_resume_clear" in src
+
+
+def test_translational_session_stamps_motion_mode() -> None:
+    extra = _aegis_extra(enabled=True)
+    extra["aegis"]["config_path"] = "configs/safety/aegis_translational.yaml"
+    session = LiberoAegisSession.create(
+        cfg=_cfg(2), extra_libero=extra, oracle_enabled=False, yield_home_enabled=True
+    )
+    assert session.filter is not None
+    assert session.filter.config.motion_mode.value == "translational"
+    assert session.episode_extra()["aegis_motion_mode"] == "translational"
 
 
 def test_backend_import_hook_present() -> None:

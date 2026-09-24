@@ -20,7 +20,8 @@ logger = logging.getLogger(__name__)
 
 # Off-screen park pose (scene convention, not a tunable eval hyperparam).
 HIDDEN_POS = np.array([10.0, 10.0, 0.0], dtype=np.float64)
-HAND_SKIN_COLOR = [0.72, 0.52, 0.40, 1.0]
+# Same RGB as extra.robotwin.hand_color / extra.simplerenv.hand_color.
+HAND_SKIN_COLOR = [0.78, 0.60, 0.48, 1.0]
 
 
 def current_obstacle_model(
@@ -62,16 +63,137 @@ def compute_obstacle_quat(yaw: float) -> np.ndarray:
     return q / np.linalg.norm(q)
 
 
-def _hand_skin_material(scene: Any) -> Any | None:
+def hand_rgba(color: Sequence[float]) -> list[float]:
+    """RGB or RGBA in [0, 1] → RGBA list (visual only)."""
+    raw = [float(x) for x in color]
+    if len(raw) == 3:
+        raw.append(1.0)
+    if len(raw) != 4:
+        raise ValueError(f"hand_color must be RGB or RGBA, got {color!r}")
+    if any(c < 0.0 or c > 1.0 for c in raw):
+        raise ValueError(f"hand_color channels must be in [0, 1], got {color!r}")
+    return raw
+
+
+def _scene_renderer(scene: Any) -> Any | None:
+    """SAPIEN 2.2 ``Scene`` has no ``get_renderer``; use ``scene.engine``."""
+    getter = getattr(scene, "get_renderer", None)
+    if callable(getter):
+        try:
+            rend = getter()
+            if rend is not None:
+                return rend
+        except Exception:
+            pass
+    engine = getattr(scene, "engine", None)
+    if engine is None:
+        return None
+    eg = getattr(engine, "get_renderer", None)
+    if not callable(eg):
+        return None
     try:
-        renderer = scene.get_renderer()
-        if renderer is None:
-            return None
-        mat = renderer.create_material()
-        mat.set_base_color(HAND_SKIN_COLOR)
-        return mat
+        return eg()
     except Exception:
         return None
+
+
+def _finish_skin_material(mat: Any, rgba: Sequence[float]) -> Any:
+    """Matte flesh: unset metallic/specular so a tinted STL is not blown to white."""
+    if hasattr(mat, "set_base_color"):
+        mat.set_base_color(list(rgba))
+    else:
+        mat.base_color = list(rgba)
+    if hasattr(mat, "set_roughness"):
+        mat.set_roughness(0.85)
+    else:
+        try:
+            mat.roughness = 0.85
+        except Exception:
+            pass
+    if hasattr(mat, "set_metallic"):
+        mat.set_metallic(0.0)
+    else:
+        try:
+            mat.metallic = 0.0
+        except Exception:
+            pass
+    if hasattr(mat, "set_specular"):
+        mat.set_specular(0.0)
+    return mat
+
+
+def _hand_skin_material(scene: Any, color: Sequence[float]) -> Any | None:
+    """Build a renderer-owned material. ``sapien.RenderMaterial()`` has no ctor on 2.2."""
+    rgba = hand_rgba(color)
+    renderer = _scene_renderer(scene)
+    if renderer is not None:
+        create = getattr(renderer, "create_material", None)
+        if callable(create):
+            try:
+                return _finish_skin_material(create(), rgba)
+            except Exception:
+                pass
+    try:
+        import sapien.core as sapien
+
+        try:
+            mat = sapien.RenderMaterial(base_color=list(rgba))
+        except TypeError:
+            mat = sapien.RenderMaterial()
+            mat.set_base_color(list(rgba))
+        return _finish_skin_material(mat, rgba)
+    except Exception:
+        return None
+
+
+def apply_hand_skin_color(
+    actor: Any,
+    color: Sequence[float],
+    scene: Any | None = None,
+) -> None:
+    """Bind a flesh material after build.
+
+    SAPIEN 2.2 STL load often ignores the constructor ``material=`` argument
+    and keeps the default white. ``shape.material.set_base_color`` updates the
+    Python object but not the GPU slot — ``set_material`` is required.
+    Visual only; collision is the palm box.
+    """
+    rgba = hand_rgba(color)
+    bound = _hand_skin_material(scene, color) if scene is not None else None
+    getter = getattr(actor, "get_visual_bodies", None)
+    if not callable(getter):
+        return
+    try:
+        bodies = getter()
+    except Exception:
+        return
+    for body in bodies or ():
+        shapes_fn = getattr(body, "get_render_shapes", None)
+        if not callable(shapes_fn):
+            continue
+        try:
+            shapes = shapes_fn()
+        except Exception:
+            continue
+        for shape in shapes or ():
+            if bound is not None:
+                setter = getattr(shape, "set_material", None)
+                if callable(setter):
+                    try:
+                        setter(bound)
+                        continue
+                    except Exception:
+                        pass
+            mat = getattr(shape, "material", None)
+            if mat is None:
+                continue
+            try:
+                mat.set_base_color(rgba)
+            except Exception:
+                try:
+                    mat.base_color = rgba
+                except Exception:
+                    continue
 
 
 def build_dynamic_actor(
@@ -89,6 +211,7 @@ def build_dynamic_actor(
     hand_scale: float,
     name: str,
     density: float,
+    hand_color: Sequence[float],
 ) -> Any:
     """Build a SAPIEN kinematic/dynamic actor for L1–L3 disturbances.
 
@@ -145,7 +268,8 @@ def build_dynamic_actor(
         builder.add_box_collision(**col_kwargs)
 
         vis_stl = Path(asset_dir) / "hand_pusher_vis.stl"
-        rend_mtl = _hand_skin_material(scene)
+        skin = hand_rgba(hand_color)
+        rend_mtl = _hand_skin_material(scene, skin)
         if use_visual_mesh and vis_stl.is_file():
             if rend_mtl is not None:
                 builder.add_visual_from_file(
@@ -159,10 +283,12 @@ def build_dynamic_actor(
             if rend_mtl is not None:
                 builder.add_box_visual(half_size=half, pose=collision_pose, material=rend_mtl)
             else:
-                builder.add_box_visual(half_size=half, pose=collision_pose, color=HAND_SKIN_COLOR)
+                builder.add_box_visual(half_size=half, pose=collision_pose, color=skin)
 
     actor = builder.build_kinematic(name) if kinematic else builder.build(name)
     actor.set_pose(sapien.Pose(HIDDEN_POS))
+    if actor_type == "hand":
+        apply_hand_skin_color(actor, hand_color, scene=scene)
     return actor
 
 
@@ -178,6 +304,7 @@ class ActorLifecycle:
         hand_half_size: Sequence[float],
         hand_collision_offset: Sequence[float],
         density: float,
+        hand_color: Sequence[float],
     ) -> None:
         self._scene = scene
         self._models_dir = Path(models_dir)
@@ -185,6 +312,7 @@ class ActorLifecycle:
         self._hand_half_size = list(hand_half_size)
         self._hand_collision_offset = list(hand_collision_offset)
         self._density = float(density)
+        self._hand_color = hand_rgba(hand_color)
         self._actor: Any | None = None
         self._actor_is_kinematic = True
 
@@ -234,6 +362,7 @@ class ActorLifecycle:
             hand_scale=hand_scale,
             name=name,
             density=self._density,
+            hand_color=self._hand_color,
         )
         return self._actor
 
@@ -246,6 +375,8 @@ class ActorLifecycle:
         actor_type: str,
         hand_scale: float,
         name: str = "dynisafety_obstacle",
+        mass_kg: float | None = None,
+        linear_velocity: np.ndarray | None = None,
     ) -> Any:
         """Swap a kinematic actor for a dynamic one at the same pose."""
         if self._actor is None:
@@ -253,6 +384,11 @@ class ActorLifecycle:
         if not self._actor_is_kinematic:
             return self._actor
         pose = self._actor.get_pose()
+        if mass_kg is not None and actor_type == "hand":
+            half = np.asarray(self._hand_half_size, dtype=np.float64) * float(hand_scale)
+            volume = 8.0 * float(np.prod(half))
+            if volume > 1e-12:
+                self._density = float(mass_kg) / volume
         actor = self.create(
             model_name=model_name,
             scale=scale,
@@ -263,6 +399,15 @@ class ActorLifecycle:
             name=name,
         )
         actor.set_pose(pose)
-        actor.set_velocity(np.zeros(3))
+        if mass_kg is not None:
+            setter = getattr(actor, "set_mass", None)
+            if callable(setter):
+                setter(float(mass_kg))
+        vel = (
+            np.zeros(3, dtype=np.float64)
+            if linear_velocity is None
+            else np.asarray(linear_velocity, dtype=np.float64).reshape(3)
+        )
+        actor.set_velocity(vel)
         actor.set_angular_velocity(np.zeros(3))
         return actor

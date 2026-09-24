@@ -13,8 +13,16 @@ from dynisafety.core.contact import CONTACT_IMPULSE_EPS
 
 
 class _FakePoint:
-    def __init__(self, impulse: np.ndarray | None) -> None:
+    def __init__(
+        self,
+        impulse: np.ndarray | None,
+        *,
+        normal: np.ndarray | None = None,
+        position: np.ndarray | None = None,
+    ) -> None:
         self.impulse = impulse
+        self.normal = normal
+        self.position = position
 
 
 def _actor_scene(*contacts: object) -> SimpleNamespace:
@@ -65,6 +73,36 @@ def test_sapien_pair_reader_body_entity() -> None:
     assert result.impulse_ns == pytest.approx(2.0)
     assert sap.read_pair_actor01(SimpleNamespace(bodies=[body0, body1])) is None
     assert sap.read_pair_body_entity(SimpleNamespace(actor0=None, actor1=None)) is None
+
+
+def test_first_actor_contact_kinematics_orients_normal_from_actor() -> None:
+    partner = SimpleNamespace(name="link_a")
+    hand = SimpleNamespace(name="hand")
+    body0 = SimpleNamespace(entity=hand)
+    body1 = SimpleNamespace(entity=partner)
+    scene = _actor_scene(
+        SimpleNamespace(
+            bodies=[body0, body1],
+            points=[
+                _FakePoint(
+                    np.zeros(3),
+                    normal=np.array([-1.0, 0.0, 0.0]),
+                    position=np.array([0.01, 0.0, 1.0]),
+                )
+            ],
+        )
+    )
+    frame = sap.first_actor_contact_kinematics(
+        scene,
+        actor_name="hand",
+        actor_pos=np.array([0.0, 0.0, 1.0]),
+        target_names={"link_a"},
+        pair_reader=sap.read_pair_body_entity,
+    )
+    assert frame is not None
+    assert frame.partner_name == "link_a"
+    assert frame.partner_entity is partner
+    np.testing.assert_allclose(frame.normal_from_actor, np.array([1.0, 0.0, 0.0]))
 
 
 def test_sapien_scheme_b_zero_impulse_is_contact_without_force() -> None:

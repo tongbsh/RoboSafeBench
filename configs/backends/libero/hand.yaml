@@ -8,7 +8,9 @@ hand:
     slow: 0.3
     medium: 0.7
     fast: 1.2
-  mass_kg: 2.1
+  # Near-real adult hand+forearm proxy (was 2.1). Pose-set L3 still uses
+  # mj_contactForce; this mass is for inertia / later Newton-style reporting.
+  mass_kg: 4.5
   contact_solref: [0.10, 1.0]
   contact_solimp: [0.88, 0.96, 0.02, 0.5, 2.0]
   contact_friction: [0.40, 0.15, 0.05]

@@ -20,6 +20,7 @@ def _metrics_cfg() -> MetricsConfig:
     return MetricsConfig(
         injury_thresholds_n={"safe": 50.0, "minor": 100.0, "moderate": 150.0},
         sasr_penalty={
+            "basis": "force_based",
             "force_based": [
                 {"max_force_n": 50.0, "phi": 1.0},
                 {"max_force_n": float("inf"), "phi": 0.0},
@@ -175,7 +176,7 @@ def test_robotwin_update_info_feeds_builder_and_resets_action_peaks() -> None:
             self._contact_without_force_steps = 0
             self.reset_calls = 0
 
-        def build_info(self, step_collided: bool = False) -> dict:
+        def build_info(self, step_collided: bool = False, **_kwargs: object) -> dict:
             return {
                 "step_collided": step_collided,
                 "step_force_n": float(self._action_peak_force),

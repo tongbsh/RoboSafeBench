@@ -27,6 +27,7 @@ from dynisafety.core.rollout import (
     require_bound,
     resolve_save_video,
 )
+from dynisafety.capture import CaptureSession
 from dynisafety.diagnostics import DiagnosticsSession, copy_vec
 from dynisafety.policies.action_space import convert_action, effective_action_space
 from dynisafety.policies.base import ActionChunk, EpisodeContext, Observation, Policy
@@ -599,6 +600,12 @@ class RoboCasaBackend:
             bound=bound,
             controller=controller,
         )
+        capture_session = CaptureSession.create(
+            cfg,
+            episode_index=episode_index,
+            bound=bound,
+            fps=control_freq,
+        )
         frames: list[np.ndarray] = []
         save_video = resolve_save_video(cfg)
         spawn_snapshot_path: str | None = None
@@ -685,6 +692,51 @@ class RoboCasaBackend:
                         **pin_info,
                     },
                 )
+                if capture_session.enabled:
+                    step_joint = copy_vec(
+                        obs["robot0_joint_pos"]
+                        if "robot0_joint_pos" in obs
+                        else obs.get("robot0_joint_positions")
+                    )
+                    if "robot0_eef_pos" in obs:
+                        cap_eef_pos = copy_vec(obs["robot0_eef_pos"])
+                        cap_eef_quat = (
+                            copy_vec(obs["robot0_eef_quat"])
+                            if "robot0_eef_quat" in obs
+                            else step_eef_quat
+                        )
+                    else:
+                        cap_eef_pos = step_eef_pos
+                        cap_eef_quat = step_eef_quat
+                    cap_base = None
+                    if "robot0_base_pos" in obs:
+                        base_pos = copy_vec(obs["robot0_base_pos"])
+                        base_quat = (
+                            copy_vec(obs["robot0_base_quat"])
+                            if "robot0_base_quat" in obs
+                            else None
+                        )
+                        if base_pos is not None:
+                            cap_base = tuple(base_pos) + (
+                                tuple(base_quat) if base_quat is not None else (0.0, 0.0, 0.0, 1.0)
+                            )
+                    if capture_session.wants_images:
+                        step_primary = np.asarray(images["primary"]).copy()
+                        step_wrist = (
+                            np.asarray(images["wrist"]).copy()
+                            if "wrist" in images
+                            else None
+                        )
+                    else:
+                        step_primary = None
+                        step_wrist = None
+                else:
+                    step_joint = None
+                    cap_eef_pos = None
+                    cap_eef_quat = None
+                    cap_base = None
+                    step_primary = None
+                    step_wrist = None
                 if save_video:
                     frames.append(images["primary"])
 
@@ -702,9 +754,9 @@ class RoboCasaBackend:
                 action = to_robosuite_action(action_queue.popleft())
                 step_out = inner.step(action)
                 if len(step_out) == 5:
-                    obs, _reward, done, _truncated, _info = step_out
+                    obs, step_reward, done, _truncated, _info = step_out
                 else:
-                    obs, _reward, done, _info = step_out
+                    obs, step_reward, done, _info = step_out
                 del done  # ignore_done=True; success is _check_success()
                 if np.any(np.isnan(inner.sim.data.qpos)):
                     termination = "sim_unstable"
@@ -737,6 +789,20 @@ class RoboCasaBackend:
                     in_contact=contact.in_contact,
                     force_n=contact.force_n,
                     impulse_ns=contact.impulse_ns,
+                )
+                capture_session.record_step(
+                    t=task_step,
+                    eef_pos=cap_eef_pos or step_eef_pos or (0.0, 0.0, 0.0),
+                    eef_quat=cap_eef_quat or step_eef_quat,
+                    action=action,
+                    in_contact=contact.in_contact,
+                    force_n=contact.force_n,
+                    reward=step_reward,
+                    joint_position=step_joint,
+                    primary=step_primary,
+                    wrist=step_wrist,
+                    base_pose=cap_base,
+                    base_xy_yaw=step_base_xy_yaw,
                 )
                 if (
                     controller is not None
@@ -796,6 +862,17 @@ class RoboCasaBackend:
             success=success,
             success_step=success_step,
             metrics=metrics,
+        )
+        capture_session.finalize(
+            success=success,
+            success_step=success_step,
+            termination=termination,
+            metrics=metrics,
+            task_id=handle.task_id,
+            task_name=handle.task_name,
+            instruction=handle.task_description,
+            checkpoint=str(cfg.checkpoint),
+            config_hash=bound.config_hash,
         )
 
         base_xy1, base_yaw1 = read_base_xy_yaw(inner)

@@ -1,6 +1,7 @@
 # main20 / task_id=16 — max_steps from _eval_step_limit.yml; primary_arm externalized for S3e registry (D3=B).
 # Laptop lid is a large flat AABB, not a disk; tall wineglasses land on the
 # cover and tip with ~0 N (landing_toppled, not official toppled).
+# l2_landing_push_m applies only when the lerp XY overlaps that lid AABB.
 runtime:
   max_steps: 700
 scene:

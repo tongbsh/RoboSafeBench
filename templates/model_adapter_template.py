@@ -5,7 +5,7 @@ Then:
 2. Fill in the TODO blocks (no ports / timeouts / chunk sizes here — those
    belong in ``configs/models/<my_model>.yaml`` only).
 3. Point the YAML ``adapter:`` field at this class.
-4. Run ``dynisafety models`` and a smoke eval (see ``docs/user/adding_a_model.md``).
+4. Run ``dynisafety models`` and a smoke eval (see ``docs/user/repo.md``).
 
 Remote models MUST use ``build_transport`` / ``connect_transport`` — never
 ``requests``, ``websockets``, or ``zmq`` inside an adapter.

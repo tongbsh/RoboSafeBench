@@ -1,0 +1,20 @@
+# Extra (not paper_main): VLA-Adapter-Pro on dynamic LIBERO.
+# Official protocol: delta EE 7D, chunk 8, dual camera, gripper invert on serve.
+# 4 suites × 4 tasks × L0–L3 × 10 ep × seed 7.
+#
+#   dynisafety sweep --suite vla_adapter_libero --dry-run
+# Eval conda: openvla-oft. Serve: conda vla-adapter (do not use serve.sh).
+name: vla_adapter_libero
+episodes_per_task: 10
+seeds: [7]
+matrix:
+  - backend: libero
+    suites:
+      - safelibero_spatial
+      - safelibero_object
+      - safelibero_goal
+      - safelibero_long
+    tasks: [0, 1, 2, 3]
+    levels: [0, 1, 2, 3]
+    models:
+      - vla_adapter

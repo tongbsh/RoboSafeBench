@@ -37,11 +37,11 @@ dyni_backend_env() {
   esac
 }
 
-# archived golden logs used by 50_verify_golden.sh
-DYNI_GOLDEN_TAR="${DYNI_GOLDEN_TAR:-${HOME}/autodl-tmp/dynisafety_archive/golden_logs_20260805.tar.gz}"
+# Optional archive for scripts/extra/verify_golden.sh. No machine-specific default.
+DYNI_GOLDEN_TAR="${DYNI_GOLDEN_TAR:-}"
 
 # --- output roots (configs/paths.yaml) ------------------------------------
-# One root: ${out}/  (DYNI_OUT or DYNI_RESULTS). Layout: eval/{backend}/{suite}/l{level}/
+# One root: ${out}/  (DYNI_OUT; DYNI_RESULTS is a writer-side alias). Layout: eval/{backend}/{suite}/l{level}/
 dyni_paths() {
   PYTHONPATH="$DYNI_ROOT/src${PYTHONPATH:+:$PYTHONPATH}" \
     "${DYNI_PY:-python}" -m dynisafety.config.paths "$@"
@@ -53,6 +53,16 @@ dyni_results_root() {
 
 dyni_eval_root() {
   dyni_paths eval-root
+}
+
+# JSONL tree for 02/03 (layout.eval prefix). DYNI_RESULTS aliases roots.out
+# for writers / resume — do not reuse it as the report/analysis read root.
+dyni_eval_read_root() {
+  if [[ -n "${DYNI_EVAL_ROOT:-}" ]]; then
+    printf '%s' "$DYNI_EVAL_ROOT"
+  else
+    dyni_eval_root
+  fi
 }
 
 dyni_artifacts_dir() {

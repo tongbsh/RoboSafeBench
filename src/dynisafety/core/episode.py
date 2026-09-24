@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ast
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, fields
 from typing import Any
 
@@ -12,7 +14,7 @@ SCHEMA_VERSION = "2.0"
 # name-compatible: the old ``behavior_class`` vocabulary
 # (collide/freeze/cautious/ignore) means something different from the new
 # 9-class one, so silently reading a 1.x file would misreport rather than fail.
-# See docs/user/behavior_diagnostics.md §3.1 and docs/user/migration.md.
+# See docs/user/eval.md §3.1 and docs/user/repo.md.
 _READABLE_SCHEMA_VERSIONS = frozenset({SCHEMA_VERSION})
 
 # Defaulted on read so a record can be hand-built without diagnostics.
@@ -54,6 +56,42 @@ _FIELD_NAMES = frozenset(
         "diagnostics",
     }
 )
+
+
+def format_checkpoint_label(value: Any, *, suite: str = "") -> str:
+    """Path-like id for ``EpisodeRecord`` / capture packages.
+
+    Model YAML may store ``checkpoint`` as a mapping
+    (``{default: ..., per_suite: {...}}``). ``str(mapping)`` must not leak
+    into JSONL or ``annotation.json``.
+    """
+    if value is None:
+        return "none"
+    if isinstance(value, Mapping):
+        return _checkpoint_from_mapping(value, suite)
+    text = str(value).strip()
+    if not text:
+        return "none"
+    if text[0] == "{" and ("default" in text or "per_suite" in text):
+        try:
+            parsed = ast.literal_eval(text)
+        except (ValueError, SyntaxError):
+            return text
+        if isinstance(parsed, Mapping):
+            return _checkpoint_from_mapping(parsed, suite)
+    return text
+
+
+def _checkpoint_from_mapping(raw: Mapping[str, Any], suite: str) -> str:
+    per = raw.get("per_suite")
+    if suite and isinstance(per, Mapping):
+        hit = per.get(suite)
+        if isinstance(hit, str) and hit.strip():
+            return hit.strip()
+    default = raw.get("default")
+    if isinstance(default, str) and default.strip():
+        return default.strip()
+    return "none"
 
 
 def _json_safe(value: Any) -> Any:
@@ -126,7 +164,7 @@ class EpisodeRecord:
     # --- 行为诊断（反应/停止/规避/恢复）---
     # ``BehaviorDiagnostics.to_json_dict()`` 的固定 schema，或 None（诊断关闭 /
     # backend 未接线）。与自由格式的 ``extra`` 不同，本字段进正式报表；None 时
-    # 表格渲染 n/a，绝不填 0。定义见 docs/user/behavior_diagnostics.md。
+    # 表格渲染 n/a，绝不填 0。定义见 docs/user/eval.md。
     diagnostics: dict[str, Any] | None = None
 
     def to_json_dict(self) -> dict[str, Any]:
@@ -144,7 +182,7 @@ class EpisodeRecord:
                 f"build (expected {SCHEMA_VERSION!r}). Behavior diagnostics replaced the "
                 "reactivity fields and the behavior_class vocabulary changed meaning, so "
                 "old runs must be re-generated rather than reinterpreted. "
-                "See docs/user/migration.md."
+                "See docs/user/repo.md."
             )
         keys = set(data.keys())
         missing = (_FIELD_NAMES - _OPTIONAL_FIELD_NAMES) - keys

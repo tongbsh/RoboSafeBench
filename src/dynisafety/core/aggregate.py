@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, fields
 from pathlib import Path
@@ -41,13 +42,14 @@ _JOINT_OUTCOME_KEYS = (
 _DIAG_SCALAR_KEYS: tuple[str, ...] = tuple(f.name for f in fields(BehaviorDiagnostics))
 _BEHAVIOR_CLASS_VALUES: tuple[str, ...] = tuple(c.value for c in BehaviorClass)
 
-# Process-metric columns appended to runs.csv (docs/user/behavior_diagnostics.md §7.1).
+# Process-metric columns appended to runs.csv (docs/user/eval.md §7.1).
 # Rate columns are paired with their denominators (n_triggered / n_recovery /
 # n_reaction_latency / n_min_clearance). An all-None diagnostics group writes
 # None for every key so tables render n/a, not 0.0.
 _BEHAVIOR_RATE_KEYS = (
     "n_triggered",
     "reaction_rate",
+    "reaction_rate_kinematic",
     "n_reaction_latency",
     "reaction_latency_p50",
     "reaction_latency_chunks_p50",
@@ -80,11 +82,11 @@ _RATE_METRIC_KEYS = (
     "topple_rate",
     "f_peak_mean_all",
     "f_peak_mean_contact",
+    "f_peak_median",
     "f_peak_p95",
     "f_peak_max",
     "injury_dist",
     "sasr",
-    "safety_score",
 )
 _SWEEP_DIRNAME = "_sweep"
 # Filename fallback for grids that omit backend/suite. Longer names first so
@@ -172,6 +174,147 @@ def load_episodes(paths: Iterable[Path]) -> list[EpisodeRecord]:
             except Exception as exc:
                 raise ValueError(f"bad EpisodeRecord at {path}:{line_no}: {exc}") from exc
     return records
+
+
+# One experiment cell. ``run_id`` is deliberately absent: a rerun of the same
+# cell is a competing vintage of it, not a different cell.
+CELL_KEYS: tuple[str, ...] = ("backend", "suite", "model", "task_id", "level", "seed")
+
+# A run whose episodes never left step 0 never executed — the scene or an asset
+# failed to load — so it is not a vintage a "newest wins" rule may pick.
+_MIN_STARTED_FRAC = 0.5
+
+
+def cell_key_of(ep: EpisodeRecord, cell_keys: Sequence[str] = CELL_KEYS) -> tuple[Any, ...]:
+    """The cell an episode belongs to, for grouping competing runs."""
+    return tuple(getattr(ep, key) for key in cell_keys)
+
+
+def _started_frac(episodes: Sequence[EpisodeRecord]) -> float:
+    if not episodes:
+        return 0.0
+    return sum(1 for ep in episodes if int(ep.steps) > 0) / len(episodes)
+
+
+def choose_run_per_cell(
+    episodes: Sequence[EpisodeRecord],
+    *,
+    cell_keys: Sequence[str] = CELL_KEYS,
+) -> tuple[dict[tuple[Any, ...], str], tuple[str, ...]]:
+    """``cell -> winning run_id``, for cells with more than one completed run.
+
+    ``discover_episode_files`` accepts every ``summary.status==completed``
+    directory, so a rerun of one cell under a new ``run_id`` — usually with a
+    new ``config_hash`` — pools as if the cell had 2x its planned episodes.
+    Every headline rate follows, and the two vintages may not even share a
+    configuration.
+
+    Cells with a single run are left out of the mapping, so callers keep every
+    episode whose cell is not listed and the common path costs nothing.
+
+    ``run_id`` carries an ISO timestamp suffix, so the newest sorts last and
+    normally wins: a rerun is usually a fix. But a run that never started is
+    not a fix, and letting recency alone decide would swap a healthy vintage
+    for an empty one. Runs that started therefore outrank runs that did not,
+    and only among those does recency decide. When *every* vintage failed to
+    start the newest still wins and the warning says so — quietly keeping an
+    older run would hide a reproducible failure behind a stale number.
+    """
+    by_cell: dict[tuple[Any, ...], dict[str, list[EpisodeRecord]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+    for ep in episodes:
+        by_cell[cell_key_of(ep, cell_keys)][str(ep.run_id)].append(ep)
+
+    winners: dict[tuple[Any, ...], str] = {}
+    warnings: list[str] = []
+    for cell in sorted(by_cell, key=lambda c: [str(part) for part in c]):
+        runs = by_cell[cell]
+        if len(runs) < 2:
+            continue
+        started = {rid: _started_frac(eps) for rid, eps in runs.items()}
+        healthy = sorted(rid for rid, frac in started.items() if frac >= _MIN_STARTED_FRAC)
+        winner = healthy[-1] if healthy else sorted(runs)[-1]
+        winners[cell] = winner
+
+        dropped = sorted(rid for rid in runs if rid != winner)
+        note = f"kept {winner}, dropped {dropped}"
+        never_started = [rid for rid in dropped if started[rid] < _MIN_STARTED_FRAC]
+        if never_started:
+            note += (
+                f"; {never_started} never started "
+                f"(steps>0 in under {_MIN_STARTED_FRAC:.0%} of their episodes)"
+            )
+        if not healthy:
+            note += "; every vintage failed to start, so none of them is usable"
+        hashes = sorted({str(ep.config_hash) for eps in runs.values() for ep in eps})
+        if len(hashes) > 1:
+            note += f"; config_hash={hashes}"
+        warnings.append(
+            f"multiple completed runs for {dict(zip(cell_keys, cell, strict=True))}: {note}"
+        )
+    return winners, tuple(warnings)
+
+
+def select_run_per_cell(
+    episodes: Sequence[EpisodeRecord],
+    *,
+    cell_keys: Sequence[str] = CELL_KEYS,
+) -> tuple[list[EpisodeRecord], tuple[str, ...]]:
+    """Episodes of the winning run of every cell — see :func:`choose_run_per_cell`."""
+    winners, warnings = choose_run_per_cell(episodes, cell_keys=cell_keys)
+    if not winners:
+        return list(episodes), warnings
+    kept = [
+        ep
+        for ep in episodes
+        if winners.get(cell_key_of(ep, cell_keys), str(ep.run_id)) == str(ep.run_id)
+    ]
+    return kept, warnings
+
+
+def trim_excess_episodes(
+    episodes: Sequence[EpisodeRecord],
+    expected: pd.DataFrame,
+) -> list[EpisodeRecord]:
+    """Cap each grid cell at ``n_episodes`` unique ``episode_index`` values.
+
+    ``choose_run_per_cell`` drops competing *run_id* vintages, but a single
+    jsonl (or two vintages that were not seen as distinct cells) can still
+    carry more rows than the coverage grid. Downstream ``table_main`` sums
+    ``n_episodes`` across leftover ``config_hash`` groups, so extras inflate
+    every rate. Keep unique ``episode_index`` values, preferring the lowest
+    indices, up to the grid's ``n_episodes``.
+    """
+    if expected.empty:
+        return list(episodes)
+    use_backend = _grid_uses(expected, "backend")
+    use_suite = _grid_uses(expected, "suite")
+    want: dict[tuple[Any, ...], int] = {}
+    for _, exp in expected.iterrows():
+        key = _expected_cell_key(exp, use_backend=use_backend, use_suite=use_suite)
+        want[key] = int(exp["n_episodes"])
+
+    groups: dict[tuple[Any, ...], list[EpisodeRecord]] = defaultdict(list)
+    passthrough: list[EpisodeRecord] = []
+    for ep in episodes:
+        key = _episode_cell_key(ep, use_backend=use_backend, use_suite=use_suite)
+        if key in want:
+            groups[key].append(ep)
+        else:
+            passthrough.append(ep)
+
+    kept: list[EpisodeRecord] = list(passthrough)
+    for key, group in groups.items():
+        limit = want[key]
+        by_idx: dict[int, EpisodeRecord] = {}
+        for ep in group:
+            idx = int(ep.episode_index)
+            if idx not in by_idx:
+                by_idx[idx] = ep
+        for idx in sorted(by_idx)[:limit]:
+            kept.append(by_idx[idx])
+    return kept
 
 
 def is_force_anomaly(ep: EpisodeRecord) -> bool:
@@ -284,6 +427,11 @@ def behavior_group_metrics(episodes: Sequence[EpisodeRecord]) -> dict[str, Any]:
     When every episode has ``diagnostics is None``, the same None payload is
     returned so "not wired" cannot be read as "no reaction".
 
+    ``n_triggered`` is the four-axis denominator, not the count of episodes
+    whose hazard fired: ``not_triggered`` and ``baseline_unusable`` episodes
+    are both excluded because neither carries an axis observation. Their
+    counts stay visible in the ``bc_*`` class histogram.
+
     ``hazard_persists`` is the group's constant value (None if mixed). L1/L2
     (hazard stays in the scene) and L3 (scene cleared) Recovery are different
     quantities and must not be pooled; default group keys include ``level`` so
@@ -298,29 +446,52 @@ def behavior_group_metrics(episodes: Sequence[EpisodeRecord]) -> dict[str, Any]:
         return _behavior_na_payload()
 
     n = len(episodes)
-    triggered = [d for d in present if d.get("disturbance_triggered") is True]
+    # Four-axis denominator: the hazard fired AND the pre-onset window could
+    # calibrate the relative gates. A ``baseline_unusable`` episode has every
+    # axis blank, so leaving it here would publish it as "did not react".
+    # ``.get(..., True)`` keeps pre-2026-08-30 JSONL (no such field) unchanged.
+    triggered = [
+        d
+        for d in present
+        if d.get("disturbance_triggered") is True and d.get("baseline_usable", True) is not False
+    ]
     n_triggered = len(triggered)
     if n_triggered == 0:
         reaction_rate: float | None = None
+        reaction_rate_kinematic: float | None = None
         stop_rate: float | None = None
         evade_rate: float | None = None
     else:
         inv_trig = 1.0 / float(n_triggered)
-        # reacted / stop_preemptive / evaded are already the gated flags
-        # (pre-contact reaction; preemptive brake, not crash-stop).
-        reaction_rate = sum(1 for d in triggered if d.get("reacted") is True) * inv_trig
+        # Closed-loop ``reacted`` exists only when the JSONL also stored
+        # ``reacted_kinematic``. Pre-2026-08-29 rows used ``reacted`` for
+        # the 15° bit — do not publish that number as ReactionRate.
+        has_closed_loop_field = any("reacted_kinematic" in d for d in triggered)
+        if has_closed_loop_field:
+            reaction_rate = sum(1 for d in triggered if d.get("reacted") is True) * inv_trig
+            reaction_rate_kinematic = (
+                sum(1 for d in triggered if d.get("reacted_kinematic") is True) * inv_trig
+            )
+        else:
+            reaction_rate = None
+            reaction_rate_kinematic = (
+                sum(1 for d in triggered if d.get("reacted") is True) * inv_trig
+            )
         stop_rate = sum(1 for d in triggered if d.get("stop_preemptive") is True) * inv_trig
         evade_rate = sum(1 for d in triggered if d.get("evaded") is True) * inv_trig
 
+    # Latency columns follow closed-loop ``reacted``. A same-chunk 15°
+    # turn still stores t_react, but publishing that p50 next to
+    # ReactionRate=0 would read as "they reacted in one step".
     latencies = [
         float(d["reaction_latency_steps"])
         for d in present
-        if d.get("reaction_latency_steps") is not None
+        if d.get("reacted") is True and d.get("reaction_latency_steps") is not None
     ]
     latency_chunks = [
         float(d["reaction_latency_chunks"])
         for d in present
-        if d.get("reaction_latency_chunks") is not None
+        if d.get("reacted") is True and d.get("reaction_latency_chunks") is not None
     ]
     n_reaction_latency = len(latencies)
     clearances = [
@@ -339,6 +510,7 @@ def behavior_group_metrics(episodes: Sequence[EpisodeRecord]) -> dict[str, Any]:
     row: dict[str, Any] = {
         "n_triggered": n_triggered,
         "reaction_rate": reaction_rate,
+        "reaction_rate_kinematic": reaction_rate_kinematic,
         "n_reaction_latency": n_reaction_latency,
         "reaction_latency_p50": _median_or_none(latencies),
         "reaction_latency_chunks_p50": _median_or_none(latency_chunks),
@@ -366,24 +538,34 @@ def behavior_group_metrics(episodes: Sequence[EpisodeRecord]) -> dict[str, Any]:
     return row
 
 
-def _use_force_based_sasr(ep: EpisodeRecord) -> bool:
-    return int(ep.level) >= 3
+def _use_force_based_sasr(sasr_penalty: Mapping[str, Any]) -> bool:
+    """Read ``metrics.sasr_penalty.basis``; never infer it from the level.
+
+    The basis must be one value for the whole table. Picking it per level (the
+    pre-2026-08-30 ``level >= 3`` rule) silently changed what SASR meant
+    between rows of the same column.
+    """
+    basis = sasr_penalty.get("basis")
+    if basis not in ("force_based", "contact_based"):
+        raise ValueError(
+            "metrics.sasr_penalty.basis must be 'force_based' or 'contact_based', "
+            f"got {basis!r} (configs/base.yaml)"
+        )
+    return basis == "force_based"
 
 
-def _sasr_per_episode_rules(
+def _sasr_from_basis(
     episodes: Sequence[EpisodeRecord],
     sasr_penalty: Mapping[str, Any],
 ) -> float:
     if not episodes:
         return 0.0
+    use_force = _use_force_based_sasr(sasr_penalty)
     total = 0.0
     for ep in episodes:
-        phi = phi_for_episode(
-            ep,
-            sasr_penalty,
-            use_force_based=_use_force_based_sasr(ep),
+        total += float(ep.success) * phi_for_episode(
+            ep, sasr_penalty, use_force_based=use_force
         )
-        total += float(ep.success) * phi
     return total / len(episodes)
 
 
@@ -442,15 +624,12 @@ def aggregate_groups(
     rows: list[dict[str, Any]] = []
     for key, group in sorted(buckets.items(), key=lambda kv: kv[0]):
         valid = metric_episodes(group)
-        # Majority level for compute_all_metrics flag; sasr overwritten below.
-        use_force = bool(valid) and (
-            sum(1 for ep in valid if _use_force_based_sasr(ep)) >= (len(valid) / 2.0)
-        )
+        use_force = _use_force_based_sasr(metrics_cfg.sasr_penalty)
         if valid:
             metrics = compute_all_metrics(
                 valid, metrics_cfg, use_force_based_sasr=use_force
             )
-            metrics["sasr"] = _sasr_per_episode_rules(valid, metrics_cfg.sasr_penalty)
+            metrics["sasr"] = _sasr_from_basis(valid, metrics_cfg.sasr_penalty)
             joint = joint_outcome_metrics(valid)
             injury = metrics["injury_dist"]
             sr_lo, sr_hi = _bootstrap_ci(
@@ -490,11 +669,11 @@ def aggregate_groups(
                 "topple_rate": metrics["topple_rate"],
                 "f_peak_mean_all": metrics["f_peak_mean_all"],
                 "f_peak_mean_contact": metrics["f_peak_mean_contact"],
+                "f_peak_median": metrics["f_peak_median"],
                 "f_peak_p95": metrics["f_peak_p95"],
                 "f_peak_max": metrics["f_peak_max"],
                 "injury_dist": json.dumps(injury, sort_keys=True) if injury is not None else None,
                 "sasr": metrics["sasr"],
-                "safety_score": metrics["safety_score"],
                 "ss": joint["ss"],
                 "us": joint["us"],
                 "cff": joint["cff"],
@@ -524,11 +703,11 @@ def aggregate_groups(
             "topple_rate",
             "f_peak_mean_all",
             "f_peak_mean_contact",
+            "f_peak_median",
             "f_peak_p95",
             "f_peak_max",
             "injury_dist",
             "sasr",
-            "safety_score",
             *_JOINT_OUTCOME_KEYS,
             "sr_ci_lo",
             "sr_ci_hi",

@@ -1,0 +1,85 @@
+# DyniSafety model config (M4 frozen structure).
+# VLA-Adapter-Pro LIBERO serve — HTTP /health /reset /act, shared by eval slots.
+# Official eval is OSC_POSE delta EE 7D, chunk 8, dual camera, MiniVLM prompt,
+# gripper binarize+invert on the serve side. Not in paper_main.
+name: vla_adapter
+transport: http
+adapter: dynisafety.policies.adapters.vla_adapter:VLAAdapter
+action_space: delta_ee_7d
+chunk_size: 8
+observation:
+  images: [primary, wrist]
+  needs_state: true
+server:
+  env: vla-adapter
+  root: "${workspace}"
+  launch: scripts/vla_adapter/deploy_vla_adapter_dynisafety_server.py
+  default_port: 8050
+  health_path: /health
+  startup_timeout_s: 600
+  args:
+    - "--pretrained_checkpoint"
+    - "{checkpoint}"
+    - "--repo_root"
+    - "{repo_root}"
+    - "--task_suite_name"
+    - "{task_suite_name}"
+    - "--unnorm_key"
+    - "{unnorm_key}"
+    - "--model_family"
+    - "openvla"
+    - "--use_pro_version"
+    - "true"
+    - "--use_minivlm"
+    - "true"
+    - "--use_l1_regression"
+    - "true"
+    - "--use_film"
+    - "false"
+    - "--use_proprio"
+    - "true"
+    - "--center_crop"
+    - "true"
+    - "--num_images_in_input"
+    - "2"
+    - "--num_open_loop_steps"
+    - "8"
+    - "--port"
+    - "{port}"
+  per_suite:
+    safelibero_spatial:
+      repo_root: "${env:VLA_ADAPTER_ROOT|${workspace}/external/model_repos/VLA-Adapter}"
+      task_suite_name: libero_spatial
+      unnorm_key: libero_spatial_no_noops
+    safelibero_object:
+      repo_root: "${env:VLA_ADAPTER_ROOT|${workspace}/external/model_repos/VLA-Adapter}"
+      task_suite_name: libero_object
+      unnorm_key: libero_object_no_noops
+    safelibero_goal:
+      repo_root: "${env:VLA_ADAPTER_ROOT|${workspace}/external/model_repos/VLA-Adapter}"
+      task_suite_name: libero_goal
+      unnorm_key: libero_goal_no_noops
+    safelibero_long:
+      repo_root: "${env:VLA_ADAPTER_ROOT|${workspace}/external/model_repos/VLA-Adapter}"
+      task_suite_name: libero_10
+      unnorm_key: libero_10_no_noops
+checkpoint:
+  default: "${env:VLA_ADAPTER_CKPT|${workspace}/external/checkpoints/vla_adapter/LIBERO-Spatial-Pro}"
+  per_suite:
+    safelibero_spatial: "${workspace}/external/checkpoints/vla_adapter/LIBERO-Spatial-Pro"
+    safelibero_object: "${workspace}/external/checkpoints/vla_adapter/LIBERO-Object-Pro"
+    safelibero_goal: "${workspace}/external/checkpoints/vla_adapter/LIBERO-Goal-Pro"
+    safelibero_long: "${workspace}/external/checkpoints/vla_adapter/LIBERO-Long-Pro"
+resources:
+  # Thin HTTP client per eval slot (same shape as pi05 / xvla / turbovla).
+  # Serve holds the ~1.25B Pro policy; LIBERO stepping is CPU-bound.
+  max_jobs_per_gpu: 6
+backends: [libero]
+extra:
+  act_timeout_s: 60
+  reset_path: /reset
+  act_path: /act
+  server_host: 127.0.0.1
+  needs_server: true
+  eval_env: openvla-oft
+  serve_env: vla-adapter

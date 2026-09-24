@@ -205,3 +205,19 @@ def test_nudge_xy_away_from_eef() -> None:
     assert abs(float(out[0]) - 0.12) < 1e-9
     coincide = nudge_xy_away(np.array([0.0, 0.0]), np.array([0.0, 0.0]), 0.02)
     assert abs(float(coincide[0]) - 0.02) < 1e-9
+
+
+def test_l1_drop_step_survives_physics_release() -> None:
+    ctrl = _ctrl(eef=np.array([0.07, 0.0, 1.10]))
+    ctrl._dropped = True
+    ctrl.mark_placed(1501)
+    assert ctrl.drop_step is None
+    ctrl.lock_drop_task_step(42)
+    assert ctrl.drop_step == 42
+    assert ctrl.disturbance_onset_step == 42
+    ctrl.on_released_to_physics()
+    assert ctrl._placed_sim_step is None
+    assert ctrl.drop_step == 42
+    assert ctrl.disturbance_onset_step == 42
+    ctrl.lock_drop_task_step(99)
+    assert ctrl.drop_step == 42

@@ -23,6 +23,7 @@ class SlidingObstacleController(BaseDisturbanceController):
         path_style: str = "arc",
         cruise_z: float | None = None,
         descent_alpha: float | None = None,
+        move_start_task_step: int = 0,
     ) -> None:
         super().__init__(actor, default_quat=quat)
         self.start_pos = np.asarray(start_pos, dtype=np.float64)
@@ -30,6 +31,7 @@ class SlidingObstacleController(BaseDisturbanceController):
         self.move_start_step = int(move_start_step)
         self.move_end_step = int(move_end_step)
         self.hold_end_step = int(move_end_step + hold_steps)
+        self.move_start_task_step = int(move_start_task_step)
         self.arc_height = float(arc_height)
         self.path_style = str(path_style)
         self.cruise_z = None if cruise_z is None else float(cruise_z)
@@ -38,6 +40,13 @@ class SlidingObstacleController(BaseDisturbanceController):
         self._released = False
         self._frozen = False
         self._release_reason: str | None = None
+        self._onset_task_step: int | None = None
+        self._path_sim0: int | None = None
+
+    @property
+    def disturbance_onset_step(self) -> int | None:
+        """Task-step onset (first frame the slide actually starts)."""
+        return self._onset_task_step
 
     @property
     def release_reason(self) -> str | None:
@@ -72,11 +81,37 @@ class SlidingObstacleController(BaseDisturbanceController):
         pos[2] += arc_lift(a, self.arc_height)
         return pos
 
-    def update_before_step(self, sim_step: int) -> None:
+    def update_before_step(self, sim_step: int, *, task_step: int | None = None) -> None:
         if not self._follow_path():
             self._active = True
             return
         self._active = True
+        t_task = 0 if task_step is None else int(task_step)
+        if int(self.move_start_task_step) > 0:
+            if t_task < int(self.move_start_task_step):
+                self._set_pose(self.start_pos)
+                return
+            if self._path_sim0 is None:
+                self._path_sim0 = int(sim_step)
+                self._onset_task_step = t_task
+            elapsed = int(sim_step) - int(self._path_sim0)
+            duration = max(self.move_end_step - self.move_start_step, 1)
+            hold = max(int(self.hold_end_step) - int(self.move_end_step), 0)
+            if elapsed <= duration:
+                alpha = elapsed / duration
+                self._set_pose(self._path_pos(alpha))
+                return
+            if elapsed <= duration + hold:
+                self._set_pose(self.final_pos)
+                return
+            self._released = True
+            self._release_pending = True
+            self._release_reason = "settle"
+            return
+        if self._onset_task_step is None and task_step is not None and int(sim_step) >= int(
+            self.move_start_step
+        ):
+            self._onset_task_step = t_task
         if sim_step < self.move_start_step:
             self._set_pose(self.start_pos)
             return
@@ -101,7 +136,7 @@ class SlidingObstacleController(BaseDisturbanceController):
         self._release_reason = "impulse_hit"
 
     def cancel_pending_release(self) -> None:
-        """Stay kinematic at the last free pose; do not rebuild as dynamic."""
+        """Opt-out park: stay kinematic at last free pose (flag off)."""
         self._release_pending = False
         self._released = True
         self._frozen = True

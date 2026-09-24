@@ -21,6 +21,8 @@ from dynisafety.core.aggregate import (
     filter_episodes_for_grid,
     load_coverage_grid,
     load_episodes,
+    select_run_per_cell,
+    trim_excess_episodes,
     validate_coverage,
     write_episodes_parquet,
     write_runs_csv,
@@ -184,6 +186,13 @@ def run_coverage(
     paths = discover_episode_files(results)
     expected = load_coverage_grid(grid)
     episodes = filter_episodes_for_grid(load_episodes(paths), expected)
+    # One vintage per cell before counting: two completed runs of one cell
+    # would otherwise read as excess_episodes here and as a 2x denominator in
+    # every table downstream.
+    episodes, run_warnings = select_run_per_cell(episodes)
+    for warning in run_warnings:
+        print(f"warning: {warning}", file=sys.stderr)
+    episodes = trim_excess_episodes(episodes, expected)
 
     coverage = validate_coverage(
         pd.DataFrame(),
@@ -249,8 +258,18 @@ def generate_report(
         except ImportError as exc:
             print(f"warning: skip episodes.parquet: {exc}", file=sys.stderr)
 
+    # The same invariants ``report joint`` checks; a paper table should not
+    # be the first place ss+us+cff+cif != N_valid shows up.
+    issues = check_joint_table_consistency(runs_df)
+    if issues:
+        print(f"joint consistency warnings ({len(issues)}):", file=sys.stderr)
+        for msg in issues[:20]:
+            print(f"  {msg}", file=sys.stderr)
+
     backends = sorted({ep.backend for ep in episodes})
-    render_all_tables(runs_df, Path(out), backends_present=backends)
+    render_all_tables(
+        runs_df, Path(out), backends_present=backends, episodes_df=episodes_df
+    )
     if write_plots:
         render_all_plots(runs_df, episodes_df, Path(out))
     return 0
@@ -302,6 +321,12 @@ def run_report_joint(args: argparse.Namespace) -> int:
         expected = load_coverage_grid(Path(grid))
         paths = discover_episode_files(Path(args.results))
         episodes = filter_episodes_for_grid(load_episodes(paths), expected)
+        # Same one-vintage-per-cell rule as ``generate``: two completed runs
+        # of one cell would otherwise double every N in the joint tables.
+        episodes, run_warnings = select_run_per_cell(episodes)
+        for warning in run_warnings:
+            print(f"warning: {warning}", file=sys.stderr)
+        episodes = trim_excess_episodes(episodes, expected)
         options = AggregateOptions(
             group_keys=_DEFAULT_GROUP_KEYS,
             ci_method="bootstrap",

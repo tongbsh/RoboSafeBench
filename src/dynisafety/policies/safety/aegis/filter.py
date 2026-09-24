@@ -166,5 +166,6 @@ class AegisActionFilter:
             extra={
                 "alpha_declared": cfg.alpha,
                 "max_vel": cfg.max_vel,
+                "motion_mode": cfg.motion_mode.value,
             },
         )

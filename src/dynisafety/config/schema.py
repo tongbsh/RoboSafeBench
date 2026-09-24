@@ -67,6 +67,15 @@ class DiagnosticsReactionConfig:
     # Reaction = deviation of the velocity vector (magnitude OR direction).
     heading_change_deg: float = field(default=MISSING)
     sigma_rel_floor: float = field(default=MISSING)
+    # Closed-loop gate on ``reacted``: require
+    # reaction_latency_chunks >= this value. 1 = one full action chunk
+    # (default). 0 = off (``reacted`` equals the kinematic pre-contact bit).
+    min_latency_chunks: float = field(default=MISSING)
+    # Baseline-validity guard. mu_pre is the scale for every relative gate on
+    # all four axes, so a window that does not observe the policy moving makes
+    # those gates meaningless rather than merely noisy.
+    min_baseline_samples: int = field(default=MISSING)
+    min_baseline_speed_frac: float = field(default=MISSING)
 
 
 @dataclass
@@ -98,10 +107,35 @@ class DiagnosticsHazardEndConfig:
 
 
 @dataclass
+class DiagnosticsCounterfactualConfig:
+    """Paired L0-control reaction detection (analysis layer, see docs/user/eval.md).
+
+    Single-trace kinematics cannot separate a hazard response from the task's
+    own trajectory, so this axis scores the hazard episode against its matched
+    level-0 run instead. Thresholds are on EEF divergence in metres, which is
+    a within-(backend, model) quantity — the resulting *rate* is comparable,
+    the metres are not.
+    """
+
+    # threshold = max(sensitivity * pooled pre-onset quantile, floor_m)
+    sensitivity: float = field(default=MISSING)
+    floor_m: float = field(default=MISSING)
+    # Quantile of the pooled pre-onset divergence used as the null scale.
+    null_quantile: float = field(default=MISSING)
+    min_persist_steps: int = field(default=MISSING)
+    # Analysis-only. A failed L0 is a bad counterfactual; drop the pair from
+    # every paired-axis denominator (never score it as "no stop / no action").
+    require_control_success: bool = field(default=MISSING)
+    # Floor on ||a_hazard − a_L0||. Action units are not metres — do not reuse
+    # floor_m. threshold = max(sensitivity × pooled pre-onset quantile, this).
+    action_floor: float = field(default=MISSING)
+
+
+@dataclass
 class DiagnosticsConfig:
     """Behavior diagnostics (react / stop / avoid / recover).
 
-    See docs/user/behavior_diagnostics.md. Disabled → EpisodeRecord.diagnostics is
+    See docs/user/eval.md. Disabled → EpisodeRecord.diagnostics is
     null and tables render n/a (never 0.0).
     """
 
@@ -112,6 +146,20 @@ class DiagnosticsConfig:
     avoid: DiagnosticsAvoidConfig = field(default=MISSING)
     recovery: DiagnosticsRecoveryConfig = field(default=MISSING)
     hazard_end: DiagnosticsHazardEndConfig = field(default=MISSING)
+    counterfactual: DiagnosticsCounterfactualConfig = field(default=MISSING)
+
+
+@dataclass
+class CaptureConfig:
+    """Optional WRM episode-package sidecar during eval.
+
+    Disabled (the YAML default) → ``CaptureSession`` is a no-op: no extra
+    image copies, no directories, no writes. Enabled → same rollout writes
+    ``robosafe_capture_1.0`` packages. Never written into ``EpisodeRecord``.
+    """
+
+    enabled: bool = field(default=MISSING)
+    dataset_root: str = field(default=MISSING)
 
 
 @dataclass
@@ -270,6 +318,7 @@ class RunConfig:
     contact: ContactConfig = field(default=MISSING)
     metrics: MetricsConfig = field(default=MISSING)
     diagnostics: DiagnosticsConfig = field(default=MISSING)
+    capture: CaptureConfig = field(default=MISSING)
     output: OutputConfig = field(default=MISSING)
     # Nested views of the YAML tree (M1).
     runtime: RuntimeConfig = field(default=MISSING)
@@ -291,6 +340,7 @@ _NESTED_FIELD_TYPES: dict[type, dict[str, type]] = {
         "avoid": DiagnosticsAvoidConfig,
         "recovery": DiagnosticsRecoveryConfig,
         "hazard_end": DiagnosticsHazardEndConfig,
+        "counterfactual": DiagnosticsCounterfactualConfig,
     },
     DisturbanceConfig: {
         "l1": DisturbanceL1Config,
@@ -302,6 +352,7 @@ _NESTED_FIELD_TYPES: dict[type, dict[str, type]] = {
         "contact": ContactConfig,
         "metrics": MetricsConfig,
         "diagnostics": DiagnosticsConfig,
+        "capture": CaptureConfig,
         "output": OutputConfig,
         "runtime": RuntimeConfig,
         "disturbance": DisturbanceConfig,
@@ -324,6 +375,7 @@ def iter_config_dataclasses() -> Iterable[type]:
         DiagnosticsRecoveryConfig,
         DiagnosticsHazardEndConfig,
         DiagnosticsConfig,
+        CaptureConfig,
         OutputConfig,
         RuntimeConfig,
         DisturbanceL1Config,

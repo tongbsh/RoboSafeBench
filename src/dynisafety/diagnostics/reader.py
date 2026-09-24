@@ -3,7 +3,7 @@
 Schema mismatches fail loudly: ``trace_schema_version`` is checked against
 this package **before** ``TraceHeader`` fields are parsed, then missing or
 extra keys are wrapped the same way. Both raise :class:`TraceSchemaVersionError`
-pointing at ``docs/user/behavior_diagnostics.md``. Silent reinterpretation of a
+pointing at ``docs/user/eval.md``. Silent reinterpretation of a
 different contract would corrupt every downstream diagnostic.
 
 Truncated files (process killed mid-write) raise :class:`TruncatedTraceError`
@@ -39,7 +39,7 @@ class TraceSchemaVersionError(ValueError):
             message = (
                 f"trace_schema_version {found!r} in {path} does not match "
                 f"this package ({TRACE_SCHEMA_VERSION!r}). Refusing to read a "
-                f"foreign contract. See docs/user/behavior_diagnostics.md §4 "
+                f"foreign contract. See docs/user/eval.md §4 "
                 f"(TraceHeader / StepRecord)."
             )
         else:
@@ -49,7 +49,7 @@ class TraceSchemaVersionError(ValueError):
                 f"{reason}. The on-disk header is from a different schema "
                 f"revision (trace_schema_version={found!r}; missing or extra "
                 f"TraceHeader keys). Refusing to read a foreign contract. "
-                f"See docs/user/behavior_diagnostics.md §4 (TraceHeader / StepRecord)."
+                f"See docs/user/eval.md §4 (TraceHeader / StepRecord)."
             )
         super().__init__(message)
         self.found = found
@@ -83,7 +83,7 @@ def _read_lines(path: Path) -> list[str]:
         raise TruncatedTraceError(
             f"{path}: failed to decompress the gzip stream ({type(exc).__name__}: "
             f"{exc}). A crash mid-write leaves gzip members unrecoverable; "
-            f"re-run the episode. See docs/user/behavior_diagnostics.md §4.5.",
+            f"re-run the episode. See docs/user/eval.md §4.5.",
             path,
         ) from exc
 
@@ -126,7 +126,7 @@ def read_trace(path: Path | str, *, strict: bool = True) -> Trace:
     if not lines:
         raise TruncatedTraceError(
             f"{dest}: file is empty (no TraceHeader). See "
-            f"docs/user/behavior_diagnostics.md §4.",
+            f"docs/user/eval.md §4.",
             dest,
         )
 
@@ -145,7 +145,7 @@ def read_trace(path: Path | str, *, strict: bool = True) -> Trace:
                 f"{dest}: line {i + 1} is not valid JSON ({exc}). "
                 f"The file may have been truncated (process killed mid-write). "
                 f"Pass strict=False to keep the complete prefix. "
-                f"See docs/user/behavior_diagnostics.md §4.5.",
+                f"See docs/user/eval.md §4.5.",
                 dest,
             ) from exc
         if not isinstance(payload, dict):
@@ -155,7 +155,7 @@ def read_trace(path: Path | str, *, strict: bool = True) -> Trace:
     if not records:
         raise TruncatedTraceError(
             f"{dest}: no complete JSON objects (header missing). See "
-            f"docs/user/behavior_diagnostics.md §4.",
+            f"docs/user/eval.md §4.",
             dest,
         )
 
@@ -168,7 +168,7 @@ def read_trace(path: Path | str, *, strict: bool = True) -> Trace:
                 f"{len(steps)} complete step records. The file may have been "
                 f"truncated (process killed mid-write). Pass strict=False to "
                 f"keep the complete prefix and repair n_steps. See "
-                f"docs/user/behavior_diagnostics.md §4.5.",
+                f"docs/user/eval.md §4.5.",
                 dest,
             )
         header = replace(header, n_steps=len(steps))

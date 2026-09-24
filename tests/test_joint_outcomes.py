@@ -22,6 +22,7 @@ def _cfg() -> MetricsConfig:
     return MetricsConfig(
         injury_thresholds_n={"safe": 50.0, "minor": 100.0, "moderate": 150.0},
         sasr_penalty={
+            "basis": "force_based",
             "force_based": [
                 {"max_force_n": 50.0, "phi": 1.0},
                 {"max_force_n": 150.0, "phi": 0.5},

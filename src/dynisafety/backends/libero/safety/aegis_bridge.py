@@ -343,6 +343,7 @@ class LiberoAegisSession:
     activate_after: str
     obstacle_source: str
     oracle_enabled: bool
+    yield_home_enabled: bool
     level: int
     settle_steps: int
     suite: str = ""
@@ -395,6 +396,7 @@ class LiberoAegisSession:
         oracle_enabled: bool,
         vision_estimator: Any | None = None,
         instruction: str | None = None,
+        yield_home_enabled: bool = False,
     ) -> LiberoAegisSession:
         from dynisafety.backends.libero.safety.observation import settle_steps_for_level
 
@@ -426,6 +428,7 @@ class LiberoAegisSession:
                 activate_after=activate_after,
                 obstacle_source=obstacle_source,
                 oracle_enabled=bool(oracle_enabled),
+                yield_home_enabled=bool(yield_home_enabled),
                 level=level,
                 settle_steps=settle_steps_for_level(cfg, level),
                 suite=suite,
@@ -464,6 +467,7 @@ class LiberoAegisSession:
             activate_after=activate_after,
             obstacle_source=obstacle_source,
             oracle_enabled=bool(oracle_enabled),
+            yield_home_enabled=bool(yield_home_enabled),
             level=level,
             settle_steps=settle_steps_for_level(cfg, level),
             suite=suite,
@@ -516,10 +520,10 @@ class LiberoAegisSession:
             return False
         if self.activate_after == _ACTIVATE_AFTER_ALWAYS:
             return True
-        # settled_or_done: with oracle off → every step (static对照);
-        # with oracle on → only after hazard motion finishes
+        # settled_or_done: with oracle/yield-home off → every step (static对照);
+        # with oracle or yield-home on → only after hazard motion finishes
         # (L1/L2 SETTLED_OR_DONE static residual, or L3 WITHDRAWN clearance).
-        if not self.oracle_enabled:
+        if not self.oracle_enabled and not self.yield_home_enabled:
             return True
         return phase in _POST_HAZARD_PHASES
 
@@ -778,6 +782,15 @@ class LiberoAegisSession:
             "aegis_obstacle_source": source,
             "aegis_obstacle_source_requested": self.obstacle_source if self.enabled else None,
             "aegis_activate_after": self.activate_after,
+            "aegis_motion_mode": (
+                None
+                if self.filter is None
+                else getattr(
+                    getattr(self.filter.config, "motion_mode", None),
+                    "value",
+                    None,
+                )
+            ),
             "aegis_filter_calls": int(self.filter_calls),
             "aegis_skipped_no_obstacle": int(self.skipped_no_obstacle),
             "aegis_skipped_ellipsoid_build_error": int(self.skipped_ellipsoid_build_error),

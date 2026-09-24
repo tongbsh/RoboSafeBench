@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import functools
 import json
 import os
+import shutil
 import signal
 import socket
 import string
@@ -13,7 +15,7 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -33,6 +35,71 @@ from dynisafety.policies.base import resolve_checkpoint
 # is not subject to iron law 1's "no defaults in Python".
 _LOOPBACK_HOST = "127.0.0.1"
 
+# BLAS / OpenMP pool size inside eval workers. Like _LOOPBACK_HOST this is a
+# process-runtime detail rather than a model hyperparameter.
+#
+# A rollout is a serial loop over 7-DoF actions and 128x128 frames; the heavy
+# work is MuJoCo / SAPIEN stepping and offscreen rendering, none of which goes
+# through BLAS. A wide pool therefore only spins on barriers. Measured on
+# LIBERO with an inherited OMP_NUM_THREADS=60: three helper threads burned an
+# extra 1.55 cores per worker at identical wall-clock per step, so the box
+# saturated at 6 workers while 92% of 60 cores sat idle. Pinning to 1 left
+# ms/step unchanged (198 vs 199 on long-t2-L0) at 0.90 cores per worker.
+_EVAL_THREAD_ENV_KEYS = (
+    "OMP_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+)
+
+
+def eval_thread_count() -> str:
+    """Threads per eval worker; ``DYNI_EVAL_THREADS`` overrides the pinned 1."""
+    raw = os.environ.get("DYNI_EVAL_THREADS", "").strip()
+    if not raw:
+        return "1"
+    if not raw.isdigit() or int(raw) < 1:
+        raise ValueError(f"DYNI_EVAL_THREADS must be a positive int, got {raw!r}")
+    return raw
+
+
+def pin_eval_threads(env: dict[str, str]) -> None:
+    """Override any inherited BLAS/OpenMP pool size in an eval worker's env."""
+    threads = eval_thread_count()
+    for key in _EVAL_THREAD_ENV_KEYS:
+        env[key] = threads
+
+
+@functools.lru_cache(maxsize=1)
+def _conda_env_prefixes() -> dict[str, Path]:
+    """env name → prefix from ``conda env list`` (honours ``envs_dirs``)."""
+    conda = shutil.which("conda")
+    if conda is None:
+        return {}
+    try:
+        proc = subprocess.run(
+            [conda, "env", "list", "--json"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
+    if proc.returncode != 0:
+        return {}
+    try:
+        payload = json.loads(proc.stdout or "{}")
+    except json.JSONDecodeError:
+        return {}
+    out: dict[str, Path] = {}
+    for raw in payload.get("envs") or []:
+        prefix = Path(raw)
+        if prefix.is_dir():
+            out[prefix.name] = prefix
+    return out
+
 
 def _conda_env_lib_dir(env_name: str) -> Path | None:
     """Return ``…/envs/<name>/lib`` when present (prefer autodl conda root).
@@ -40,6 +107,9 @@ def _conda_env_lib_dir(env_name: str) -> Path | None:
     Sweep tool env often prepends *base* ``libstdc++`` via ``LD_LIBRARY_PATH``.
     ``conda run -n <eval_env>`` inherits that and breaks tokenizers/ICU
     (``CXXABI_… not found``). Callers should prepend this path for eval/serve.
+
+    Named envs may live on a data disk (``envs_dirs``), not under
+    ``~/miniconda3/envs``. Fall back to conda's registered prefixes.
     """
     if not isinstance(env_name, str) or not env_name.strip() or env_name == "base":
         return None
@@ -70,6 +140,11 @@ def _conda_env_lib_dir(env_name: str) -> Path | None:
             continue
         seen.add(root)
         lib = root / "envs" / env_name / "lib"
+        if lib.is_dir():
+            return lib
+    registered = _conda_env_prefixes().get(env_name)
+    if registered is not None:
+        lib = registered / "lib"
         if lib.is_dir():
             return lib
     return None
@@ -583,6 +658,78 @@ def load_model_serve_spec(
     )
 
 
+def serve_generation_key(spec: ModelServeSpec) -> tuple[Any, ...]:
+    """Identity of one loaded serve process — not of a LIBERO suite name.
+
+    Suites that resolve to the same checkpoint, argv template, serve_vars,
+    conda env, and process env can share one server generation. Distinct
+    UniVLA / OpenVLA-OFT weights, or argv that still interpolates ``{suite}``,
+    stay split so a shared process cannot silently serve the wrong fine-tune.
+    """
+    argv_uses_suite = "suite" in _argv_placeholders(spec.serve_command)
+    suite_part: str | None
+    if (
+        argv_uses_suite
+        or spec.checkpoint_error
+        or spec.missing_fields
+    ):
+        suite_part = spec.suite
+    else:
+        suite_part = None
+    return (
+        spec.model_id,
+        spec.checkpoint,
+        spec.checkpoint_error,
+        spec.serve_command,
+        tuple(sorted(spec.serve_vars.items())),
+        spec.serve_cwd,
+        spec.serve_env,
+        tuple(sorted(spec.serve_process_env.items())),
+        spec.health_url_template,
+        suite_part,
+    )
+
+
+def group_jobs_by_serve_generation(
+    jobs: Sequence[JobSpec],
+    *,
+    model_id: str,
+    configs_root: Path,
+    backend: str | None,
+) -> list[tuple[ModelServeSpec, list[JobSpec]]]:
+    """Bucket jobs that can share one serve process.
+
+    Order of groups follows first appearance of each generation key; jobs
+    inside a group keep their original order. A merged group (multiple
+    suites, identical resolved spec) clears ``spec.suite`` so the serve log
+    tag is model-level rather than pretending to belong to the first suite.
+    """
+    groups: dict[tuple[Any, ...], list[JobSpec]] = {}
+    spec_by_key: dict[tuple[Any, ...], ModelServeSpec] = {}
+    order: list[tuple[Any, ...]] = []
+    for job in jobs:
+        spec = load_model_serve_spec(
+            model_id,
+            configs_root=configs_root,
+            suite=job.suite,
+            backend=backend,
+        )
+        key = serve_generation_key(spec)
+        if key not in groups:
+            groups[key] = []
+            spec_by_key[key] = spec
+            order.append(key)
+        groups[key].append(job)
+    out: list[tuple[ModelServeSpec, list[JobSpec]]] = []
+    for key in order:
+        spec = spec_by_key[key]
+        group_jobs = groups[key]
+        if len({j.suite for j in group_jobs}) > 1:
+            spec = replace(spec, suite=None)
+        out.append((spec, group_jobs))
+    return out
+
+
 def _resolve_max_jobs_per_gpu(
     data: Mapping[str, Any], extra: Mapping[str, Any] | None = None
 ) -> Any:
@@ -616,6 +763,36 @@ def servers_per_gpu_count(max_jobs_per_gpu: int) -> int:
     if value < 1:
         raise ValueError(f"DYNI_SERVERS_PER_GPU must be >= 1, got {value}")
     return min(value, max_jobs_per_gpu)
+
+
+def gpu_slot_order(gpu_ids: Sequence[int], max_jobs_per_gpu: int) -> list[int]:
+    """Round-robin GPU slots so a short batch spreads across cards.
+
+    ``max_jobs_per_gpu=2``, gpus=(0, 1, 2) → ``[0, 1, 2, 0, 1, 2]``.
+    The old GPU-major pack ``[0, 0, 1, 1, 2, 2]`` left later cards idle
+    whenever the batch was smaller than the full slot count.
+    """
+    if max_jobs_per_gpu < 1:
+        raise ValueError(f"max_jobs_per_gpu must be >= 1, got {max_jobs_per_gpu}")
+    slots: list[int] = []
+    for _ in range(max_jobs_per_gpu):
+        slots.extend(int(g) for g in gpu_ids)
+    return slots
+
+
+def gpus_needed_for_jobs(slot_gpus: Sequence[int], n_jobs: int) -> tuple[int, ...]:
+    """GPUs that receive at least one job in this group (first-batch occupancy).
+
+    Later batches reuse the same slot prefix, so unused trailing cards never
+    get work and must not load a server.
+    """
+    if not slot_gpus or n_jobs <= 0:
+        return ()
+    seen: list[int] = []
+    for gpu in slot_gpus[: min(int(n_jobs), len(slot_gpus))]:
+        if gpu not in seen:
+            seen.append(gpu)
+    return tuple(seen)
 
 
 def effective_max_jobs_per_gpu(
@@ -1082,13 +1259,30 @@ class SweepScheduler:
                 model_jobs = [j for j in jobs if j.model == model]
                 if not model_jobs:
                     continue
-                spec = specs[model]
-                mj = effective_max_jobs_per_gpu(
-                    model,
-                    {"max_jobs_per_gpu": spec.max_jobs_per_gpu},
-                    self.cfg.jobs_per_gpu_cap,
-                )
-                failures += self._run_model_jobs(model_jobs, spec=spec, max_jobs_per_gpu=mj)
+                # Concurrency is a property of (model, backend), not of the
+                # model alone: a served model is a thin client on LIBERO but
+                # may hold GPU state on a SAPIEN backend. Resolve the spec per
+                # backend so per_backend.<backend>.resources applies.
+                backends_order: list[str] = []
+                for j in model_jobs:
+                    if j.backend not in backends_order:
+                        backends_order.append(j.backend)
+                for backend in backends_order:
+                    backend_jobs = [j for j in model_jobs if j.backend == backend]
+                    spec = load_model_serve_spec(
+                        model, configs_root=self.cfg.configs_root, backend=backend
+                    )
+                    mj = effective_max_jobs_per_gpu(
+                        model,
+                        {"max_jobs_per_gpu": spec.max_jobs_per_gpu},
+                        self.cfg.jobs_per_gpu_cap,
+                    )
+                    failures += self._run_model_jobs(
+                        backend_jobs,
+                        spec=spec,
+                        max_jobs_per_gpu=mj,
+                        backend=backend,
+                    )
         finally:
             self._cleanup_servers()
 
@@ -1112,30 +1306,33 @@ class SweepScheduler:
         print(f"[sweep] sweep_dir          = {self.cfg.sweep_dir}")
         for w in warnings:
             print(f"[sweep] WARN: {w}")
-        # Show per-model concurrency when available.
-        for model in sorted({j.model for j in jobs}):
-            spec = specs[model]
+        # Concurrency is resolved per (model, backend), so print it that way —
+        # a shared model can legitimately differ between LIBERO and RoboTwin.
+        print(f"[sweep] eval_threads       = {eval_thread_count()}")
+        for model, backend in sorted({(j.model, j.backend) for j in jobs}):
+            spec = load_model_serve_spec(
+                model, configs_root=self.cfg.configs_root, backend=backend
+            )
+            label = f"model {model} on {backend}"
             if spec.max_jobs_per_gpu is None:
-                print(f"[sweep] model {model}: max_jobs_per_gpu=<missing>")
+                print(f"[sweep] {label}: max_jobs_per_gpu=<missing>")
+                continue
+            try:
+                eff = effective_max_jobs_per_gpu(
+                    model,
+                    {"max_jobs_per_gpu": spec.max_jobs_per_gpu},
+                    self.cfg.jobs_per_gpu_cap,
+                )
+            except ValueError as exc:
+                print(f"[sweep] {label}: {exc}")
             else:
-                try:
-                    eff = effective_max_jobs_per_gpu(
-                        model,
-                        {"max_jobs_per_gpu": spec.max_jobs_per_gpu},
-                        self.cfg.jobs_per_gpu_cap,
-                    )
-                except ValueError as exc:
-                    print(f"[sweep] model {model}: {exc}")
-                else:
-                    slots = len(self.cfg.gpu_ids) * eff if self.cfg.gpu_ids else 0
-                    n_serve = (
-                        servers_per_gpu_count(eff) if spec.needs_server else 0
-                    )
-                    print(
-                        f"[sweep] model {model}: max_jobs_per_gpu={eff} "
-                        f"needs_server={spec.needs_server} worker_slots={slots} "
-                        f"servers_per_gpu={n_serve}"
-                    )
+                slots = len(self.cfg.gpu_ids) * eff if self.cfg.gpu_ids else 0
+                n_serve = servers_per_gpu_count(eff) if spec.needs_server else 0
+                print(
+                    f"[sweep] {label}: max_jobs_per_gpu={eff} "
+                    f"needs_server={spec.needs_server} worker_slots={slots} "
+                    f"servers_per_gpu={n_serve}"
+                )
         max_print = 40
         for i, job in enumerate(jobs):
             if i >= max_print:
@@ -1154,29 +1351,29 @@ class SweepScheduler:
         *,
         spec: ModelServeSpec,
         max_jobs_per_gpu: int,
+        backend: str | None = None,
     ) -> int:
         if not spec.needs_server:
             return self._run_job_group(jobs, spec=spec, max_jobs_per_gpu=max_jobs_per_gpu)
 
-        # Server models load their weights at startup, so a per-suite checkpoint
-        # (UniVLA) means one server generation per suite — sharing one server
-        # across suites would silently serve the wrong fine-tune.
-        suites: list[str] = []
-        for job in jobs:
-            if job.suite not in suites:
-                suites.append(job.suite)
+        # Weights load at serve start. Merge suites only when the *resolved*
+        # serve spec matches (same checkpoint, argv, serve_vars, conda env).
+        # UniVLA / OpenVLA-OFT keep one generation per distinct fine-tune;
+        # π0.5 / XVLA / TurboVLA LIBERO share one generation across suites.
         failures = 0
-        for suite in suites:
-            suite_jobs = [j for j in jobs if j.suite == suite]
-            suite_spec = load_model_serve_spec(
-                spec.model_id, configs_root=self.cfg.configs_root, suite=suite
-            )
+        for suite_spec, suite_jobs in group_jobs_by_serve_generation(
+            jobs,
+            model_id=spec.model_id,
+            configs_root=self.cfg.configs_root,
+            backend=backend,
+        ):
             if suite_spec.missing_fields or suite_spec.checkpoint_error:
                 reason = suite_spec.checkpoint_error or (
                     "missing " + ", ".join(suite_spec.missing_fields)
                 )
+                suites = ",".join(dict.fromkeys(j.suite for j in suite_jobs))
                 print(
-                    f"[sweep] ERROR: model {spec.model_id} suite {suite}: {reason}",
+                    f"[sweep] ERROR: model {spec.model_id} suite {suites}: {reason}",
                     file=sys.stderr,
                 )
                 for job in suite_jobs:
@@ -1189,6 +1386,12 @@ class SweepScheduler:
                     )
                 failures += len(suite_jobs)
                 continue
+            suite_names = list(dict.fromkeys(j.suite for j in suite_jobs))
+            if len(suite_names) > 1:
+                print(
+                    f"[sweep] sharing serve for {spec.model_id} across "
+                    f"{','.join(suite_names)} (resolved spec matches)"
+                )
             failures += self._run_job_group(
                 suite_jobs, spec=suite_spec, max_jobs_per_gpu=max_jobs_per_gpu
             )
@@ -1202,12 +1405,10 @@ class SweepScheduler:
         max_jobs_per_gpu: int,
     ) -> int:
         gpu_ids = self.cfg.gpu_ids
-        slot_gpus: list[int] = []
-        for gpu in gpu_ids:
-            for _ in range(max_jobs_per_gpu):
-                slot_gpus.append(gpu)
+        slot_gpus = gpu_slot_order(gpu_ids, max_jobs_per_gpu)
         if not slot_gpus:
             return len(jobs)
+        used_gpus = set(gpus_needed_for_jobs(slot_gpus, len(jobs)))
 
         failures = 0
         started_servers: list[ServerHandle] = []
@@ -1216,74 +1417,130 @@ class SweepScheduler:
             if spec.needs_server:
                 n_serve = servers_per_gpu_count(max_jobs_per_gpu)
                 tag = f"{spec.name}-{spec.suite}" if spec.suite else spec.name
-                for gpu in sorted(set(slot_gpus)):
-                    handles: list[ServerHandle] = []
-                    for k in range(n_serve):
-                        port = allocate_port()
-                        suffix = f"gpu{gpu}" if n_serve == 1 else f"gpu{gpu}_s{k}"
-                        log_path = self.cfg.sweep_dir / "servers" / tag / f"{suffix}.log"
-                        handle = start_model_server(
-                            spec,
-                            gpu=gpu,
-                            port=port,
-                            log_path=log_path,
-                            health_timeout_s=self.cfg.health_timeout_s,
+                try:
+                    for gpu in sorted(used_gpus):
+                        handles: list[ServerHandle] = []
+                        for k in range(n_serve):
+                            port = allocate_port()
+                            suffix = f"gpu{gpu}" if n_serve == 1 else f"gpu{gpu}_s{k}"
+                            log_path = self.cfg.sweep_dir / "servers" / tag / f"{suffix}.log"
+                            handle = start_model_server(
+                                spec,
+                                gpu=gpu,
+                                port=port,
+                                log_path=log_path,
+                                health_timeout_s=self.cfg.health_timeout_s,
+                            )
+                            handles.append(handle)
+                            started_servers.append(handle)
+                            self._servers.append(handle)
+                        servers_by_gpu[gpu] = handles
+                except Exception as exc:
+                    # Serve failure is this model/suite only. Do not abort the
+                    # remaining sweep (next models still run).
+                    print(
+                        f"[sweep] ERROR: model {spec.name} suite {spec.suite or '-'} "
+                        f"server start failed: {exc}",
+                        file=sys.stderr,
+                    )
+                    for job in jobs:
+                        append_failure(
+                            self.cfg.sweep_dir,
+                            job,
+                            exit_code=1,
+                            log_path=self.cfg.sweep_dir,
+                            error=f"serve start: {exc}",
                         )
-                        handles.append(handle)
-                        started_servers.append(handle)
-                        self._servers.append(handle)
-                    servers_by_gpu[gpu] = handles
+                    return failures + len(jobs)
 
             pending = list(jobs)
-            while pending:
-                batch = pending[: len(slot_gpus)]
-                pending = pending[len(slot_gpus) :]
-                procs: list[tuple[JobSpec, subprocess.Popen[Any], Path]] = []
-                for slot_i, (job, gpu) in enumerate(zip(batch, slot_gpus)):
-                    log_path = (
-                        self.cfg.sweep_dir
-                        / "jobs"
-                        / f"{job.backend}_{job.model}_{job.suite}_t{job.task_id}_l{job.level}_s{job.seed}.log"
-                    )
-                    log_path.parent.mkdir(parents=True, exist_ok=True)
-                    env = os.environ.copy()
-                    env["CUDA_VISIBLE_DEVICES"] = str(gpu)
-                    # Re-resolve so per_backend.eval_env (and its libs) apply.
-                    be_spec = load_model_serve_spec(
-                        job.model,
-                        configs_root=self.cfg.configs_root,
-                        suite=job.suite,
-                        backend=job.backend,
-                    )
-                    eval_env_name = (
-                        be_spec.eval_env
-                        if be_spec.eval_env is not None
-                        else spec.eval_env
-                    )
-                    _prefer_conda_env_libs(env, eval_env_name)
-                    server_port: int | None = None
-                    if gpu in servers_by_gpu:
-                        handles = servers_by_gpu[gpu]
-                        handle = handles[slot_i % len(handles)]
-                        env["HOST"] = _LOOPBACK_HOST
-                        env["PORT"] = str(handle.port)
-                        # Also inject via --set so ModelConfig.extra.server_port
-                        # wins over YAML server.default_port (remote_host_port).
-                        # Env alone is not enough: adapters must not read PORT
-                        # (H10), and clients otherwise hang on the wrong port.
-                        server_port = int(handle.port)
-                    cmd = self._eval_command(job, spec, server_port=server_port)
-                    with log_path.open("w", encoding="utf-8") as log_fp:
-                        proc = subprocess.Popen(
-                            cmd,
-                            stdout=log_fp,
-                            stderr=subprocess.STDOUT,
-                            env=env,
-                        )
-                    procs.append((job, proc, log_path))
+            n_slots = len(slot_gpus)
+            if n_slots < 1:
+                return failures + len(jobs)
+            # One process per GPU slot. When a job exits, refill that slot
+            # immediately so a finished card does not wait on the slowest
+            # job in a synchronized batch.
+            slots: list[tuple[JobSpec, subprocess.Popen[Any], Path] | None] = [
+                None
+            ] * n_slots
 
-                for job, proc, log_path in procs:
-                    rc = proc.wait()
+            def _spawn(slot_i: int, job: JobSpec) -> tuple[JobSpec, subprocess.Popen[Any], Path]:
+                gpu = slot_gpus[slot_i]
+                log_path = (
+                    self.cfg.sweep_dir
+                    / "jobs"
+                    / f"{job.backend}_{job.model}_{job.suite}_t{job.task_id}_l{job.level}_s{job.seed}.log"
+                )
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+                env = os.environ.copy()
+                env["CUDA_VISIBLE_DEVICES"] = str(gpu)
+                pin_eval_threads(env)
+                # Writer package lives at <workspace>/A_robosafe_capture_datasets
+                # (not under src/). Eval children inherit this env.
+                if os.environ.get("DYNI_CAPTURE", "").strip().lower() in {
+                    "1",
+                    "true",
+                    "yes",
+                    "on",
+                }:
+                    workspace = str(find_workspace_root())
+                    existing = env.get("PYTHONPATH", "")
+                    env["PYTHONPATH"] = (
+                        workspace
+                        if not existing
+                        else f"{workspace}{os.pathsep}{existing}"
+                    )
+                # Re-resolve so per_backend.eval_env (and its libs) apply.
+                be_spec = load_model_serve_spec(
+                    job.model,
+                    configs_root=self.cfg.configs_root,
+                    suite=job.suite,
+                    backend=job.backend,
+                )
+                eval_env_name = (
+                    be_spec.eval_env
+                    if be_spec.eval_env is not None
+                    else spec.eval_env
+                )
+                _prefer_conda_env_libs(env, eval_env_name)
+                server_port: int | None = None
+                if gpu in servers_by_gpu:
+                    handles = servers_by_gpu[gpu]
+                    gpu_slot_k = sum(1 for g in slot_gpus[:slot_i] if g == gpu)
+                    handle = handles[gpu_slot_k % len(handles)]
+                    env["HOST"] = _LOOPBACK_HOST
+                    env["PORT"] = str(handle.port)
+                    # Also inject via --set so ModelConfig.extra.server_port
+                    # wins over YAML server.default_port (remote_host_port).
+                    # Env alone is not enough: adapters must not read PORT
+                    # (H10), and clients otherwise hang on the wrong port.
+                    server_port = int(handle.port)
+                cmd = self._eval_command(job, spec, server_port=server_port)
+                with log_path.open("w", encoding="utf-8") as log_fp:
+                    proc = subprocess.Popen(
+                        cmd,
+                        stdout=log_fp,
+                        stderr=subprocess.STDOUT,
+                        env=env,
+                    )
+                return job, proc, log_path
+
+            while pending or any(entry is not None for entry in slots):
+                for slot_i in range(n_slots):
+                    if slots[slot_i] is None and pending:
+                        slots[slot_i] = _spawn(slot_i, pending.pop(0))
+                if all(entry is None for entry in slots):
+                    break
+                progressed = False
+                for slot_i, entry in enumerate(slots):
+                    if entry is None:
+                        continue
+                    job, proc, log_path = entry
+                    rc = proc.poll()
+                    if rc is None:
+                        continue
+                    progressed = True
+                    slots[slot_i] = None
                     if rc != 0:
                         failures += 1
                         append_failure(
@@ -1299,6 +1556,8 @@ class SweepScheduler:
                         )
                     else:
                         print(f"[done] {job.job_key}")
+                if not progressed:
+                    time.sleep(0.2)
         finally:
             for handle in started_servers:
                 stop_server(handle)

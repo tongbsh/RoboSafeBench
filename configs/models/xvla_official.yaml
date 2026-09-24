@@ -66,3 +66,6 @@ per_backend:
         bridge_spoon: 0.7
         bridge_eggplant: 0.8
       eval_env: simpler_env
+    # 48 GB cards can host the XVLA server plus several Bridge eval slots.
+    resources:
+      max_jobs_per_gpu: 4

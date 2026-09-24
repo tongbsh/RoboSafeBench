@@ -47,6 +47,8 @@ class BaseDisturbanceController:
 
     def hide(self) -> None:
         self._active = False
+        if self.actor is None:
+            return
         try:
             self._set_pose(HIDDEN_POS)
         except ImportError:

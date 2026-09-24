@@ -24,6 +24,7 @@ extra:
           milk_obstacle_1: red milk carton
           milk_small_obstacle_1: red milk carton
           red_coffee_mug_obstacle_1: red mug
+          yellow_book_obstacle_1: yellow book
         # Official get_point_cloud uses agentview + backview (env_wrapper camera_names).
         views: [agentview, backview]
         on_failure: fallback_sim_gt

@@ -39,12 +39,14 @@ extra:
       start_xy_half: [0.45, 0.30]
       interp_z: null
       start_z: null
-      # Lateral far-rim slots + near/mid intercept. Default off: L3
-      # stays today's opposite-side + intercept_alpha. All keys are
-      # required; assemble errors if this mapping is missing.
+      # Lateral far-rim slots + near/mid intercept. Default on
+      # (paper_main / walkthrough). Disable with
+      # --set extra.libero.l3.reach_diversity.enabled=false
+      # or walkthrough --no-diversity. All keys are required;
+      # assemble errors if this mapping is missing.
       # LIBERO embedding only — SimplerEnv / RoboTwin use their own extra.
       reach_diversity:
-        enabled: false
+        enabled: true
         lateral_width_m: 0.15
         near_alpha: 0.30
         mid_alpha: 0.50

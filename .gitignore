@@ -59,6 +59,7 @@ artifacts/
 
 # Logs and experiment trackers
 *.log
+MUJOCO_LOG.TXT
 logs/
 wandb/
 mlruns/
@@ -77,6 +78,13 @@ dynisafety_libero/outputs*/
 **/*.mov
 **/*.webm
 **/*.gif
+
+# Anonymous GitHub Pages deploy key + clone (website/publish.sh).
+/website/.deploy/
+
+# Paper eval media (rollouts, SR/SSR figures). Public clone is the harness, not our scores.
+/website/assets/videos/
+/website/assets/figures/
 
 # Model checkpoints and downloaded model artifacts
 download_checkpoints/
@@ -136,14 +144,14 @@ temp/
 # Anchored: a bare `core` also matches the src/dynisafety/core/ package.
 /core
 
-# M8 local private RoboTwin bare mirror (D1=C); not for publish
+# Local bare git mirrors (developer machines only)
 /mirrors/
 
 # M9: vendored RoboTwin dual-track fallback (untracked; prefer third_party/RoboTwin)
 dynamic_RoboTwin/RoboTwin/
 
 # ---------------------------------------------------------------------------
-# Open-source release scope (see docs/paper/opensource_scope.md)
+# Published-tree exclusions (process notes, legacy trees, one-off probes)
 # ---------------------------------------------------------------------------
 
 # Pre-unification trees — superseded by src/dynisafety. Do not re-add.
@@ -161,6 +169,12 @@ dynamic_RoboTwin/RoboTwin/
 /docs/paper/**
 !/docs/paper/README.md
 
+# Paper LaTeX source — keep local; do not publish with the benchmark.
+/docs/paper-latex/
+
+# Paper tables / episode dumps / ICLR figure scripts. Not the eval CLI.
+/paper_export/
+
 # In-house numerical anchors transcribed from our eval logs.
 # Keep tests/test_*.py and tests/fixtures/; drop golden snapshots.
 /tests/golden/
@@ -172,3 +186,71 @@ dynamic_RoboTwin/RoboTwin/
 /tools/diagnose_l2_spawn_rollback.py
 /tools/probe_l2_spawn.py
 /tools/recount_robotwin_contact.py
+
+# ---------------------------------------------------------------------------
+# Not in the public tree: paper writing, offline analysis, local debug
+# Public clone = env eval + basic metric report (eval / sweep / report).
+# ---------------------------------------------------------------------------
+
+# Offline paper analysis (paired axes, key-findings, ICLR figures, feasibility)
+/src/dynisafety/analysis/
+/src/dynisafety/paper_figures/
+/src/dynisafety/feasibility/
+
+/scripts/debug/
+/scripts/eval/03_analysis.sh
+/scripts/eval/04_paper_figures.sh
+/scripts/eval/check_l3_arm_speed_gates.py
+/scripts/eval/run_l3_arm_speed_sweep.sh
+/scripts/extra/feasibility/
+/scripts/extra/sync_peer.sh
+/scripts/extra/verify_golden.sh
+/scripts/extra/backfill_robotwin_capture_cameras.py
+/scripts/extra/libero/backfill_rlinf_landmark_cells.sh
+/scripts/extra/libero/resettle_spatial_ramekin_init.py
+/scripts/extra/libero/restore_official_landmarks.py
+/scripts/extra/libero/run_rlinf_official_libero_control.py
+/scripts/extra/libero/run_rlinf_official_libero_control.sh
+/scripts/extra/libero/smoke_obstacle_pack_spatial.py
+
+/tools/analyze_paper.py
+/tools/analyze_rank_stability.py
+/tools/calibrate_diagnostics.py
+/tools/feasibility_runner.py
+
+/configs/feasibility/
+/configs/paper_figures/
+/configs/suites/debug_*.yaml
+/configs/suites/calib_behavior_diagnostics.yaml
+/configs/suites/paper_l0_preflight.yaml
+/configs/suites/libero_oracle_smoke.yaml
+/configs/suites/libero_pi05_*.yaml
+/configs/suites/libero_l3_arm_speed.yaml
+/configs/suites/libero_l3_arm_speed_smoke.yaml
+/configs/suites/libero_fill_onset50.yaml
+/configs/suites/libero_rlinf_spatial_sample.yaml
+/configs/suites/robotwin_internvla_s1_s2007.yaml
+/configs/suites/robotwin_lingbot_s1_s2007.yaml
+/configs/suites/robotwin_xvla_official_holes.yaml
+/configs/suites/turbovla_libero_s1_s2007.yaml
+/configs/suites/univla_l0_check.yaml
+/configs/models/pi05_oracle*.yaml
+/configs/models/pi05_l3_arm_*.yaml
+/configs/models/pi05_static_from_start.yaml
+/configs/models/openvla_oft_rlinf_sample.yaml
+/configs/safety/oracle_yield_home.yaml
+/configs/safety/aegis_translational.yaml
+
+/tests/test_analysis_*.py
+/tests/test_paper_figures.py
+/tests/test_paper_figures_paired.py
+/tests/test_l3_arm_speed.py
+/tests/test_capture_cameras.py
+/tests/test_capture_session.py
+/tests/test_common_support.py
+/tests/test_feasibility_runner.py
+/tests/test_aegis_feasibility_matrix.py
+/tests/test_calibrate_diagnostics.py
+/tests/test_libero_yield_home.py
+/tests/paper_l0_smoke.yaml
+/tests/run_paper_l0_smoke.sh

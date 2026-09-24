@@ -588,6 +588,9 @@ def test_openvla_oft_rlinf_is_registered() -> None:
     assert cfg.extra.get("use_proprio") is False
     assert cfg.extra.get("num_images_in_input") == 1
     assert cfg.extra.get("use_l1_regression") is False
+    assert cfg.extra.get("do_sample") is True
+    assert cfg.extra.get("temperature") == 1.6
+    assert cfg.extra.get("top_p") == 1.0
     assert "rlinf_root" not in cfg.extra
 
     reg: Registry[Any] = Registry("policy-test-rlinf")
@@ -597,6 +600,74 @@ def test_openvla_oft_rlinf_is_registered() -> None:
     decls = load_model_decls(MODELS_DIR)
     assert "openvla_oft_rlinf" in decls
     assert decls["openvla_oft_rlinf"].adapter.endswith("OpenVLAOFTRLinfAdapter")
+
+
+def test_rlinf_sampling_extras_match_official_eval() -> None:
+    from dynisafety.policies.adapters.openvla_oft_rlinf import (
+        episode_sampling_seed,
+        parse_rlinf_sampling_extras,
+    )
+
+    cfg = _minimal_local_cfg(
+        extra={"do_sample": True, "temperature": 1.6, "top_p": 1.0}
+    )
+    assert parse_rlinf_sampling_extras(cfg) == (True, 1.6, 1.0)
+    with pytest.raises(ValueError, match="nucleus"):
+        parse_rlinf_sampling_extras(
+            _minimal_local_cfg(
+                extra={"do_sample": True, "temperature": 1.6, "top_p": 0.9}
+            )
+        )
+    ctx = EpisodeContext(
+        instruction="pick up the bowl",
+        task_id=0,
+        task_name="t0",
+        episode_index=3,
+        seed=1,
+        level=0,
+        backend="libero",
+        suite="safelibero_spatial",
+        extra={},
+    )
+    other = EpisodeContext(
+        instruction=ctx.instruction,
+        task_id=ctx.task_id,
+        task_name=ctx.task_name,
+        episode_index=ctx.episode_index,
+        seed=7,
+        level=ctx.level,
+        backend=ctx.backend,
+        suite=ctx.suite,
+        extra={},
+    )
+    assert episode_sampling_seed(ctx) != episode_sampling_seed(other)
+
+
+def test_openvla_oft_rlinf_sample_is_isolated_stem() -> None:
+    path = MODELS_DIR / "openvla_oft_rlinf_sample.yaml"
+    assert path.is_file()
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    cfg = model_config_from_resolved(raw)
+    assert cfg.name == "openvla_oft_rlinf_sample"
+    assert cfg.adapter.endswith("OpenVLAOFTRLinfAdapter")
+    assert cfg.extra.get("do_sample") is True
+    assert cfg.extra.get("temperature") == 1.6
+    assert cfg.extra.get("top_p") == 1.0
+    decls = load_model_decls(MODELS_DIR)
+    assert "openvla_oft_rlinf_sample" in decls
+
+
+def test_rlinf_verl_output_to_chunk() -> None:
+    from dynisafety.policies.adapters.openvla_oft_rlinf import verl_output_to_chunk
+
+    chunk = np.arange(16, dtype=np.float32).reshape(2, 8)
+    got = verl_output_to_chunk(chunk)
+    assert got.shape == (2, 8)
+    batched = chunk[np.newaxis, ...]
+    got_b = verl_output_to_chunk(batched)
+    np.testing.assert_array_equal(got_b, chunk)
+    with pytest.raises(ValueError, match="batch dim"):
+        verl_output_to_chunk(np.zeros((2, 8, 7), dtype=np.float32))
 
 
 def test_lingbot_va_serve_uses_wrapper_script() -> None:
@@ -617,6 +688,19 @@ def test_lingbot_va_serve_uses_wrapper_script() -> None:
             "server"
         ]["root"]
     )
+
+
+def test_lingbot_serve_sh_walks_up_to_workspace_not_scripts() -> None:
+    """serve.sh used to stop at scripts/ (three levels) and miss lingbot-va."""
+    script = REPO_ROOT / "scripts" / "extra" / "models" / "lingbot_va" / "serve.sh"
+    text = script.read_text(encoding="utf-8")
+    assert "configs/paths.yaml" in text
+    assert "src/dynisafety" in text
+    three_up = (script.parent / "../../..").resolve()
+    assert three_up.name == "scripts"
+    wan = REPO_ROOT / "external" / "model_repos" / "lingbot-va" / "wan_va" / "wan_va_server.py"
+    assert wan.is_file()
+    assert f"{three_up}/external/model_repos/lingbot-va" not in str(wan)
 
 
 def test_xvla_and_xvla_official_share_adapter_class() -> None:

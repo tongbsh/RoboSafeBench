@@ -487,13 +487,10 @@ def _attach_l12_visuals(box: Any, env: Any, meta: dict[str, Any]) -> None:
     visuals = getattr(env, "_dynisafety_l12_visuals", None)
     if not visuals:
         return
-    from dynisafety.backends.robocasa.visuals import L12_AUTHOR_HALF_XY, attach_visual_specs
+    from dynisafety.backends.robocasa.visuals import attach_visual_specs
 
     hs = [float(x) for x in meta["half_size"]]
-    xy_scale = min(hs[0], hs[1]) / L12_AUTHOR_HALF_XY
-    mapping = attach_visual_specs(
-        box, visuals, half_z=hs[2], xy_scale=xy_scale, visible_names=()
-    )
+    mapping = attach_visual_specs(box, visuals, half_z=hs[2], visible_names=())
     meta["visual_geoms"] = mapping
     meta["visual_rgba"] = {spec.name: list(spec.rgba) for spec in visuals}
     meta["visual_kind"] = "l12_pool"
@@ -604,9 +601,13 @@ def _attach_l3_parts(box: Any, env: Any, meta: dict[str, Any], half_z: float) ->
     parts = getattr(env, "_dynisafety_l3_visuals", None)
     if not parts:
         raise ValueError("L3 clothed visual parts missing on env")
-    mapping = attach_visual_specs(box, parts, half_z=half_z)
+    mapping = attach_visual_specs(box, parts, half_z=half_z, shared_frame=True)
     meta["visual_geoms"] = mapping
     meta["visual_parts"] = [spec.name for spec in parts]
+    if parts and all(spec.name.startswith("rocketbox_") for spec in parts):
+        meta["visual"] = "rocketbox_clothed"
+    elif len(parts) == 1 and parts[0].name == "smpl_body":
+        meta["visual"] = "smpl_standing_mesh"
 
 
 def merge_l3_pedestrian_proxy(

@@ -59,6 +59,104 @@ def read_pair_body_entity(contact: Any) -> tuple[str, str] | None:
     return (str(n0), str(n1))
 
 
+@dataclass(frozen=True)
+class ContactKinematics:
+    """First matching manifold: normal from actor toward partner + partner entity."""
+
+    partner_name: str
+    partner_entity: Any
+    normal_from_actor: np.ndarray
+    contact_position: np.ndarray
+
+
+def _contact_entities(contact: Any) -> tuple[Any, Any] | None:
+    bodies = getattr(contact, "bodies", None)
+    if bodies is not None and len(bodies) >= 2 and bodies[0] is not None and bodies[1] is not None:
+        e0 = getattr(bodies[0], "entity", None)
+        e1 = getattr(bodies[1], "entity", None)
+        if e0 is not None and e1 is not None:
+            return e0, e1
+    a0 = getattr(contact, "actor0", None)
+    a1 = getattr(contact, "actor1", None)
+    if a0 is None or a1 is None:
+        return None
+    return a0, a1
+
+
+def _mean_point_normal_and_position(
+    points: Any,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    acc = np.zeros(3, dtype=np.float64)
+    pos = np.zeros(3, dtype=np.float64)
+    count = 0
+    for p in points:
+        nrm = getattr(p, "normal", None)
+        if nrm is None:
+            continue
+        vec = np.asarray(nrm, dtype=np.float64).reshape(-1)[:3]
+        nlen = float(np.linalg.norm(vec))
+        if nlen <= 1e-12:
+            continue
+        acc += vec / nlen
+        loc = getattr(p, "position", None)
+        if loc is not None:
+            pos += np.asarray(loc, dtype=np.float64).reshape(-1)[:3]
+        count += 1
+    if count == 0:
+        return None
+    acc_n = float(np.linalg.norm(acc))
+    if acc_n <= 1e-12:
+        return None
+    return acc / acc_n, pos / float(count)
+
+
+def first_actor_contact_kinematics(
+    scene: Any,
+    *,
+    actor_name: str,
+    actor_pos: np.ndarray,
+    target_names: set[str],
+    pair_reader: ContactPairReader,
+) -> ContactKinematics | None:
+    """First actor↔target manifold: unit normal from actor toward the contact."""
+    if not actor_name or not target_names:
+        return None
+    origin = np.asarray(actor_pos, dtype=np.float64).reshape(3)
+    for contact in scene.get_contacts():
+        pair = pair_reader(contact)
+        entities = _contact_entities(contact)
+        if pair is None or entities is None:
+            continue
+        n0, n1 = pair
+        e0, e1 = entities
+        if n0 == actor_name and n1 in target_names:
+            partner_name, partner_entity = n1, e1
+        elif n1 == actor_name and n0 in target_names:
+            partner_name, partner_entity = n0, e0
+        else:
+            continue
+        points = getattr(contact, "points", None) or []
+        geom = _mean_point_normal_and_position(points)
+        if geom is None:
+            continue
+        raw_n, contact_pos = geom
+        delta = contact_pos - origin
+        n = raw_n
+        nlen = float(np.linalg.norm(n))
+        if nlen <= 1e-12:
+            continue
+        n = n / nlen
+        if float(np.linalg.norm(delta)) > 1e-8 and float(np.dot(n, delta)) < 0.0:
+            n = -n
+        return ContactKinematics(
+            partner_name=str(partner_name),
+            partner_entity=partner_entity,
+            normal_from_actor=n,
+            contact_position=contact_pos,
+        )
+    return None
+
+
 def _point_impulse_norms(points: Any) -> list[float]:
     norms: list[float] = []
     for p in points:

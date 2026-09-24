@@ -29,10 +29,11 @@ from dynisafety.config.loader import _build_dataclass, _read_yaml
 from dynisafety.config.resolve import find_workspace_root
 from dynisafety.config.schema import MISSING, DiagnosticsConfig
 from dynisafety.diagnostics.analyze import analyze_trace, compute_speeds
+from dynisafety.diagnostics.contact_clock import resolve_first_contact_step
 from dynisafety.diagnostics.reader import iter_traces
 from dynisafety.diagnostics.schema import BehaviorClass, BehaviorDiagnostics, Trace, TraceHeader
 
-# Knobs scanned at ±50% (docs/user/behavior_diagnostics.md §8 / P5 plan).
+# Knobs scanned at ±50% (docs/user/eval.md §8 / P5 plan).
 SENSITIVITY_KNOBS: tuple[str, ...] = (
     "reaction.sensitivity",
     "reaction.sigma_rel_floor",
@@ -357,6 +358,10 @@ def fingerprint_results(results_root: Path | str) -> dict[str, str]:
 
 
 def _is_protected(path: Path) -> bool:
+    # ``episodes.jsonl`` also starts with ``ep`` and ends with ``.jsonl``.
+    # Only the per-episode files under ``traces/`` are frozen.
+    if "traces" not in path.parts:
+        return False
     name = path.name
     if not name.startswith("ep"):
         return False
@@ -432,12 +437,21 @@ def analyze_bundle(
 ) -> BehaviorDiagnostics:
     used = bundle.trace if trace is None else trace
     outcome = bundle.outcome
+    # Records from episodes.jsonl carry first_contact_step on the backend's
+    # own clock (RoboTwin: physics sub-steps); the pre-contact gate needs the
+    # trace's task-step clock.
+    first_contact, _source = resolve_first_contact_step(
+        outcome,
+        used,
+        contact_steps=outcome.contact_steps,
+        first_contact_step=outcome.first_contact_step,
+    )
     return analyze_trace(
         used,
         cfg,
         success=outcome.success,
         success_step=outcome.success_step,
-        first_contact_step=outcome.first_contact_step,
+        first_contact_step=first_contact,
         contact_steps=outcome.contact_steps,
         trace_path=bundle.trace_path.name,
     )
@@ -453,11 +467,13 @@ def summarize_diagnostics(diags: Sequence[BehaviorDiagnostics]) -> dict[str, Any
     n_triggered = len(triggered)
     if n_triggered == 0:
         reaction_rate: float | None = None
+        reaction_rate_kinematic: float | None = None
         stop_rate: float | None = None
         evade_rate: float | None = None
     else:
         inv = 1.0 / float(n_triggered)
         reaction_rate = sum(1 for d in triggered if d.reacted) * inv
+        reaction_rate_kinematic = sum(1 for d in triggered if d.reacted_kinematic) * inv
         stop_rate = sum(1 for d in triggered if d.stop_preemptive) * inv
         evade_rate = sum(1 for d in triggered if d.evaded) * inv
     applicable = [d for d in diags if d.recovery_applicable]
@@ -476,6 +492,7 @@ def summarize_diagnostics(diags: Sequence[BehaviorDiagnostics]) -> dict[str, Any
         "n_triggered": n_triggered,
         "n_recovery": n_recovery,
         "reaction_rate": reaction_rate,
+        "reaction_rate_kinematic": reaction_rate_kinematic,
         "stop_rate": stop_rate,
         "evade_rate": evade_rate,
         "recovery_rate": recovery_rate,
@@ -712,6 +729,7 @@ def compute_sensitivity_table(
         "n_triggered",
         "n_recovery",
         *_RATE_KEYS,
+        "reaction_rate_kinematic",
         *[f"bc_{name}" for name in _CLASS_VALUES],
         *[f"bc_{name}_rate" for name in _CLASS_VALUES],
     ]
@@ -1011,6 +1029,7 @@ def _yaml_diagnostics_snippet(cfg: DiagnosticsConfig) -> str:
                 "min_persist_steps": int(cfg.reaction.min_persist_steps),
                 "heading_change_deg": float(cfg.reaction.heading_change_deg),
                 "sigma_rel_floor": float(cfg.reaction.sigma_rel_floor),
+                "min_latency_chunks": float(cfg.reaction.min_latency_chunks),
             },
             "stop": {
                 "speed_frac": float(cfg.stop.speed_frac),

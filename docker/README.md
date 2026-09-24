@@ -10,8 +10,8 @@ in this image.
 |------|-------|
 | Backend | `libero` |
 | Base image | `pytorch/pytorch:2.4.1-cuda12.4-cudnn9-runtime` (matches `requirements/README.md` cu124 row) |
-| Conda env twin | `environment/dynisafety-libero.yml` (`name: dynisafety-libero`) |
-| Host install twin | `make install-libero` → `scripts/setup/install_backend.sh libero` |
+| Conda env twin | Recipe `environment/dynisafety-libero.yml`; host paper eval name is `openvla-oft` ([install.md](../docs/user/install.md)) |
+| Host install twin | `conda activate openvla-oft` then `make install-libero` |
 
 SimplerEnv / RoboTwin / RoboCasa images are **not** shipped in this PR; use the matching
 conda yml + `make install-*` on bare metal, or add sibling Dockerfiles later (M11).
@@ -86,7 +86,7 @@ dynisafety eval --backend libero --model random --suite smoke --dry-run
 
 ## Relation to Make targets
 
-On the **host** (conda env `dynisafety-libero`):
+On the **host** (paper LIBERO eval env `openvla-oft`; do not rename it):
 
 ```bash
 make install-libero

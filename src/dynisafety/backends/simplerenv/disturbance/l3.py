@@ -22,6 +22,10 @@ from dynisafety.backends.simplerenv.disturbance._support import (
     minimum_jerk,
     set_actor_pose,
 )
+from dynisafety.backends.simplerenv.disturbance.diversity_clearance import (
+    fixture_top_at_xy,
+    mover_blocked_by_scene,
+)
 from dynisafety.backends.simplerenv.disturbance.l3_reach import (
     LEGACY_MODE,
     simplerenv_l3_accept_reach,
@@ -38,13 +42,12 @@ from dynisafety.backends.simplerenv.targets import (
     SceneAccess,
     get_actor_world_aabb,
     get_tabletop_xy_bounds,
-    xy_aabb_overlaps,
 )
 from dynisafety.core.disturbance import arc_lift, lerp
-
-_L3_NAME_SKIP = ("robot", "camera", "light", "dynisafety", "goal_site")
-_L3_LAYER_B_SKIP = _L3_NAME_SKIP + ("arena", "ground", "table")
-
+from dynisafety.core.newton_force import (
+    L3_FORCE_SCHEME_DYNAMIC_RELEASE,
+    normalize_l3_force_scheme,
+)
 
 class SharedReachingController:
     """Level 3 — Position-controlled hand reaches, dwells, withdraws; flinches on hit."""
@@ -97,6 +100,7 @@ class SharedReachingController:
         min_eef_clearance: float = 0.0,
         min_task_clearance: float = 0.0,
         tip_overshoot: float = 0.0,
+        force_scheme: str = "kinematic_first_hit",
     ) -> None:
         # alpha / arm_speed are resolved upstream into target_pos / peak_velocity;
         # kept in the signature for assemble parity (S2).
@@ -196,6 +200,13 @@ class SharedReachingController:
 
         self.blocked = False
         self._frozen_pos: np.ndarray | None = None
+        self._force_scheme = normalize_l3_force_scheme(
+            force_scheme, field_name="force_scheme"
+        )
+        self._pending_release = False
+        self._released_to_physics = False
+        self.last_free_pos: np.ndarray | None = None
+        self._last_free_quat: np.ndarray | None = None
 
         self._teleport(HIDDEN_POS)
 
@@ -209,8 +220,69 @@ class SharedReachingController:
 
     @property
     def needs_physics_release(self) -> bool:
-        # L3 hand stays dynamic + position-controlled; no kinematic→dynamic swap.
-        return False
+        return self.uses_dynamic_release and self._pending_release
+
+    @property
+    def uses_dynamic_release(self) -> bool:
+        return self._force_scheme == L3_FORCE_SCHEME_DYNAMIC_RELEASE
+
+    @property
+    def released_to_physics(self) -> bool:
+        return bool(self._released_to_physics)
+
+    def request_dynamic_release(self) -> None:
+        if self._released_to_physics:
+            return
+        self._pending_release = True
+
+    def on_released_to_physics(self) -> None:
+        self._pending_release = False
+        self._released_to_physics = True
+
+    def vanish(self) -> None:
+        """Official force is stored; hide the hand (wrapper removes the actor)."""
+        self.blocked = True
+        self._phase = Phase.DONE
+        if self.actor is not None:
+            try:
+                self._teleport(HIDDEN_POS)
+            except Exception:
+                pass
+
+    def snapshot_last_free(self) -> None:
+        if self.actor is None or self._released_to_physics or self._pending_release:
+            return
+        try:
+            pose = self.actor.get_pose()
+            self.last_free_pos = np.asarray(pose.p, dtype=np.float64).copy()
+            self._last_free_quat = np.asarray(pose.q, dtype=np.float64).copy()
+        except Exception:
+            return
+
+    def restore_last_free_pose(self) -> bool:
+        if self.last_free_pos is None or self.actor is None:
+            return False
+        try:
+            quat = self._last_free_quat if self._last_free_quat is not None else self._arm_quat
+            set_actor_pose(self.actor, self.last_free_pos, quat)
+            return True
+        except Exception:
+            return False
+
+    def path_velocity(self) -> np.ndarray:
+        """Scripted inbound m/s at the control-step clock (not a new speed)."""
+        dt = 1.0 / max(float(self._control_freq), 1.0)
+        if self._phase == Phase.APPROACH:
+            delta = np.asarray(self._dwell_pos, dtype=np.float64) - np.asarray(
+                self._start_pos, dtype=np.float64
+            )
+            steps = max(int(self._approach_steps), 1)
+        else:
+            delta = np.asarray(self._start_pos, dtype=np.float64) - np.asarray(
+                self._entry_far_pos, dtype=np.float64
+            )
+            steps = max(int(self._entry_steps), 1)
+        return delta / (float(steps) * dt)
 
     @property
     def disturbance_onset_step(self) -> int | None:
@@ -384,21 +456,12 @@ class SharedReachingController:
             actors = access.get_scene().get_all_actors()
         except Exception:
             return False
-        floor = float(access.table_height)
-        for scene_actor in actors:
-            if scene_actor is self.actor:
-                continue
-            name = str(getattr(scene_actor, "name", "")).lower()
-            if any(token in name for token in _L3_LAYER_B_SKIP):
-                continue
-            scene_aabb = get_actor_world_aabb(scene_actor)
-            if scene_aabb is None:
-                continue
-            if float(scene_aabb[1][2]) <= floor + 0.01:
-                continue
-            if xy_aabb_overlaps(hand_aabb[0][:2], hand_aabb[1][:2], scene_aabb[0][:2], scene_aabb[1][:2]):
-                return True
-        return False
+        return mover_blocked_by_scene(
+            hand_aabb,
+            actors,
+            exclude_actor=self.actor,
+            table_height=float(access.table_height),
+        )
 
     def _validate_reach_path(self, start, path) -> bool:
         path = np.asarray(path, dtype=np.float64)
@@ -416,25 +479,17 @@ class SharedReachingController:
         access = self._access
         if access is None:
             return 0.0
-        best = float(access.table_height)
+        table_z = float(access.table_height)
         try:
             actors = access.get_scene().get_all_actors()
         except Exception:
-            return best
-        for scene_actor in actors:
-            if scene_actor is self.actor:
-                continue
-            name = str(getattr(scene_actor, "name", "")).lower()
-            if any(token in name for token in _L3_NAME_SKIP):
-                continue
-            aabb = get_actor_world_aabb(scene_actor)
-            if aabb is None:
-                continue
-            mins, maxs = aabb
-            if not (float(mins[0]) <= float(xy[0]) <= float(maxs[0]) and float(mins[1]) <= float(xy[1]) <= float(maxs[1])):
-                continue
-            best = max(best, float(maxs[2]))
-        return best
+            return table_z
+        return fixture_top_at_xy(
+            xy,
+            table_height=table_z,
+            actors=actors,
+            exclude_actor=self.actor,
+        )
 
     def _min_brick_clearance(self, path: np.ndarray) -> float:
         best: float | None = None
@@ -639,6 +694,7 @@ class SharedReachingController:
             ),
             "depth_collapsed": bool(result.get("depth_collapsed", False)),
             "slot_collapsed": bool(result.get("slot_collapsed", False)),
+            "legacy_validated": result.get("legacy_validated"),
         }
         self.l3_plan = dict(self.reach_plan)
 
@@ -669,6 +725,8 @@ class SharedReachingController:
 
     def update_before_step(self, task_step: int) -> None:
         self._last_task_step = task_step
+        if self._pending_release or self._released_to_physics:
+            return
 
         if self._phase == Phase.DONE:
             self._teleport(HIDDEN_POS)
@@ -781,6 +839,11 @@ class SharedReachingController:
         hit = actor_has_geometric_contact(
             scene, actor_name=self.actor.name, robot_link_names=names
         ) or actor_has_impulse_contact(scene, actor_name=self.actor.name, robot_link_names=names)
+
+        if hit and self.uses_dynamic_release:
+            if not self._released_to_physics:
+                self.request_dynamic_release()
+            return hit
 
         if hit:
             self.blocked = True

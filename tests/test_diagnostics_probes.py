@@ -255,25 +255,44 @@ def test_simplerenv_l3_public_phase_property() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_robotwin_l1_placed_step_and_release_clears_private_onset() -> None:
-    ctrl = SimpleNamespace(_dropped=False, _placed_sim_step=None, _xy_latched=False)
+def test_robotwin_l1_drop_step_survives_placed_sim_clear() -> None:
+    ctrl = SimpleNamespace(
+        _dropped=False,
+        _placed_sim_step=None,
+        drop_step=None,
+        disturbance_onset_step=None,
+        _xy_latched=False,
+    )
     probe = _probe("robotwin", ctrl, 1)
     assert probe.snapshot(4).phase is P.INACTIVE
     ctrl._xy_latched = True
     assert probe.snapshot(5).phase is P.INACTIVE
     ctrl._dropped = True
-    ctrl._placed_sim_step = 9
+    ctrl.drop_step = 9
+    ctrl.disturbance_onset_step = 9
+    ctrl._placed_sim_step = 9000
     assert probe.snapshot(9).phase is P.ACTIVE
     assert probe.snapshot(9).onset_step == 9
     cleared = probe.snapshot(10)
     assert cleared.phase is P.CLEARED
     assert cleared.hazard_end_step == 10
-    # Real controller nulls _placed_sim_step after physics release; onset stays locked.
     ctrl._placed_sim_step = None
     later = probe.snapshot(40)
     assert later.phase is P.CLEARED
     assert later.onset_step == 9
     assert later.hazard_end_step == 10
+
+
+def test_robotwin_l1_placed_sim_step_is_not_onset() -> None:
+    ctrl = SimpleNamespace(
+        _dropped=True,
+        _placed_sim_step=1501,
+        drop_step=None,
+        disturbance_onset_step=None,
+    )
+    probe = _probe("robotwin", ctrl, 1)
+    snap = probe.snapshot(12)
+    assert snap.onset_step is None
 
 
 def test_robotwin_l2_inclusive_move_end_and_hold_end() -> None:
@@ -290,17 +309,33 @@ def test_robotwin_l2_inclusive_move_end_and_hold_end() -> None:
     assert probe.snapshot(1).phase is P.APPROACHING
     assert probe.snapshot(11).phase is P.ACTIVE  # end inclusive
     assert probe.snapshot(12).phase is P.SETTLING
+    ctrl.disturbance_onset_step = 20
     ctrl._released = True
     ctrl.release_reason = "settle"
     cleared = probe.snapshot(14)
     assert cleared.phase is P.CLEARED
     assert cleared.hazard_end_step == 14
-    assert cleared.onset_step == 1
+    assert cleared.onset_step == 20
     assert probe.snapshot(99).hazard_end_step == 14
 
 
+def test_robotwin_l2_move_start_step_is_not_onset() -> None:
+    ctrl = SimpleNamespace(
+        move_start_step=1,
+        move_end_step=11,
+        hold_end_step=14,
+        _released=False,
+        _frozen=False,
+        release_reason=None,
+    )
+    probe = _probe("robotwin", ctrl, 2)
+    assert probe.snapshot(5).onset_step is None
+
+
 def test_robotwin_l3_public_phase_no_withdraw() -> None:
-    ctrl = SimpleNamespace(phase="hidden", phase_start=0, move_start_step=6)
+    ctrl = SimpleNamespace(
+        phase="hidden", phase_start=0, move_start_step=6, disturbance_onset_step=20
+    )
     probe = _probe("robotwin", ctrl, 3)
     assert probe.snapshot(2).phase is P.INACTIVE
     ctrl.phase = "enter"
@@ -315,13 +350,22 @@ def test_robotwin_l3_public_phase_no_withdraw() -> None:
     assert done.phase is P.CLEARED
     assert done.hazard_persists is False
     assert done.hazard_end_step == 40
-    assert done.onset_step == 6
+    assert done.onset_step == 20
     assert probe.snapshot(70).hazard_end_step == 40
+
+
+def test_robotwin_l3_move_start_step_is_not_onset() -> None:
+    ctrl = SimpleNamespace(phase="enter", phase_start=1, move_start_step=1)
+    probe = _probe("robotwin", ctrl, 3)
+    assert probe.snapshot(5).onset_step is None
 
 
 def test_robotwin_unwraps_manager() -> None:
     inner = SimpleNamespace(
-        _dropped=True, _placed_sim_step=4, disturbance_onset_step=None
+        _dropped=True,
+        _placed_sim_step=4,
+        drop_step=4,
+        disturbance_onset_step=4,
     )
     manager = SimpleNamespace(controller=inner, dynamic_level=1)
     probe = _probe("robotwin", manager, 1)

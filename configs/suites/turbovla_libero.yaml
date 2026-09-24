@@ -1,0 +1,24 @@
+# Extra (not paper_main): TurboVLA on dynamic LIBERO.
+# Official mixed-suite LIBERO ckpt; HTTP /health /reset /act; chunk 12; dual camera.
+# 4 suites × 4 tasks × L0–L3 × 10 ep × seed 7.
+#
+#   bash scripts/eval/01_eval.sh --model turbovla --dry-run
+#   bash scripts/eval/01_eval.sh --suite turbovla_libero --level 0
+#   bash scripts/eval/serve.sh turbovla --suite safelibero_spatial --gpu 0
+#
+# Eval conda: openvla-oft. Inference process: conda turbovla
+# (serve.sh runs the CLI in eval env; scheduler conda-runs the serve env).
+name: turbovla_libero
+episodes_per_task: 10
+seeds: [7]
+matrix:
+  - backend: libero
+    suites:
+      - safelibero_spatial
+      - safelibero_object
+      - safelibero_goal
+      - safelibero_long
+    tasks: [0, 1, 2, 3]
+    levels: [0, 1, 2, 3]
+    models:
+      - turbovla

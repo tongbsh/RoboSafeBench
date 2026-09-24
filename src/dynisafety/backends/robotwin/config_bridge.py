@@ -6,6 +6,10 @@ from collections.abc import Mapping
 from types import SimpleNamespace
 from typing import Any
 
+from dynisafety.backends.robotwin.contact import (
+    normalize_l12_force_scheme,
+    normalize_l3_force_scheme,
+)
 from dynisafety.config.schema import MISSING, RunConfig
 from dynisafety.core.disturbance import require_configured
 
@@ -26,6 +30,20 @@ def _extra(extra_robotwin: Mapping[str, Any], key: str) -> Any:
     if key not in extra_robotwin:
         raise ValueError(field_name)
     return _require(extra_robotwin[key], field_name)
+
+
+def _l3_force_scheme(extra_robotwin: Mapping[str, Any]) -> str:
+    return normalize_l3_force_scheme(
+        _extra(extra_robotwin, "l3_force_scheme"),
+        field_name="extra.robotwin.l3_force_scheme",
+    )
+
+
+def _l12_force_scheme(extra_robotwin: Mapping[str, Any]) -> str:
+    return normalize_l12_force_scheme(
+        _extra(extra_robotwin, "l12_force_scheme"),
+        field_name="extra.robotwin.l12_force_scheme",
+    )
 
 
 def _as_tuple3(value: Any, field_name: str) -> tuple[float, float, float]:
@@ -356,6 +374,26 @@ def _string_tuple(raw: Any, *, name: str, allowed: tuple[str, ...]) -> tuple[str
     return out
 
 
+def _l2_move_start_task_step(extra_robotwin: Mapping[str, Any]) -> int:
+    raw = _nested(extra_robotwin, "l2", "move_start_task_step")
+    step = int(raw)
+    if step < 0:
+        raise ValueError(
+            f"extra.robotwin.l2.move_start_task_step must be >= 0, got {raw!r}"
+        )
+    return step
+
+
+def _l3_move_start_task_step(extra_robotwin: Mapping[str, Any]) -> int:
+    raw = _nested(extra_robotwin, "l3", "move_start_task_step")
+    step = int(raw)
+    if step < 0:
+        raise ValueError(
+            f"extra.robotwin.l3.move_start_task_step must be >= 0, got {raw!r}"
+        )
+    return step
+
+
 def _l2_spawn_diversity(extra_robotwin: Mapping[str, Any]) -> dict[str, Any]:
     raw = _nested(extra_robotwin, "l2", "spawn_diversity")
     if not isinstance(raw, Mapping):
@@ -469,6 +507,7 @@ def build_disturbance_config(
         "collision_force_control_freq_hz": float(
             _extra(extra_robotwin, "collision_force_control_freq_hz")
         ),
+        "video_sim_stride": int(_extra(extra_robotwin, "video_sim_stride")),
         **_scene_attrs(scene),
         **_obstacle_attrs(obstacle),
     }
@@ -484,6 +523,7 @@ def build_disturbance_config(
                     _require_nested(l1, "drop_height", "disturbance.l1.drop_height")
                 ),
                 "l1_alpha": float(_require_nested(l1, "alpha", "disturbance.l1.alpha")),
+                "l12_force_scheme": _l12_force_scheme(extra_robotwin),
             }
         )
     elif dynamic_level == 2:
@@ -494,6 +534,7 @@ def build_disturbance_config(
                 "l2_move_start_step": int(
                     _require_nested(l2, "move_start_step", "disturbance.l2.move_start_step")
                 ),
+                "l2_move_start_task_step": _l2_move_start_task_step(extra_robotwin),
                 "l2_move_end_step": int(
                     _require_nested(l2, "move_end_step", "disturbance.l2.move_end_step")
                 ),
@@ -513,6 +554,7 @@ def build_disturbance_config(
                 "l2_start_mode": str(_extra(extra_robotwin, "l2_start_mode")),
                 "l2_start_min_distance": float(_extra(extra_robotwin, "l2_start_min_distance")),
                 "l2_flip_side": bool(_extra(extra_robotwin, "l2_flip_side")),
+                "l12_force_scheme": _l12_force_scheme(extra_robotwin),
                 "spawn_diversity": _l2_spawn_diversity(extra_robotwin),
                 "mode_seed": seed,
             }
@@ -537,9 +579,11 @@ def build_disturbance_config(
                 "l3_move_start_step": int(
                     _require_nested(l3, "move_start_step", "disturbance.l3.move_start_step")
                 ),
+                "l3_move_start_task_step": _l3_move_start_task_step(extra_robotwin),
                 "l3_entry_steps": int(
                     _require_nested(l3, "entry_steps", "disturbance.l3.entry_steps")
                 ),
+                "l3_force_scheme": _l3_force_scheme(extra_robotwin),
                 "l3_approach_steps": int(_extra(extra_robotwin, "l3_approach_steps")),
                 "l3_dwell_steps": int(
                     _require_nested(l3, "dwell_steps", "disturbance.l3.dwell_steps")

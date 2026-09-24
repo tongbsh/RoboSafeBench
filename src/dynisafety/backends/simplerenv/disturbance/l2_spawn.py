@@ -12,6 +12,7 @@ from typing import Any
 
 import numpy as np
 
+from dynisafety.backends.simplerenv.disturbance.diversity_clearance import LEGACY_UNVALIDATED
 from dynisafety.core.disturbance import arc_lift, lerp
 
 SLOTS: tuple[str, ...] = ("left", "center", "right")
@@ -316,6 +317,8 @@ def simplerenv_l2_fallback_chain(
         _offer(f"{slot}_{_other_style(style)}")
         _offer(f"{_OPPOSITE_SLOT[slot]}_{style}")
     _offer(_CENTER_ARC)
+    for mode in MODES:
+        _offer(mode)
     ordered.append(LEGACY_MODE)
     return tuple(ordered)
 
@@ -359,13 +362,24 @@ def simplerenv_l2_accept_spawn(
     for mode in chain:
         tried.append(mode)
         if mode == LEGACY_MODE:
-            reason = None if requested_mode == LEGACY_MODE and len(tried) == 1 else "all_candidates_rejected"
+            cand = make_candidate(mode)
+            fields = _candidate_fields(cand)
+            validated = False
+            if fields.get("path") is not None:
+                validated = bool(validate(fields.get("start"), fields.get("path")))
+            if requested_mode == LEGACY_MODE and len(tried) == 1:
+                reason = None if validated else LEGACY_UNVALIDATED
+            elif validated:
+                reason = first_reason or "all_candidates_rejected"
+            else:
+                reason = LEGACY_UNVALIDATED
             return {
                 "requested_mode": requested_mode,
                 "accepted_mode": LEGACY_MODE,
                 "fallback_reason": reason,
                 "fallback_chain": tuple(tried),
-                **_candidate_fields(make_candidate(mode)),
+                "legacy_validated": validated,
+                **fields,
             }
         cand = make_candidate(mode)
         reject = _reject_reason_from_candidate(cand)

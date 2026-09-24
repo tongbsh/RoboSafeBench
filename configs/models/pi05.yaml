@@ -37,7 +37,14 @@ checkpoint:
   # .../pi05_libero/pi05_libero/{assets,params}. Override with PI05_CKPT.
   default: "${env:PI05_CKPT|${workspace}/external/checkpoints/openpi_cache/openpi-assets/checkpoints/pi05_libero/pi05_libero}"
 resources:
-  max_jobs_per_gpu: 1
+  # One serve per GPU; six eval slots share it (same as pi0 / xvla).
+  # DYNI_SERVERS_PER_GPU=2 would pin a copy per eval slot.
+  #
+  # An eval slot is a thin websocket client: the LIBERO rollout is CPU-bound
+  # (~0.9 core) and only holds an EGL context (~0.6 GB), so neither VRAM nor
+  # inference is the limit. Measured with the serve resident at 8.6 GB:
+  # 3 clients on one 4090 drew 18% SM, and 9 workers used 8 of 60 cores.
+  max_jobs_per_gpu: 6
 backends: [libero]
 extra:
   ws_codec: openpi

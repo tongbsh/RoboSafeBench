@@ -1,21 +1,12 @@
-# User documentation
+# DyniSafety 用户文档
 
-Open-source user docs for DyniSafety (install, config, metrics, reproduction).
+从这里进，点标题跳转。
 
-论文构造过程稿（ICLR Prompt、实验交接、开源范围盘点）在 [../paper/](../paper/README.md)，不随本目录发布。
+| 文档 | 内容 |
+|------|------|
+| [install.md](install.md) | 克隆、conda、短配方、一键建 env、装仿真器、Docker、第三方 pin |
+| [assets.md](assets.md) | 模型权重、`download_assets.py`、MANO |
+| [eval.md](eval.md) | 一键评测、`paper_main`、报告、L0–L3 / 指标 / 契约 / 行为诊断 |
+| [repo.md](repo.md) | 仓库目录、加模型、旧命令迁移 |
 
-| Doc | Topic |
-|-----|--------|
-| [installation.md](installation.md) | Install backends, conda, Docker |
-| [configuration.md](configuration.md) | YAML layout and CLI config |
-| [contracts.md](contracts.md) | EpisodeRecord / results layout |
-| [spawn_plan.md](spawn_plan.md) | `extra.spawn_plan` (L2 spawn diversity, field convention) |
-| [metrics.md](metrics.md) | SR / CR / force / SASR |
-| [behavior_diagnostics.md](behavior_diagnostics.md) | 行为诊断四轴（反应/停止/规避/恢复）— **已冻结（P5）** |
-| [benchmark_design.md](benchmark_design.md) | Levels L0–L3 (tabletop + RoboCasa floor-nav) |
-| [reproducing_paper.md](reproducing_paper.md) | Paper sweep + report |
-| [adding_a_model.md](adding_a_model.md) | New policy adapter |
-| [../../examples/example_agent/README.md](../../examples/example_agent/README.md) | Example VLA/WAM integration (local + HTTP) |
-| [third_party.md](third_party.md) | Submodules and pins |
-| [migration.md](migration.md) | Old commands → new CLI |
-| [leaderboard.md](leaderboard.md) | Optional result submission |
+仓外接入示例：[../../examples/example_agent/README.md](../../examples/example_agent/README.md)。

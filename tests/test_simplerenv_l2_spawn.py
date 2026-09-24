@@ -6,6 +6,7 @@ from collections import Counter
 import numpy as np
 import pytest
 
+from dynisafety.backends.simplerenv.disturbance.diversity_clearance import LEGACY_UNVALIDATED
 from dynisafety.backends.simplerenv.disturbance.l2_spawn import (
     LEGACY_MODE,
     MODES,
@@ -78,6 +79,10 @@ def test_path_count_and_fallback_keeps_slot() -> None:
     assert chain[0] == "right_linear"
     assert chain[1] == "right_arc"
     assert chain[-1] == LEGACY_MODE
+    assert set(chain[:-1]) == set(MODES)
+    center_chain = simplerenv_l2_fallback_chain("center_linear", forbidden_slots=())
+    assert "left_arc" in center_chain
+    assert "right_arc" in center_chain
     path = simplerenv_l2_build_path([0, 0, 0.2], [1, 0, 0.0], "arc", n_samples=5, arc_height=0.1)
     assert path.shape == (5, 3)
     assert path[2, 2] == pytest.approx(0.1 + 0.1)  # mid lerp z=0.1 plus arc peak 0.1
@@ -105,7 +110,39 @@ def test_accept_falls_back_when_all_rejected() -> None:
         validate=lambda start, path: False,
     )
     assert out["accepted_mode"] == LEGACY_MODE
-    assert out["fallback_reason"] == "all_candidates_rejected"
+    assert out["fallback_reason"] == LEGACY_UNVALIDATED
+    assert out["legacy_validated"] is False
+
+
+def test_accept_uses_later_slot_when_requested_fails() -> None:
+    def make(mode: str):
+        path = np.ones((3, 3)) if mode == "right_arc" else np.zeros((3, 3))
+        return {"start": path[0], "path": path, "linear_solve_mode": "na"}
+
+    out = simplerenv_l2_accept_spawn(
+        "center_linear",
+        forbidden_slots=(),
+        make_candidate=make,
+        validate=lambda start, path: bool(np.allclose(path, 1.0)),
+    )
+    assert out["accepted_mode"] == "right_arc"
+    assert "right_arc" in out["fallback_chain"]
+
+
+def test_legacy_validated_when_only_legacy_passes() -> None:
+    def make(mode: str):
+        path = np.zeros((3, 3)) if mode == LEGACY_MODE else np.ones((3, 3))
+        return {"start": path[0], "path": path, "linear_solve_mode": "na"}
+
+    out = simplerenv_l2_accept_spawn(
+        "left_arc",
+        forbidden_slots=(),
+        make_candidate=make,
+        validate=lambda start, path: bool(np.allclose(path, 0.0)),
+    )
+    assert out["accepted_mode"] == LEGACY_MODE
+    assert out["legacy_validated"] is True
+    assert out["fallback_reason"] == "candidate_rejected"
 
 
 def test_assemble_requires_spawn_diversity_block() -> None:

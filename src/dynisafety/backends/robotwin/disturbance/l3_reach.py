@@ -197,21 +197,25 @@ def robotwin_l3_execution_anchors(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Map accepted ``path[0]`` to ``(hover, pose_start)`` for the controller.
 
-    ``start`` is the executed waypoint 0. For ``raised`` / ``via`` that
-    already includes ``hover_rise_m``; ``pose_start`` strips the rise so
-    ``pose_at(..., "via")`` matches the validated path. ``straight`` keeps
-    today's hover at ``dwell_z + enter_height``.
+    Diversity changes *where* the hand starts and intercepts. It must not
+    move the inbound onto APPROACH: ``hover`` is always above ``dwell`` so
+    ENTER (``start → hover``) still carries ``entry_steps`` and APPROACH
+    is the short drop. Putting ``hover`` at the spawn XY made ENTER a
+    2 cm lift and packed the whole table crossing into ``approach_steps``.
+
+    ``start`` is executed waypoint 0. For ``raised`` / ``via`` that already
+    includes ``hover_rise_m``; ``pose_start`` strips the rise so helpers
+    that rebuild the validated curve can start from the unlifted spawn.
     """
     start_xyz = _as_xyz(start, name="start")
     dwell_xyz = _as_xyz(dwell, name="dwell")
     style = str(path_style)
+    hover = dwell_xyz.copy()
+    hover[2] = float(dwell_xyz[2]) + float(enter_height)
     if style in ("raised", "via"):
-        hover = start_xyz.copy()
         pose_start = start_xyz.copy()
         pose_start[2] = float(start_xyz[2]) - float(hover_rise_m)
         return hover, pose_start
-    hover = start_xyz.copy()
-    hover[2] = float(dwell_xyz[2]) + float(enter_height)
     return hover, start_xyz.copy()
 
 

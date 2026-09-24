@@ -15,6 +15,7 @@ from dynisafety.policies.safety.aegis.types import (
     AegisDebugInfo,
     CbfQpResult,
     EllipsoidState,
+    MotionMode,
     SolverFailurePolicy,
 )
 
@@ -25,6 +26,7 @@ __all__ = [
     "AegisDebugInfo",
     "CbfQpResult",
     "EllipsoidState",
+    "MotionMode",
     "SolverFailurePolicy",
     "aegis_config_from_mapping",
     "aegis_config_with_enabled",

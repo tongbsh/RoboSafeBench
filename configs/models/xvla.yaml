@@ -28,9 +28,14 @@ checkpoint:
   # Paper LIBERO weight (not the parent xVLA/ directory).
   default: "${env:XVLA_CKPT|${workspace}/external/checkpoints/xVLA/xvla-libero-full}"
 resources:
-  # Dual eval clients share one serve (same as xvla_official). If MuJoCo
-  # reports "Cannot place all objects", drop back to 1.
-  max_jobs_per_gpu: 2
+  # Eval clients share one serve (same as xvla_official). If MuJoCo reports
+  # "Cannot place all objects", drop back to 1.
+  #
+  # 6 for the same reason as pi05: the eval slot is a thin websocket client
+  # whose LIBERO rollout is CPU-bound (~0.9 core, ~0.6 GB EGL). xVLA's serve is
+  # the smallest of the LIBERO set (3.3 GB of weights vs pi05's 12 GB), so the
+  # card has even more headroom here.
+  max_jobs_per_gpu: 6
 backends: [libero]
 extra:
   variant: default

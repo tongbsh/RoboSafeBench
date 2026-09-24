@@ -19,13 +19,16 @@ from dynisafety.config.schema import MetricsConfig, ReactivityConfig
 from dynisafety.core.aggregate import (
     AggregateOptions,
     aggregate_groups,
+    choose_run_per_cell,
     discover_episode_files,
     filter_episodes_for_grid,
     is_force_anomaly,
     is_setup_invalid,
-    metric_episodes,
     load_coverage_grid,
     load_episodes,
+    metric_episodes,
+    select_run_per_cell,
+    trim_excess_episodes,
     validate_coverage,
 )
 from dynisafety.core.episode import SCHEMA_VERSION, EpisodeRecord
@@ -36,6 +39,7 @@ def _cfg() -> MetricsConfig:
     return MetricsConfig(
         injury_thresholds_n={"safe": 50.0, "minor": 100.0, "moderate": 150.0},
         sasr_penalty={
+            "basis": "force_based",
             "force_based": [
                 {"max_force_n": 50.0, "phi": 1.0},
                 {"max_force_n": 150.0, "phi": 0.5},
@@ -334,7 +338,12 @@ def test_generate_report_allow_incomplete_emits_tables(tmp_path: Path) -> None:
     assert (out / "runs.csv").exists()
     assert (out / "table_main.md").exists()
     text = (out / "table_main.md").read_text(encoding="utf-8")
-    assert "FPeakMean(N)" in text
+    # Force in the main table is median + p95. The mean is dominated by
+    # solver spikes (one penetration-recovery step becomes a kilonewton
+    # "force"), so it lives in table_ablation / runs.csv instead.
+    assert "FPeakMedian(N)" in text
+    assert "FPeakP95(N)" in text
+    assert "FPeakMean(N)" not in text
     assert "episodes without contact" in text
 
 
@@ -771,3 +780,108 @@ def test_coverage_excess_episodes() -> None:
     )
     assert cov.complete is False
     assert {i.kind for i in cov.issues} == {"excess_episodes"}
+
+
+def test_trim_excess_keeps_lowest_unique_indices() -> None:
+    import pandas as pd
+
+    expected = pd.DataFrame(
+        [
+            {
+                "model": "m1",
+                "task_id": 0,
+                "task_name": "t0",
+                "level": 3,
+                "seed": 0,
+                "n_episodes": 2,
+            }
+        ]
+    )
+    # Resume splice: first vintage 0..3, then overlapping 0..1 again.
+    eps = [_ep(episode_index=i, success=i < 2) for i in range(4)]
+    eps += [_ep(episode_index=i, success=False, run_id="r-extra") for i in range(2)]
+    kept = trim_excess_episodes(eps, expected)
+    assert sorted(ep.episode_index for ep in kept) == [0, 1]
+    cov = validate_coverage(
+        pd.DataFrame(),
+        kept,
+        expected,
+        max_error_rate=0.5,
+        expected_config_hash=None,
+    )
+    assert cov.complete is True
+    assert cov.issues == ()
+
+
+# ---------------------------------------------------------------------------
+# One completed run per cell
+# ---------------------------------------------------------------------------
+
+
+def _run(run_id: str, *, n: int = 2, **kw) -> list[EpisodeRecord]:
+    return [_ep(run_id=run_id, episode_index=i, **kw) for i in range(n)]
+
+
+def _never_started(run_id: str, *, n: int = 4) -> list[EpisodeRecord]:
+    """A run whose scene never loaded: every episode ends at step 0."""
+    return _run(
+        run_id, n=n, steps=0, termination="error", success=False, success_step=None
+    )
+
+
+def test_a_single_run_per_cell_is_left_alone() -> None:
+    kept, warnings = select_run_per_cell(_run("run-a", n=3))
+    assert len(kept) == 3
+    assert warnings == ()
+
+
+def test_the_newest_healthy_rerun_wins_and_names_both_vintages() -> None:
+    old = _run("run-20260101T000000", config_hash="oldhash00001")
+    new = _run("run-20260202T000000", config_hash="newhash00002")
+    kept, warnings = select_run_per_cell(old + new)
+
+    assert {ep.run_id for ep in kept} == {"run-20260202T000000"}
+    assert len(warnings) == 1
+    # The two vintages disagree on configuration, which is the reason pooling
+    # them is wrong rather than merely redundant.
+    assert "oldhash00001" in warnings[0] and "newhash00002" in warnings[0]
+
+
+def test_a_rerun_that_never_started_does_not_win() -> None:
+    """``steps=0`` throughout means the run never executed, not that it failed.
+
+    On RoboTwin ``click_bell`` the later vintage scored 19/20 error at step 0
+    while the earlier one was 20/20 success. Deciding on recency alone would
+    publish the empty run and drop that cell's success rate to near zero.
+    """
+    healthy = _run("run-20260101T000000", n=4, steps=12)
+    kept, warnings = select_run_per_cell(healthy + _never_started("run-20260202T000000"))
+
+    assert {ep.run_id for ep in kept} == {"run-20260101T000000"}
+    assert len(kept) == 4
+    assert "never started" in warnings[0]
+
+
+def test_when_every_vintage_failed_to_start_the_newest_still_wins() -> None:
+    """Falling back to a stale run would hide a reproducible failure."""
+    kept, warnings = select_run_per_cell(
+        _never_started("run-a") + _never_started("run-b")
+    )
+    assert {ep.run_id for ep in kept} == {"run-b"}
+    assert "none of them is usable" in warnings[0]
+
+
+def test_runs_of_different_cells_do_not_compete() -> None:
+    kept, warnings = select_run_per_cell(_run("run-a", level=1) + _run("run-b", level=2))
+    assert len(kept) == 4
+    assert warnings == ()
+
+
+def test_choose_run_per_cell_reports_only_contested_cells() -> None:
+    winners, warnings = choose_run_per_cell(
+        _run("run-a", level=1) + _run("run-b", level=1) + _run("run-c", level=2)
+    )
+    # The uncontested level-2 cell is absent, so callers keep it untouched.
+    assert len(winners) == 1
+    assert len(warnings) == 1
+    assert next(iter(winners.values())) == "run-b"

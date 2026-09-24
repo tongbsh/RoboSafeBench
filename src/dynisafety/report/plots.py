@@ -31,7 +31,7 @@ _STACK_LABELS = {
     "cif": "CIF",
 }
 
-# 9-class palette / labels (docs/user/behavior_diagnostics.md §3). Shared by both
+# 9-class palette / labels (docs/user/eval.md §3). Shared by both
 # new figures so the CFF split in failure_decomposition.png matches the
 # distribution figure.
 _BC_ORDER = (
@@ -44,6 +44,7 @@ _BC_ORDER = (
     "partial_response",
     "no_response",
     "not_triggered",
+    "baseline_unusable",
 )
 _BC_COLORS = {
     "collide_unreacted": "#8c1515",
@@ -55,6 +56,7 @@ _BC_COLORS = {
     "partial_response": "#fdae6b",
     "no_response": "#636363",
     "not_triggered": "#d9d9d9",
+    "baseline_unusable": "#bdbdbd",
 }
 _BC_LABELS = {
     "collide_unreacted": "Collide (no reaction)",
@@ -66,10 +68,29 @@ _BC_LABELS = {
     "partial_response": "Partial",
     "no_response": "No response",
     "not_triggered": "Not triggered",
+    "baseline_unusable": "Baseline unusable",
 }
 _QUADRANTS = ("SS", "US", "CFF", "CIF")
 # CFF process split (the reviewer-facing claim): not "Safe Stop".
 _CFF_CLASSES = ("stop_no_recover", "evade_fail", "partial_response", "no_response")
+# Classes that carry no axis observation. They have a quadrant like any other
+# episode, but placing them in a process figure would read as an observed
+# behavior rather than a missing one.
+_UNOBSERVED_CLASSES = ("not_triggered", "baseline_unusable")
+
+
+def valid_episodes_frame(episodes_df: pd.DataFrame) -> pd.DataFrame:
+    """Episode rows the tables count: setup-invalid trials dropped.
+
+    ``metric_episodes`` removes them before every rate in ``runs.csv``; a
+    figure drawn from the raw frame would put the same trials back — and an
+    L1–L3 whose disturbance never assembled is almost always a contact-free
+    failure, which pads exactly the CFF bar this report argues about.
+    """
+    if episodes_df.empty or "setup_invalid" not in episodes_df.columns:
+        return episodes_df
+    flags = episodes_df["setup_invalid"].map(lambda v: bool(v) if v is not None else False)
+    return episodes_df.loc[~flags.astype(bool)]
 
 
 def plot_level_curves(
@@ -91,6 +112,11 @@ def plot_level_curves(
     work = runs_df.copy()
     if "n_episodes" not in work.columns:
         work["n_episodes"] = 1.0
+    # Rates in runs.csv were divided by the valid-episode count; collapsing
+    # them with n_episodes weights would draw a different point from the one
+    # table_main prints for the same cell.
+    weight_col = "n_valid_episodes" if "n_valid_episodes" in work.columns else "n_episodes"
+    all_levels = sorted(int(lv) for lv in work["level"].dropna().unique())
 
     n = len(metrics)
     fig, axes = plt.subplots(1, n, figsize=(4.5 * n, 3.5), squeeze=False)
@@ -100,22 +126,23 @@ def plot_level_curves(
             ax.set_title(f"{metric} (missing)")
             continue
         for model, grp in work.groupby("model"):
-            # Collapse seeds/tasks: weighted mean by level
-            levels = []
-            vals = []
+            # Collapse seeds/tasks: weighted mean by level. A level with no
+            # value stays NaN so the line breaks there instead of bridging
+            # L0→L2 as if L1 had been measured.
+            by_level = {}
             for level, g2 in grp.groupby("level"):
-                w = g2["n_episodes"].astype(float)
+                w = g2[weight_col].astype(float).fillna(0.0)
                 v = g2[metric]
-                mask = v.notna()
+                mask = v.notna() & (w > 0)
                 if not bool(mask.any()):
                     continue
-                levels.append(int(level))
-                vals.append(float((v[mask].astype(float) * w[mask]).sum() / w[mask].sum()))
-            if levels:
-                order = sorted(range(len(levels)), key=lambda j: levels[j])
+                by_level[int(level)] = float(
+                    (v[mask].astype(float) * w[mask]).sum() / w[mask].sum()
+                )
+            if by_level:
                 ax.plot(
-                    [levels[j] for j in order],
-                    [vals[j] for j in order],
+                    all_levels,
+                    [by_level.get(lv, float("nan")) for lv in all_levels],
                     marker="o",
                     label=str(model),
                 )
@@ -145,9 +172,14 @@ def plot_force_box(
         plt.close(fig)
         return
 
-    work = episodes_df.copy()
+    work = valid_episodes_frame(episodes_df).copy()
     if "level" not in work.columns:
         raise KeyError("episodes_df must contain 'level'")
+    if work.empty:
+        ax.set_title("no force data")
+        fig.savefig(out_path, bbox_inches="tight")
+        plt.close(fig)
+        return
 
     levels = sorted(work["level"].unique())
     if "model" in work.columns and work["model"].nunique() > 1:
@@ -345,13 +377,19 @@ def _weighted_xy_by_group(
     y_col: str,
 ) -> list[tuple[str, float, float]]:
     pts: list[tuple[str, float, float]] = []
+    # Same weights the tables use: rates were divided by the valid count.
+    weight_col = (
+        "n_valid_episodes"
+        if "n_valid_episodes" in work.columns
+        else "n_episodes" if "n_episodes" in work.columns else None
+    )
     for gname, grp in work.groupby(group_col):
         w = (
-            grp["n_episodes"].astype(float)
-            if "n_episodes" in grp.columns
+            grp[weight_col].astype(float)
+            if weight_col is not None
             else pd.Series(1.0, index=grp.index)
         )
-        mask = grp[sr_col].notna() & grp[y_col].notna() & w.notna()
+        mask = grp[sr_col].notna() & grp[y_col].notna() & w.notna() & (w > 0)
         if not bool(mask.any()):
             continue
         ww = w[mask]
@@ -594,12 +632,17 @@ def plot_behavior_classes(
         _unavailable_figure(out_path, f"behavior classes ({UNAVAILABLE})")
         return
 
-    work = episodes_df.loc[episodes_df["diag_behavior_class"].notna()].copy()
+    work = valid_episodes_frame(episodes_df)
+    work = work.loc[work["diag_behavior_class"].notna()].copy()
+    if work.empty:
+        _unavailable_figure(out_path, f"behavior classes ({UNAVAILABLE})")
+        return
     models = (
         sorted(work[model_col].astype(str).unique())
         if model_col in work.columns and work[model_col].nunique() > 1
         else [None]
     )
+    all_levels = sorted(int(lv) for lv in work[level_col].unique())
     n = len(models)
     fig, axes = plt.subplots(1, n, figsize=(4.2 * n, 4.0), squeeze=False, sharey=True)
 
@@ -647,7 +690,10 @@ def plot_behavior_classes(
             fontsize=7,
             bbox_to_anchor=(0.5, 1.18),
         )
-    fig.suptitle("Behavior-class distribution by level (L0→L3)", y=1.02)
+    level_span = (
+        f"L{all_levels[0]}→L{all_levels[-1]}" if len(all_levels) > 1 else f"L{all_levels[0]}"
+    )
+    fig.suptitle(f"Behavior-class distribution by level ({level_span})", y=1.02)
     fig.tight_layout()
     fig.savefig(out_path, bbox_inches="tight")
     plt.close(fig)
@@ -665,8 +711,9 @@ def plot_failure_decomposition(
     panel is titled to make the split obvious — ``stop_no_recover`` (halted,
     never finished), ``evade_fail`` (cleared contact, task unfinished),
     ``partial_response`` (measurable but incomplete), ``no_response`` (failed
-    with an unchanged trajectory). ``not_triggered`` is excluded (it sits
-    outside the four-quadrant denominator).
+    with an unchanged trajectory). ``not_triggered`` and ``baseline_unusable``
+    are excluded: neither carries an axis observation, so drawing them here
+    would read as an observed behavior.
     """
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -675,8 +722,9 @@ def plot_failure_decomposition(
     if episodes_df.empty or any(c not in episodes_df.columns for c in needed):
         _unavailable_figure(out_path, f"failure decomposition ({UNAVAILABLE})")
         return
-    work = episodes_df.loc[episodes_df["diag_behavior_class"].notna()].copy()
-    work = work[work["diag_behavior_class"].astype(str) != "not_triggered"]
+    work = valid_episodes_frame(episodes_df)
+    work = work.loc[work["diag_behavior_class"].notna()].copy()
+    work = work[~work["diag_behavior_class"].astype(str).isin(_UNOBSERVED_CLASSES)]
     if work.empty:
         _unavailable_figure(out_path, f"failure decomposition ({UNAVAILABLE})")
         return
@@ -698,7 +746,7 @@ def plot_failure_decomposition(
         squeeze=False,
         sharey=True,
     )
-    class_order = [c for c in _BC_ORDER if c != "not_triggered"]
+    class_order = [c for c in _BC_ORDER if c not in _UNOBSERVED_CLASSES]
 
     for i, quad in enumerate(_QUADRANTS):
         ax = axes[0][i]
@@ -726,7 +774,7 @@ def plot_failure_decomposition(
             bottoms = [b + h for b, h in zip(bottoms, heights)]
         if quad == "CFF":
             ax.set_title('CFF — not "Safe Stop"', fontsize=9, color="#8c1515")
-            ax.set_xlabel("stop-no-rec / evade-fail / no-resp")
+            ax.set_xlabel("stop-no-rec / evade-fail / partial / no-resp")
             for spine in ax.spines.values():
                 spine.set_color("#8c1515")
                 spine.set_linewidth(1.6)

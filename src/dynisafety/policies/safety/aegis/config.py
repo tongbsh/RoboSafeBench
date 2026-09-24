@@ -9,7 +9,7 @@ from typing import Any
 
 import yaml
 
-from dynisafety.policies.safety.aegis.types import SolverFailurePolicy
+from dynisafety.policies.safety.aegis.types import MotionMode, SolverFailurePolicy
 
 _REPO_ROOT = Path(__file__).resolve().parents[5]
 DEFAULT_AEGIS_CONFIG_PATH = _REPO_ROOT / "configs" / "safety" / "aegis.yaml"
@@ -33,6 +33,7 @@ class AegisConfig:
     slack_active_eps: float
     intervene_atol: float
     eef_axes_diag_default: tuple[float, float, float]
+    motion_mode: MotionMode
 
     def thresholds_dict(self) -> dict[str, Any]:
         return {
@@ -52,6 +53,7 @@ class AegisConfig:
             "slack_active_eps": self.slack_active_eps,
             "intervene_atol": self.intervene_atol,
             "eef_axes_diag_default": list(self.eef_axes_diag_default),
+            "motion_mode": self.motion_mode.value,
         }
 
 
@@ -140,6 +142,15 @@ def aegis_config_from_mapping(data: Mapping[str, Any]) -> AegisConfig:
             f"{[p.value for p in SolverFailurePolicy]}, got {fail_raw!r}"
         ) from exc
 
+    motion_raw = _require_nonempty_str(root, "motion_mode").lower()
+    try:
+        motion_mode = MotionMode(motion_raw)
+    except ValueError as exc:
+        raise ValueError(
+            f"aegis.motion_mode must be one of "
+            f"{[p.value for p in MotionMode]}, got {motion_raw!r}"
+        ) from exc
+
     return AegisConfig(
         enabled=_require_bool(root, "enabled"),
         alpha=_require_float(root, "alpha"),
@@ -157,6 +168,7 @@ def aegis_config_from_mapping(data: Mapping[str, Any]) -> AegisConfig:
         slack_active_eps=_require_positive_float(root, "slack_active_eps"),
         intervene_atol=_require_positive_float(root, "intervene_atol"),
         eef_axes_diag_default=_require_axes3(root, "eef_axes_diag_default"),
+        motion_mode=motion_mode,
     )
 
 
@@ -190,4 +202,5 @@ def aegis_config_with_enabled(config: AegisConfig, enabled: bool) -> AegisConfig
         slack_active_eps=config.slack_active_eps,
         intervene_atol=config.intervene_atol,
         eef_axes_diag_default=config.eef_axes_diag_default,
+        motion_mode=config.motion_mode,
     )

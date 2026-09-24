@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RoboSafeBench — Dynamic Physical Safety for VLA Policies</title>
+  <meta name="description" content="RoboSafeBench is a dynamic physical-safety benchmark for Vision-Language-Action policies across LIBERO, SimplerEnv, and RoboTwin.">
+  <meta property="og:title" content="RoboSafeBench">
+  <meta property="og:description" content="Does a VLA still finish the task when the workspace moves — without colliding?">
+  <meta property="og:type" content="website">
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,560;9..144,700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css?v=results1">
+</head>
+<body>
+  <a class="skip" href="#main" data-i18n="skip">Skip to content</a>
+  <header class="nav">
+    <div class="nav-inner">
+      <a class="brand" href="#hero">
+        <img src="assets/logo.svg" alt="">
+        RoboSafeBench
+      </a>
+      <button class="menu-btn" id="menu-btn" type="button" aria-expanded="false" data-i18n="menu">Menu</button>
+      <ul class="nav-links" id="nav-links">
+        <li><a href="#overview" data-i18n="nav_overview">Overview</a></li>
+        <li><a href="#benchmark" data-i18n="nav_benchmark">Benchmark</a></li>
+        <li><a href="#demo" data-i18n="nav_demo">Demos</a></li>
+        <li><a href="#metrics" data-i18n="nav_metrics">Metrics</a></li>
+        <li><a href="#results" data-i18n="nav_results">Results</a></li>
+        <li><a href="#start" data-i18n="nav_start">Get started</a></li>
+        <li><a href="#citation" data-i18n="nav_cite">Cite</a></li>
+        <li><button class="lang-switch" id="lang-btn" type="button" data-i18n="lang">中文</button></li>
+      </ul>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero" id="hero">
+      <div class="wrap">
+        <p class="kicker" data-i18n="kicker">Dynamic physical safety · VLA benchmark</p>
+        <h1 data-i18n="title">RoboSafeBench</h1>
+        <p class="hero-sub" data-i18n="subtitle">
+          Does a Vision-Language-Action policy still finish the task when the workspace moves — without colliding with an obstacle or a human hand?
+        </p>
+        <p class="authors" data-i18n="authors">Anonymous authors</p>
+        <p class="affiliations" data-i18n="affiliations">Author names and affiliations withheld for dual-blind review.</p>
+        <p class="anon-note" id="venue-badge">Paper under review</p>
+        <div class="pub-links">
+          <a class="pill pill-primary" id="link-paper" href="#"><span data-i18n="paper">Paper</span></a>
+          <a class="pill" id="link-arxiv" href="#"><span data-i18n="arxiv">arXiv</span></a>
+          <a class="pill" id="link-code" href="#"><span data-i18n="code">Code</span></a>
+          <a class="pill" id="link-docs" href="#"><span data-i18n="docs">Docs</span></a>
+          <a class="pill" href="#citation"><span data-i18n="bib">BibTeX</span></a>
+        </div>
+        <div class="stats">
+          <div class="stat"><b data-i18n="stat1_v">3</b><span data-i18n="stat1_l">Manipulation simulators · one protocol</span></div>
+          <div class="stat"><b data-i18n="stat2_v">L0–L3</b><span data-i18n="stat2_l">Timed physical disturbances</span></div>
+          <div class="stat"><b data-i18n="stat3_v">10+</b><span data-i18n="stat3_l">VLA families in the paper</span></div>
+          <div class="stat"><b data-i18n="stat4_v">SSR + BD</b><span data-i18n="stat4_l">Outcome and process metrics</span></div>
+        </div>
+      </div>
+    </section>
+
+    <div class="stripe" aria-hidden="true"></div>
+
+    <section id="overview">
+      <div class="wrap">
+        <div class="section-head">
+          <div>
+            <h2 data-i18n="hl_title">What the benchmark is for</h2>
+            <p class="lede" data-i18n="hl_lede">Static success rate cannot tell a lucky miss from a controlled stop. RoboSafeBench scores both the ending and the motion that got there.</p>
+          </div>
+        </div>
+        <div class="grid-4">
+          <article class="card">
+            <span class="tag">01</span>
+            <h3 data-i18n="hl1_t">One ladder, three simulators</h3>
+            <p data-i18n="hl1_d">The same L0–L3 disturbances run on LIBERO, SimplerEnv, and RoboTwin.</p>
+          </article>
+          <article class="card">
+            <span class="tag">02</span>
+            <h3 data-i18n="hl2_t">Disturbances that actually move</h3>
+            <p data-i18n="hl2_d">L1 suddenly occupies the workspace, L2 slides through it, L3 is a reaching hand. The policy must react while the task is still live.</p>
+          </article>
+          <article class="card">
+            <span class="tag">03</span>
+            <h3 data-i18n="hl3_t">Contact counts</h3>
+            <p data-i18n="hl3_d">Every episode records success, contact, peak force, and topple. Joint quadrants split Safe Success from contact-success and contact-free failure.</p>
+          </article>
+          <article class="card">
+            <span class="tag">04</span>
+            <h3 data-i18n="hl4_t">Process, not only endings</h3>
+            <p data-i18n="hl4_d">Behavior diagnostics cut the rollout at onset: did the policy react, stop, evade, then recover? Ten mutually exclusive classes replace a single “unsafe” bucket.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="abstract">
+      <div class="wrap grid-2">
+        <div>
+          <h2 data-i18n="abs_title">The question</h2>
+        </div>
+        <div>
+          <p data-i18n="abs_p1">Most VLA tables report success in a still scene.</p>
+          <p data-i18n="abs_p2">RoboSafeBench asks what happens when the workspace is no longer still.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="benchmark">
+      <div class="wrap">
+        <div class="section-head">
+          <div>
+            <h2 data-i18n="bench_title">Benchmark</h2>
+            <p class="lede" data-i18n="bench_lede">Three manipulation simulators. One L0–L3 ladder.</p>
+          </div>
+        </div>
+        <div class="grid-3">
+          <article class="card">
+            <span class="tag">MuJoCo</span>
+            <h3 data-i18n="be1_t">LIBERO</h3>
+            <p data-i18n="be1_d">MuJoCo tabletop. SafeLIBERO spatial / object / goal / long suites, GSO obstacle pack, MANO-style L3 hand.</p>
+          </article>
+          <article class="card">
+            <span class="tag">SAPIEN 2</span>
+            <h3 data-i18n="be2_t">SimplerEnv</h3>
+            <p data-i18n="be2_d">SAPIEN 2 Bridge tasks (carrot, stack, spoon). Same drop / slide / reach schedule on a shorter control clock.</p>
+          </article>
+          <article class="card">
+            <span class="tag">SAPIEN 3</span>
+            <h3 data-i18n="be3_t">RoboTwin</h3>
+            <p data-i18n="be3_d">SAPIEN 3 dual-arm main20. Impulse-based contact; L1–L3 use the same narrative with a robot-scale workspace.</p>
+          </article>
+        </div>
+
+        <h3 style="margin: 36px 0 16px; font-family: var(--serif);" data-i18n="lv_title">Disturbance ladder</h3>
+        <div class="grid-4">
+          <article class="card level-card" data-level="0">
+            <span class="tag">L0</span>
+            <h3 data-i18n="l0_t">L0 · Baseline</h3>
+            <p data-i18n="l0_d">Task only. No injected dynamic body.</p>
+          </article>
+          <article class="card level-card" data-level="1">
+            <span class="tag">L1</span>
+            <h3 data-i18n="l1_t">L1 · Sudden appear</h3>
+            <p data-i18n="l1_d">An object occupies the workspace as the gripper approaches.</p>
+          </article>
+          <article class="card level-card" data-level="2">
+            <span class="tag">L2</span>
+            <h3 data-i18n="l2_t">L2 · Sliding / crossing</h3>
+            <p data-i18n="l2_d">A planned slide through the workspace, then settle.</p>
+          </article>
+          <article class="card level-card" data-level="3">
+            <span class="tag">L3</span>
+            <h3 data-i18n="l3_t">L3 · Shared space</h3>
+            <p data-i18n="l3_d">A simulated human hand reaches into the workspace.</p>
+          </article>
+        </div>
+
+        <h3 style="margin: 36px 0 16px; font-family: var(--serif);" data-i18n="cmp_title">Where it sits next to nearby suites</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th data-i18n="th_axis">Axis</th>
+                <th data-i18n="th_libero">LIBERO</th>
+                <th data-i18n="th_ls">LIBERO-Safety</th>
+                <th data-i18n="th_arena">VLA-Arena</th>
+                <th data-i18n="th_ours">RoboSafeBench</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td data-i18n="r1_a">Language-conditioned manipulation</td>
+                <td class="good" data-i18n="r1_b">Yes</td>
+                <td class="good" data-i18n="r1_c">Yes</td>
+                <td class="good" data-i18n="r1_d">Yes</td>
+                <td class="good" data-i18n="r1_e">Yes</td>
+              </tr>
+              <tr>
+                <td data-i18n="r2_a">Dynamic moving hazards</td>
+                <td class="no" data-i18n="r2_b">None (static tabletop)</td>
+                <td class="mid" data-i18n="r2_c">Dynamic obstacles / hands in some suites; no shared clock</td>
+                <td class="mid" data-i18n="r2_d">DynamicObstacles and similar suites; no shared clock</td>
+                <td class="good" data-i18n="r2_e">Same timed L1–L3 on every simulator</td>
+              </tr>
+              <tr>
+                <td data-i18n="r3_a">Physics engines</td>
+                <td data-i18n="r3_b">MuJoCo</td>
+                <td data-i18n="r3_c">MuJoCo (LIBERO-Plus)</td>
+                <td data-i18n="r3_d">MuJoCo</td>
+                <td class="good" data-i18n="r3_e">MuJoCo + SAPIEN 2 + SAPIEN 3</td>
+              </tr>
+              <tr>
+                <td data-i18n="r4_a">Contact / force as outcomes</td>
+                <td class="no" data-i18n="r4_b">SR only</td>
+                <td class="mid" data-i18n="r4_c">Violation-free SR + CR</td>
+                <td class="mid" data-i18n="r4_d">Safety: SR + CC</td>
+                <td class="good" data-i18n="r4_e">CR, force, topple, SSR</td>
+              </tr>
+              <tr>
+                <td data-i18n="r5_a">Process diagnostics (vs onset)</td>
+                <td class="no" data-i18n="r5_b">—</td>
+                <td class="mid" data-i18n="r5_c">— (smoothness / duration only)</td>
+                <td class="no" data-i18n="r5_d">—</td>
+                <td class="good" data-i18n="r5_e">React / stop / evade / recover</td>
+              </tr>
+              <tr>
+                <td data-i18n="r6_a">Semantic refusal</td>
+                <td class="no" data-i18n="r6_b">—</td>
+                <td class="good" data-i18n="r6_c">Dedicated SSR suite (RR)</td>
+                <td class="no" data-i18n="r6_d">— (W0–W4 is instruction perturbation, not refusal)</td>
+                <td class="no" data-i18n="r6_e">Out of scope</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="footnote" data-i18n="cmp_cap">LIBERO-Safety evaluates physical safety and semantic refusal on the LIBERO stack. VLA-Arena measures capability frontiers with L0–L2 difficulty plus language/visual probes, and reports cumulative cost on Safety. RoboSafeBench evaluates the same timed, moving-contact protocol on three manipulation simulators, with process diagnostics; semantic refusal is out of scope.</p>
+      </div>
+    </section>
+
+    <section id="demo">
+      <div class="wrap">
+        <div class="section-head">
+          <div>
+            <h2 data-i18n="demo_title">Demos</h2>
+            <p class="lede" data-i18n="demo_lede">Pick a simulator. One row is the same task from L0 to L3, with contact on L1–L3. Below: four π₀.₅ L1 tasks, collision versus solvable evade.</p>
+          </div>
+        </div>
+        <div id="teaser-embed" hidden class="card" style="margin-bottom:14px;aspect-ratio:16/9;padding:0;overflow:hidden"></div>
+        <div class="demo-bar" id="demo-bar"></div>
+        <div class="demo-rows" id="demo-rows"></div>
+        <div class="demo-safety" id="demo-safety">
+          <h3 data-i18n="safety_title">π₀.₅ · L1 same-task contrast</h3>
+          <p class="lede" data-i18n="safety_lede">Four LIBERO picks. Each column is one task and the same L1 object. Top: vanilla π₀.₅ collides. Bottom: Oracle stop-wait-resume + AEGIS evades and finishes.</p>
+          <div class="demo-compare" id="demo-compare"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="metrics">
+      <div class="wrap">
+        <div class="section-head">
+          <div>
+            <h2 data-i18n="metrics_title">Evaluation metrics</h2>
+            <p class="lede" data-i18n="metrics_lede">Each episode is evaluated on both task outcome and process diagnostics.</p>
+          </div>
+        </div>
+        <div class="grid-2">
+          <div class="grid-2" style="grid-template-columns:1fr 1fr">
+            <article class="card"><span class="tag">SR</span><p data-i18n="m_sr">Task success rate.</p></article>
+            <article class="card"><span class="tag">CR</span><p data-i18n="m_cr">Contact rate.</p></article>
+            <article class="card"><span class="tag">SSR</span><p data-i18n="m_ssr">Safe success.</p></article>
+            <article class="card"><span class="tag">SASR</span><p data-i18n="m_sasr">Safety-adjusted success.</p></article>
+          </div>
+          <article class="card">
+            <span class="tag">FPeakMean(N)</span>
+            <p data-i18n="m_force">Mean peak contact force; no-contact episodes count as 0 N.</p>
+          </article>
+        </div>
+
+        <h3 style="margin: 36px 0 16px; font-family: var(--serif);" data-i18n="quad_title">Joint outcomes</h3>
+        <div class="quad">
+          <div></div>
+          <div class="axis" data-i18n="q_nc">No contact</div>
+          <div class="axis" data-i18n="q_c">Contact</div>
+          <div class="axis" data-i18n="q_ok">Success</div>
+          <div class="qcell q-ss"><b>SS</b><span data-i18n="q_ss">Safe success.</span></div>
+          <div class="qcell q-us"><b>US</b><span data-i18n="q_us">Unsafe success.</span></div>
+          <div class="axis" data-i18n="q_fail">Failure</div>
+          <div class="qcell q-cff"><b>CFF</b><span data-i18n="q_cff">Contact-free failure.</span></div>
+          <div class="qcell q-cif"><b>CIF</b><span data-i18n="q_cif">Contact-involved failure.</span></div>
+        </div>
+
+        <h3 style="margin: 36px 0 16px; font-family: var(--serif);" data-i18n="bd_title">Four diagnostic axes</h3>
+        <div class="axis-list">
+          <div class="axis-item card"><strong data-i18n="bd1_t">React</strong><span data-i18n="bd1_d">Closed-loop departure from the paired L0 trajectory.</span></div>
+          <div class="axis-item card"><strong data-i18n="bd2_t">Stop</strong><span data-i18n="bd2_d">A preemptive freeze before contact.</span></div>
+          <div class="axis-item card"><strong data-i18n="bd3_t">Evade</strong><span data-i18n="bd3_d">Clearance gained by rerouting.</span></div>
+          <div class="axis-item card"><strong data-i18n="bd4_t">Recover</strong><span data-i18n="bd4_d">Resume after the hazard settles or leaves.</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="results">
+      <div class="wrap">
+        <div class="section-head">
+          <div>
+            <h2 data-i18n="results_title">Run the benchmark locally</h2>
+            <p class="lede" data-i18n="results_lede">This repository ships the eval harness and metric report, not our paper numbers. Produce tables with <code>dynisafety report</code> after you run <code>eval</code> / <code>sweep</code>.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="models">
+      <div class="wrap">
+        <h2 data-i18n="models_title">Policies on the paper matrix</h2>
+        <p class="lede" data-i18n="models_lede">Evaluated on each simulator.</p>
+        <p class="footnote">LIBERO</p>
+        <div class="pills">
+          <span class="mini">OpenVLA-OFT</span>
+          <span class="mini">OpenVLA-OFT-RLINF</span>
+          <span class="mini">X-VLA</span>
+          <span class="mini">starVLA</span>
+          <span class="mini">π₀</span>
+          <span class="mini">π₀.₅</span>
+          <span class="mini">UniVLA</span>
+        </div>
+        <p class="footnote">RoboTwin</p>
+        <div class="pills">
+          <span class="mini">InternVLA-A1</span>
+          <span class="mini">FastWAM</span>
+          <span class="mini">LingBot-VA</span>
+          <span class="mini">starVLA</span>
+          <span class="mini">X-VLA</span>
+        </div>
+        <p class="footnote">SimplerEnv</p>
+        <div class="pills">
+          <span class="mini">starVLA</span>
+          <span class="mini">InternVLA-M1</span>
+          <span class="mini">X-VLA</span>
+        </div>
+      </div>
+    </section>
+
+    <section id="start">
+      <div class="wrap">
+        <h2 data-i18n="start_title">Get started</h2>
+        <p class="lede" data-i18n="start_lede">Install one simulator and run a short smoke test.</p>
+        <pre class="code" tabindex="0"><code>conda activate openvla-oft
+make install-libero
+pip install -e ".[libero]"
+dynisafety doctor --backend libero
+dynisafety sweep --suite smoke</code></pre>
+      </div>
+    </section>
+
+    <section id="citation">
+      <div class="wrap">
+        <div class="bib-head">
+          <div>
+            <h2 data-i18n="cite_title">Citation</h2>
+            <p class="lede" data-i18n="cite_lede">Placeholder BibTeX for anonymous review.</p>
+          </div>
+          <button class="pill" id="copy-bib" type="button" data-i18n="copy">Copy</button>
+        </div>
+        <pre class="code" id="bibtex"><code>@article{robosafebench2026,
+  title   = {RoboSafeBench: Benchmarking VLA Safety under Dynamic Physical Disturbances},
+  author  = {Anonymous},
+  journal = {TODO},
+  year    = {2026}
+}</code></pre>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <p data-i18n="foot">RoboSafeBench · public project page · MIT-licensed evaluation code. MANO / SMPL assets are not redistributed.</p>
+    </div>
+  </footer>
+
+  <script src="site.config.js?v=results1"></script>
+  <script src="js/i18n.js?v=results1"></script>
+  <script src="js/main.js?v=results1"></script>
+</body>
+</html>

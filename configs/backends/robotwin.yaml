@@ -5,6 +5,10 @@ contact:
   # Align with SimplerEnv / shared SAPIEN force_source: sum point-impulse norms
   # per manifold (was max; that systematically under-reported vs SimplerEnv).
   impulse_reduce: sum
+  # RoboTwin-only: F = J / this window. 0.01 reports tens of N on the current
+  # Newton L3 hits (J ≈ 0.2–0.4). Do not change configs/base.yaml 0.05 —
+  # LIBERO peak_force_n is mj_contactForce and does not divide by the window.
+  force_report_window_s: 0.01
   # RoboTwin has no single gym control_freq; reporting uses this Hz for blend/control.
   # (Mapped by backend assemble when RunConfig nesting lands.)
 
@@ -20,8 +24,9 @@ scene:
   l1_spawn_eef_clearance_xy: 0.05
   l1_spawn_eef_work_height: 0.25
   l1_spawn_eef_radius: 0.06
-  # Home already inside the 0.23 m circle: latch only after EEF gets this
-  # much closer than the bind-time XY distance (blocks step-0 drops).
+  # Home already inside the L1 trigger circle (default 0.10 m; some tasks
+  # overlay a larger disturbance.l1.trigger_dist): latch only after EEF
+  # gets this much closer than the bind-time XY distance (blocks step-0 drops).
   l1_home_approach_eps: 0.02
   # After kinematic place, wait one sim step then probe contacts; nudge
   # away from blockers this far, at most this many times, before giving
@@ -37,18 +42,22 @@ scene:
   l12_collision_exclude_substrings: [camera]
   # L1/L2 official contact also requires impulse > CONTACT_IMPULSE_EPS (1e-6).
   # Zero-impulse kinematic overlap is extra.ghost_contact_sim_steps, not CR.
-  # L3 stays Scheme B (geometric manifold only) and ignores this flag.
+  # L3 kinematic_first_hit stays Scheme B and ignores this flag.
+  # L3 dynamic_release reuses this gate after last-free release.
   l12_contact_require_impulse: true
   # L2: remember the last pose with no robot/held/task overlap; on ghost
   # overlap snap back instead of sliding through the arm.
   l2_keep_last_free_pose: true
-  # L2: never remove+rebuild a dynamic actor while still overlapping
-  # robot / held / task objects (table/ground contact is allowed).
-  l2_release_on_penetration: false
+  # L2: after last-free rollback, rebuild as a dynamic actor even if still
+  # overlapping robot / held / task objects (LIBERO-like). Set false to
+  # park kinematic instead (skipped_penetration).
+  l2_release_on_penetration: true
   # Landing avoid: disk (circumscribed circle) or world-XY AABB of the
   # actor OBB. Tasks with large flat objects (open_laptop) override to aabb.
   obstacle_avoid_shape: disk
   # Extra XY meters away from the source object after lerp (0 = no push).
+  # Applied only when the lerp landing overlaps a task-object footprint;
+  # clear landings are not pushed.
   l2_landing_push_m: 0.0
 
 hand:
@@ -56,7 +65,7 @@ hand:
   mesh_path: ${workspace}/src/dynisafety/backends/robotwin/assets/hand_objects/hand_pusher/visual/hand_pusher_vis.stl
   scale: 1.0
   half_size: [0.10, 0.03, 0.045]
-  mass_kg: 0.15
+  mass_kg: 4.5
   flinch_dist: 0.08
 
 disturbance:
@@ -95,7 +104,12 @@ disturbance:
 extra:
   robotwin:
     # Debug / DYNI_SAVE_VIDEO mp4 clock (capture default is also 30).
+    # take_action writes 1 frame per policy step. L3 ENTER is 6000 sim steps
+    # (~24 s) but only ~100 policy frames (~3 s at 30 fps) — looks like a flash.
+    # When >0, also write a frame every N sim steps after render (20 → ~8 s
+    # of inbound at 30 fps). 0 = policy frames only.
     video_fps: 30
+    video_sim_stride: 20
     hand_color: [0.78, 0.60, 0.48]
     hand_mesh_base_quat: [1.0, 0.0, 0.0, 0.0]
     hand_mesh_auto_orient: true
@@ -105,7 +119,31 @@ extra:
     l2_start_min_distance: 0.85
     l2_flip_side: false
     # L3 CLI-effective (not yet in DisturbanceL3Config)
-    l3_approach_steps: 10
+    # Mutually exclusive L1/L2 official-force schemes (YAML-only; no Python default).
+    # kinematic_first_hit — current: first matching manifold with impulse
+    #   > CONTACT_IMPULSE_EPS is official (solver spike can be peak_force).
+    # newton_relative — same J=m(1+e)v_n as L3 dynamic_release official
+    #   numbers (obstacle.mass, e=0, contact-normal closing speed). Official
+    #   CR/force only after release; SAPIEN spikes are overwritten and stay
+    #   in extra.l12_kinematic_*. Paper L1/L2/L3 columns must share one
+    #   definition — pair with l3_force_scheme=dynamic_release:
+    #   --set extra.robotwin.l12_force_scheme=newton_relative
+    #   --set extra.robotwin.l3_force_scheme=dynamic_release
+    l12_force_scheme: kinematic_first_hit
+    # Mutually exclusive L3 official-force schemes (YAML-only; no Python default).
+    # dynamic_release — current: kinematic fly-in + last-free rollback + inbound
+    #   velocity + palm-box collision + hand.mass_kg dynamic hand; official
+    #   CR/force only after release (same impulse gate as L1/L2). If SAPIEN
+    #   impulse is 0, official force is J=m(1+e)v_n on the contact normal
+    #   (unfloored inbound vs partner velocity; 0.25 m/s floor is motion
+    #   only). Kinematic solver spikes stay in extra.l3_kinematic_*.
+    # kinematic_first_hit — Scheme B: mesh collision, geometric first event is
+    #   official, then freeze CR/force. Enable with
+    #   --set extra.robotwin.l3_force_scheme=kinematic_first_hit
+    l3_force_scheme: dynamic_release
+    # APPROACH is hover→dwell (~2 cm z). The long fly-in is disturbance.l3.entry_steps.
+    # 400 ≈ 1.6 s for that short drop; do not use this to pace the inbound.
+    l3_approach_steps: 400
     l3_exit_steps: 4000
     l3_dwell_height: 0.08
     l3_flinch_height: 0.06
@@ -114,7 +152,11 @@ extra:
     l3_spawn_pull_y: 0.0
     l3_spawn_pull_to_midpoint: 0.5
     l3_spawn_xy_offset: [0.0, 0.0]
-    l3_spawn_world_xy: [0.0, 0.50]
+    # Pin spawn in world XY. [0, 0.50] sat beside the D435 (y≈0.45): off-frame
+    # until late. [0, 0.20] sat too deep in the 37° view (large, too close).
+    # [0, 0.32] is farther toward the camera / FOV rim: visible inbound, not
+    # filling the frame at spawn.
+    l3_spawn_world_xy: [0.0, 0.32]
     l3_spawn_center_source: arm_base
     l3_spawn_extra_z_lift: 0.0
     l3_start_min_distance: 1.0

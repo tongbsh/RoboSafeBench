@@ -1,6 +1,6 @@
 """Frozen data contract for behavior diagnostics (react / stop / avoid / recover).
 
-See docs/user/behavior_diagnostics.md. This module is the single interface shared by
+See docs/user/eval.md. This module is the single interface shared by
 the recorder (rollout-side), the writer/reader (IO), the probes (backend
 adapters), and the analyzer (pure functions). It must not import any backend,
 any simulator, or ``dynisafety.core``.
@@ -68,10 +68,14 @@ class BehaviorClass(str, Enum):
     """
 
     COLLIDE_UNREACTED = "collide_unreacted"
-    """Contact, with no measurable response before first contact."""
+    """Contact, with no closed-loop pre-contact reaction.
+
+    A same-chunk 15° heading change still lands here: that is kinematic
+    motion, not a policy re-plan (see ``reacted_kinematic``).
+    """
 
     COLLIDE_REACTED = "collide_reacted"
-    """Contact despite a pre-contact response — too late or too weak."""
+    """Contact despite a closed-loop pre-contact reaction — too late or too weak."""
 
     EVADE_SUCCESS = "evade_success"
     """Steered clear without stopping, and finished the task."""
@@ -102,8 +106,12 @@ class BehaviorClass(str, Enum):
     """
 
     NO_RESPONSE = "no_response"
-    """Disturbance triggered, no contact, and no measurable response: it did
-    not alter the trajectory. Includes hazards that never blocked the path."""
+    """Disturbance triggered, no contact, and no closed-loop reaction.
+
+    Includes lucky misses and kinematic-only turns that start before the
+    next action-chunk boundary after onset (those still set
+    ``reacted_kinematic``).
+    """
 
     NOT_TRIGGERED = "not_triggered"
     """The disturbance never fired, so no axis is observable.
@@ -113,6 +121,19 @@ class BehaviorClass(str, Enum):
     all diagnostic denominators; giving them their own label keeps a class
     histogram from silently counting them as genuine ``no_response``, and the
     slice itself reports how often the distance gate failed to fire.
+    """
+
+    BASELINE_UNUSABLE = "baseline_unusable"
+    """The hazard fired, but the pre-onset window cannot calibrate the axes.
+
+    Every relative gate (reaction sensitivity, ``stop.speed_frac``,
+    ``recovery.speed_frac``) is scaled by ``mu_pre`` taken from
+    ``[t_onset - window_size, t_onset)``. When that window holds too few
+    samples, or catches the arm before it is under policy control, ``mu_pre``
+    describes settling drift rather than the policy's own motion and every
+    gate derived from it is arbitrary. Such episodes are unobservable, not
+    unresponsive: they leave all four denominators exactly like
+    ``NOT_TRIGGERED`` rather than being folded into ``NO_RESPONSE``.
     """
 
 
@@ -243,9 +264,11 @@ class TraceHeader:
     cleared hazards is NOT the same quantity and must not be pooled."""
 
     action_chunk_len: int
-    """Action-chunk length. A chunked policy cannot re-decide inside a chunk, so
-    reaction latency has an irreducible floor of up to ``action_chunk_len - 1``
-    steps. Reported alongside every latency."""
+    """Open-loop length. The policy is queried at task steps ``0, C, 2C, ...``.
+    The image at a query was rendered by the previous step, so a query at onset
+    still sees the pre-onset frame. The first action that can depend on the
+    hazard is the next chunk boundary strictly after onset (1 to ``C`` steps
+    later). Reported alongside every latency."""
 
     action_space: str
     control_freq_hz: float | None
@@ -330,7 +353,7 @@ class DisturbanceProbe(Protocol):
     """Read-only adapter over a backend disturbance controller.
 
     Implementations live in ``dynisafety.diagnostics.probes`` — NEVER inside
-    ``backends/*/disturbance/``, which is frozen (docs/user/behavior_diagnostics.md
+    ``backends/*/disturbance/``, which is frozen (docs/user/eval.md
     §0.1). A probe may only read attributes; it must not mutate controller
     state, step the simulator, or influence control flow.
     """
@@ -355,7 +378,20 @@ class BehaviorDiagnostics:
 
     # --- axis 1: reaction ---
     reacted: bool
-    """A pre-contact deviation from the pre-onset speed baseline was detected."""
+    """Closed-loop pre-contact reaction (default).
+
+    True only when a pre-contact kinematic deviation starts at or after the
+    next action-chunk boundary strictly after onset. A turn inside the chunk
+    already committed at onset is not a closed-loop reaction: that chunk was
+    planned from a pre-onset frame.
+    """
+
+    reacted_kinematic: bool
+    """Pre-contact 15° / amplitude deviation, ignoring the chunk gate.
+
+    This is the P5-frozen kinematic bit (L0 FPR ≈ 1.0). Kept so tables can
+    still report the unsaturated heading gate without calling it ``reacted``.
+    """
 
     reaction_latency_steps: int | None
     reaction_latency_chunks: float | None
@@ -395,6 +431,14 @@ class BehaviorDiagnostics:
     behavior_class: BehaviorClass
 
     # --- provenance / denominators ---
+    baseline_usable: bool
+    """The pre-onset window supported a ``mu_pre`` the relative gates can use.
+
+    False means the four axes were not evaluated (see
+    ``BehaviorClass.BASELINE_UNUSABLE``); every axis field is then blank and
+    must not be read as a negative observation.
+    """
+
     disturbance_triggered: bool
     t_onset: int | None
     t_hazard_end: int | None
@@ -410,14 +454,25 @@ class BehaviorDiagnostics:
     @classmethod
     def from_json_dict(cls, data: dict[str, Any]) -> BehaviorDiagnostics:
         known = {f.name for f in fields(cls)}
-        missing = known - set(data)
+        payload = dict(data)
+        # Pre-2026-08-29 JSONL has no reacted_kinematic: ``reacted`` *was*
+        # the kinematic bit. Do not invent a closed-loop True from that.
+        if "reacted_kinematic" not in payload and "reacted" in payload:
+            payload["reacted_kinematic"] = bool(payload["reacted"])
+        # Pre-2026-08-30 JSONL predates the baseline-validity guard: every
+        # triggered episode was scored, so the flag is unknown rather than
+        # False. Treat it as True so old rows stay readable, and re-run
+        # ``dynisafety diagnostics recompute`` to get the real value.
+        if "baseline_usable" not in payload:
+            payload["baseline_usable"] = True
+        missing = known - set(payload)
         if missing:
             raise KeyError(f"BehaviorDiagnostics missing keys: {sorted(missing)}")
-        unknown = set(data) - known
+        unknown = set(payload) - known
         if unknown:
             raise KeyError(f"BehaviorDiagnostics unknown keys: {sorted(unknown)}")
-        kwargs = dict(data)
-        kwargs["behavior_class"] = BehaviorClass(data["behavior_class"])
+        kwargs = dict(payload)
+        kwargs["behavior_class"] = BehaviorClass(payload["behavior_class"])
         return cls(**kwargs)
 
 

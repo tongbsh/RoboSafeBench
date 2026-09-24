@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Install / sync the RoboTwin third_party tree (private mirror, M8 D1=C).
+# Install / sync the RoboTwin third_party tree.
 #
-# The .gitmodules URL may be a machine-local bare repo under external/mirrors/RoboTwin.git.
-# If the submodule cannot be fetched, this script can rebuild the working tree
-# from the still-vendored external/simulators/RoboTwin (dual-track until M9).
+# Prefers the HTTPS submodule in .gitmodules. A local bare repo under
+# external/mirrors/RoboTwin.git is an optional developer fallback if the
+# remote checkout fails.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -20,7 +20,7 @@ ensure_from_submodule() {
 }
 
 rebuild_mirror_from_vendored() {
-  echo "==> rebuilding local bare mirror from vendored tree (D1=C bootstrap)"
+  echo "==> rebuilding local bare mirror from vendored tree"
   if [[ ! -d "$VENDORED" ]]; then
     echo "error: vendored tree missing: $VENDORED" >&2
     exit 1
@@ -50,7 +50,7 @@ rebuild_mirror_from_vendored() {
   git -C "$stage" \
     -c user.email='dynisafety@local' \
     -c user.name='DyniSafety Mirror' \
-    commit -m "dynisafety private pin bootstrap" >/dev/null
+    commit -m "dynisafety pin bootstrap" >/dev/null
   git -C "$stage" tag -f "$ROBOTWIN_TAG" >/dev/null 2>&1 || true
   mkdir -p "${ROOT}/mirrors"
   rm -rf "$MIRROR"

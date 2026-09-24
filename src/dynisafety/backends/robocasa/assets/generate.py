@@ -1,7 +1,9 @@
-"""Write original RoboCasa visual meshes (L1/L2 obstacles + clothed L3 pedestrian).
+"""Write original fallback meshes (L1/L2 primitives + clothed L3 pedestrian).
 
-Collision half-sizes stay in YAML. These OBJ files are authored here so the
-open-source tree does not ship a debug red box or a nude SMPL body.
+L1/L2 default visuals now point at RoboCasa Lightwheel / Objaverse textured
+meshes in configs/backends/robocasa.yaml. These primitive OBJs stay as a
+license-clean fallback. Collision half-sizes stay in YAML. L3 stays in-tree
+so the open-source tree does not ship a nude SMPL body.
 """
 
 from __future__ import annotations

@@ -12,6 +12,7 @@ from dynisafety.policies.safety.aegis import (
     DEFAULT_AEGIS_CONFIG_PATH,
     AegisActionFilter,
     EllipsoidState,
+    MotionMode,
     SolverFailurePolicy,
     aegis_config_from_mapping,
     aegis_config_with_enabled,
@@ -65,6 +66,7 @@ def test_default_yaml_disabled_and_path():
     assert cfg.cbf_h_gain == 10.0
     assert cfg.on_solver_failure is SolverFailurePolicy.FALLBACK_NOMINAL
     assert cfg.gripper_index == 6
+    assert cfg.motion_mode is MotionMode.FULL
 
 
 def test_config_no_implicit_defaults_missing_key():
@@ -254,3 +256,28 @@ def test_enabled_override_helper():
     on = aegis_config_with_enabled(base, True)
     assert on.enabled is True
     assert on.cbf_h_gain == base.cbf_h_gain
+    assert on.motion_mode is base.motion_mode
+
+
+def test_translational_yaml_and_zeros_rotation():
+    """SafeLIBERO headline: QP on xyz only; rotation forced to 0."""
+    trans_path = REPO_ROOT / "configs" / "safety" / "aegis_translational.yaml"
+    cfg = aegis_config_with_enabled(load_aegis_config(trans_path), True)
+    assert cfg.motion_mode is MotionMode.TRANSLATIONAL
+    filt = AegisActionFilter(cfg)
+    eef = _eef(pos=[0.0, 0.0, 1.0], axes=[0.08, 0.08, 0.08])
+    obs = _obstacle(pos=[0.10, 0.0, 1.0], axes=[0.08, 0.08, 0.08])
+    gripper = -0.55
+    nominal = np.array([0.08, 0.0, 0.0, 0.04, -0.03, 0.02, gripper], dtype=np.float64)
+    out, dbg = filt.filter(nominal, eef, obs)
+    assert dbg.qp_failed is False, dbg.solver_status
+    assert out[6] == gripper
+    assert np.allclose(out[3:6], 0.0, atol=1e-12)
+    assert dbg.extra.get("motion_mode") == "translational"
+    result = solve_cbf_qp(
+        nominal, eef, obs, obs.position - eef.position, cfg
+    )
+    assert result.failed is False
+    assert result.u is not None
+    assert result.u.shape == (9,)
+    assert np.allclose(result.u[3:6], 0.0)

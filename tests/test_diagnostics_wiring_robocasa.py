@@ -42,6 +42,9 @@ def _diag_cfg(*, enabled: bool = True, save: bool = True, stride: int = 1) -> Di
             min_persist_steps=3,
             heading_change_deg=15.0,
             sigma_rel_floor=0.05,
+            min_latency_chunks=1,
+            min_baseline_samples=5,
+            min_baseline_speed_frac=0.4,
         ),
         stop=DiagnosticsStopConfig(speed_frac=0.10, speed_floor_m_per_step=0.0005, min_steps=5),
         avoid=DiagnosticsAvoidConfig(

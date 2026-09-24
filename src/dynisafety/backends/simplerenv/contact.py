@@ -14,6 +14,7 @@ import numpy as np
 
 from dynisafety.backends._engine.sapien_contact import (
     actor_has_contact,
+    first_actor_contact_kinematics,
     measure_actor_contact,
     read_pair_actor01,
 )
@@ -206,3 +207,41 @@ def obb_overlaps_links(
         if abs(lx) < half[0] and abs(ly) < half[1] and abs(lz) < half[2]:
             return True
     return False
+
+
+def sapien2_linear_velocity(entity: Any) -> np.ndarray | None:
+    """Read world linear velocity from a SAPIEN 2 actor or link."""
+    if entity is None:
+        return None
+    for name in ("get_velocity", "get_linear_velocity"):
+        fn = getattr(entity, name, None)
+        if callable(fn):
+            try:
+                return np.asarray(fn(), dtype=np.float64).reshape(3)
+            except Exception:
+                pass
+    for attr in ("velocity", "linear_velocity"):
+        raw = getattr(entity, attr, None)
+        if raw is not None:
+            try:
+                return np.asarray(raw, dtype=np.float64).reshape(3)
+            except Exception:
+                pass
+    return None
+
+
+def first_hand_contact_kinematics(
+    scene: Any,
+    *,
+    actor_name: str,
+    actor_pos: np.ndarray,
+    target_names: set[str],
+):
+    """First hand↔target manifold (ManiSkill2 actor0/actor1)."""
+    return first_actor_contact_kinematics(
+        scene,
+        actor_name=actor_name,
+        actor_pos=actor_pos,
+        target_names=target_names,
+        pair_reader=read_pair_actor01,
+    )

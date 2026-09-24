@@ -26,6 +26,11 @@ _OBSTACLE_XY_CLEARANCE = 0.01
 _MAX_TARGET_XY_ADJUST_ITERS = 8
 _MAX_TARGET_XY_SHIFT = 0.35
 _TABLETOP_Z_TOL = 0.01
+# Pixel slack so the palm sits just off-screen, not clipped on the exact edge.
+_VIEW_ENTRY_MARGIN_PX = 12
+# After the palm is just off-screen, step this far back toward the corner.
+_VIEW_ENTRY_EXTRA_OUTWARD_M = 0.05
+_VIEW_ENTRY_SEARCH_ITERS = 24
 
 
 @dataclass
@@ -259,6 +264,157 @@ def _get_robot_base_xy(access: SceneAccess) -> np.ndarray | None:
             return None
 
 
+def project_world_to_cv(
+    xyz: np.ndarray,
+    K: np.ndarray,
+    T_cw: np.ndarray,
+) -> tuple[float, float, float] | None:
+    """OpenCV pixel ``(u, v)`` and camera-Z, or ``None`` if behind the camera."""
+    point = np.ones(4, dtype=np.float64)
+    point[:3] = np.asarray(xyz, dtype=np.float64).reshape(3)
+    cam = np.asarray(T_cw, dtype=np.float64).reshape(4, 4) @ point
+    if float(cam[2]) <= 1e-6:
+        return None
+    kin = np.asarray(K, dtype=np.float64).reshape(3, 3)
+    u = float(kin[0, 0] * cam[0] / cam[2] + kin[0, 2])
+    v = float(kin[1, 1] * cam[1] / cam[2] + kin[1, 2])
+    return u, v, float(cam[2])
+
+
+def _palm_view_samples(
+    xy: np.ndarray,
+    z: float,
+    inward_dir: np.ndarray,
+    palm_radius_m: float,
+) -> list[np.ndarray]:
+    radius = max(float(palm_radius_m), 1e-4)
+    inward = np.asarray(inward_dir, dtype=np.float64).reshape(2)
+    lateral = np.array([-inward[1], inward[0]], dtype=np.float64)
+    origin = np.array([float(xy[0]), float(xy[1]), float(z)], dtype=np.float64)
+    return [
+        origin,
+        origin + np.array([inward[0], inward[1], 0.0], dtype=np.float64) * radius,
+        origin + np.array([lateral[0], lateral[1], 0.0], dtype=np.float64) * radius,
+        origin - np.array([lateral[0], lateral[1], 0.0], dtype=np.float64) * radius,
+        origin + np.array([0.0, 0.0, radius], dtype=np.float64),
+        origin - np.array([0.0, 0.0, radius], dtype=np.float64),
+    ]
+
+
+def _palm_outside_view(
+    samples: Sequence[np.ndarray],
+    *,
+    K: np.ndarray,
+    T_cw: np.ndarray,
+    width: int,
+    height: int,
+    margin_px: float,
+) -> bool:
+    left = float(margin_px)
+    top = float(margin_px)
+    right = float(width) - float(margin_px)
+    bottom = float(height) - float(margin_px)
+    for sample in samples:
+        hit = project_world_to_cv(sample, K, T_cw)
+        if hit is None:
+            continue
+        u, v, _ = hit
+        if left <= u < right and top <= v < bottom:
+            return False
+    return True
+
+
+def start_inward_just_outside_view(
+    *,
+    anchor_xy: np.ndarray,
+    inward_dir: np.ndarray,
+    start_z: float,
+    max_inward_m: float,
+    palm_radius_m: float,
+    K: np.ndarray,
+    T_cw: np.ndarray,
+    width: int,
+    height: int,
+    margin_px: float = _VIEW_ENTRY_MARGIN_PX,
+) -> float:
+    """Largest inward offset in ``[0, max]`` whose palm samples stay off-screen."""
+    cap = max(float(max_inward_m), 0.0)
+    anchor = np.asarray(anchor_xy, dtype=np.float64).reshape(2)
+    inward = np.asarray(inward_dir, dtype=np.float64).reshape(2)
+
+    def outside(shift: float) -> bool:
+        xy = anchor + inward * float(shift)
+        return _palm_outside_view(
+            _palm_view_samples(xy, start_z, inward, palm_radius_m),
+            K=K,
+            T_cw=T_cw,
+            width=width,
+            height=height,
+            margin_px=margin_px,
+        )
+
+    if cap <= 1e-9 or not outside(0.0):
+        return 0.0
+    if outside(cap):
+        return cap
+    lo, hi = 0.0, cap
+    for _ in range(_VIEW_ENTRY_SEARCH_ITERS):
+        mid = 0.5 * (lo + hi)
+        if outside(mid):
+            lo = mid
+        else:
+            hi = mid
+    return lo
+
+
+def _read_eval_camera_view(
+    access: SceneAccess,
+) -> tuple[np.ndarray, np.ndarray, int, int] | None:
+    try:
+        inner = access.get_inner_env()
+    except Exception:
+        return None
+    if inner is None:
+        return None
+    try:
+        from dynisafety.backends.simplerenv.env import resolve_primary_camera_name
+
+        name = resolve_primary_camera_name(inner, None)
+    except Exception:
+        name = None
+    try:
+        params = inner.get_camera_params()
+    except Exception:
+        return None
+    if not isinstance(params, Mapping) or not params:
+        return None
+    if name is None or name not in params:
+        name = next(iter(params))
+    cam = params.get(name)
+    if not isinstance(cam, Mapping):
+        return None
+    try:
+        K = np.asarray(cam["intrinsic_cv"], dtype=np.float64)
+        T_cw = np.asarray(cam["extrinsic_cv"], dtype=np.float64)
+    except (KeyError, TypeError, ValueError):
+        return None
+    if K.shape != (3, 3) or T_cw.shape != (4, 4):
+        return None
+    width = 0
+    height = 0
+    cameras = getattr(inner, "_cameras", None)
+    wrapper = cameras.get(name) if isinstance(cameras, Mapping) else None
+    sapien_cam = getattr(wrapper, "camera", wrapper)
+    try:
+        width = int(getattr(sapien_cam, "width", 0) or 0)
+        height = int(getattr(sapien_cam, "height", 0) or 0)
+    except (TypeError, ValueError):
+        width, height = 0, 0
+    if width <= 0 or height <= 0:
+        return None
+    return K, T_cw, width, height
+
+
 def compute_l3_legacy_start_offset(
     access: SceneAccess,
     target_pos: np.ndarray,
@@ -299,6 +455,7 @@ def compute_l3_robot_base_corner_start_geometry(
     hand_scale: float,
     hand_half_size_x: float,
     hand_collision_offset_x: float,
+    enter_height: float,
 ) -> tuple[tuple[float, float, float], np.ndarray | None] | None:
     """Return corner geometry, or ``None`` if table/base pose cannot be resolved.
 
@@ -341,9 +498,27 @@ def compute_l3_robot_base_corner_start_geometry(
     hand_front_anchor_depth = max(float(hand_half_size_x + hand_collision_offset_x), 0.0) * float(
         hand_scale
     )
-    start_xy = (
-        corner_xy - inward_dir * hand_front_anchor_depth + inward_dir * float(corner_inward_shift)
-    )
+    anchor_xy = corner_xy - inward_dir * hand_front_anchor_depth
+    inward_m = float(corner_inward_shift)
+    camera = _read_eval_camera_view(access)
+    if camera is not None:
+        K, T_cw, width, height = camera
+        palm_r = max(0.25 * float(hand_half_size_x), abs(float(hand_collision_offset_x))) * float(
+            hand_scale
+        )
+        inward_m = start_inward_just_outside_view(
+            anchor_xy=anchor_xy,
+            inward_dir=inward_dir,
+            start_z=float(target_pos[2]) + float(enter_height),
+            max_inward_m=inward_m,
+            palm_radius_m=palm_r,
+            K=K,
+            T_cw=T_cw,
+            width=width,
+            height=height,
+        )
+        inward_m = max(0.0, inward_m - _VIEW_ENTRY_EXTRA_OUTWARD_M)
+    start_xy = anchor_xy + inward_dir * inward_m
     entry_far_xy = start_xy - inward_dir * float(corner_entry_backoff)
     start_offset = (
         float(start_xy[0] - target_pos[0]),
@@ -370,7 +545,6 @@ def compute_l3_start_geometry(
     hand_half_size_x: float,
     hand_collision_offset_x: float,
 ) -> tuple[tuple[float, float, float], np.ndarray | None]:
-    del enter_height  # used by controller for z; XY geometry does not consume it
     if start_mode == "robot_base_corner":
         corner = compute_l3_robot_base_corner_start_geometry(
             access,
@@ -381,6 +555,7 @@ def compute_l3_start_geometry(
             hand_scale=hand_scale,
             hand_half_size_x=hand_half_size_x,
             hand_collision_offset_x=hand_collision_offset_x,
+            enter_height=enter_height,
         )
         if corner is not None:
             return corner

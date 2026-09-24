@@ -512,7 +512,7 @@ def test_schema_version_mismatch(tmp_path: Path) -> None:
     payload = json.loads(header_line)
     payload["trace_schema_version"] = "0.9"
     path.write_text(json.dumps(payload) + "\n" + rest, encoding="utf-8")
-    with pytest.raises(TraceSchemaVersionError, match="docs/user/behavior_diagnostics.md") as exc:
+    with pytest.raises(TraceSchemaVersionError, match="docs/user/eval.md") as exc:
         read_trace(path)
     assert exc.value.found == "0.9"
 
@@ -528,7 +528,7 @@ def test_old_trace_missing_stride_is_readable_schema_error(tmp_path: Path) -> No
     payload = json.loads(header_line)
     del payload["stride"]
     path.write_text(json.dumps(payload) + "\n" + rest, encoding="utf-8")
-    with pytest.raises(TraceSchemaVersionError, match="docs/user/behavior_diagnostics.md") as exc:
+    with pytest.raises(TraceSchemaVersionError, match="docs/user/eval.md") as exc:
         read_trace(path)
     message = str(exc.value)
     assert "stride" in message
@@ -549,7 +549,7 @@ def test_schema_version_checked_before_missing_fields(tmp_path: Path) -> None:
     payload["trace_schema_version"] = "0.9"
     del payload["stride"]
     path.write_text(json.dumps(payload) + "\n" + rest, encoding="utf-8")
-    with pytest.raises(TraceSchemaVersionError, match="docs/user/behavior_diagnostics.md") as exc:
+    with pytest.raises(TraceSchemaVersionError, match="docs/user/eval.md") as exc:
         read_trace(path)
     assert exc.value.found == "0.9"
     assert "does not match" in str(exc.value)

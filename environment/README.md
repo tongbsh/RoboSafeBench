@@ -1,49 +1,37 @@
-# DyniSafety conda environments
-#
-# Authority (M10 Q1=A): backend env *names* defined here:
-#
-#   dynisafety-libero
-#   dynisafety-simplerenv
-#   dynisafety-robotwin
-#   dynisafety-robocasa   # Python 3.11, numpy==2.2.5; MUTEX with the three above
-#
-# Historical aliases (same role, old machines):
-#
-#   openvla-oft   → dynisafety-libero
-#   simpler_env   → dynisafety-simplerenv
-#   RoboTwin      → dynisafety-robotwin
-#
-# Create:
-#
-#   conda env create -f environment/dynisafety-libero.yml
-#   conda activate dynisafety-libero
-#   # then torch (requirements/README.md) + pip -r requirements/libero.txt + pip -e ".[libero]"
-#
-# RoboCasa (numpy 2; do not mix with the three envs above):
-#
-#   conda env create -f environment/dynisafety-robocasa.yml
-#   conda activate dynisafety-robocasa
-#   export MUJOCO_GL=egl
-#   scripts/setup/install_backend.sh robocasa   # pip install -e . --no-deps + requirements/robocasa.txt
-#
-# Model **server** envs are NOT shipped as yml (M10 Q2=B). Build them from upstream
-# model repos. Names referenced by configs/models/*.yaml include:
-#
-# | YAML eval_env / serve_env / env | Typical upstream / notes |
-# |---------------------------------|--------------------------|
-# | openvla-oft                     | → use dynisafety-libero (alias) |
-# | simpler_env                     | → use dynisafety-simplerenv |
-# | RoboTwin                        | → use dynisafety-robotwin |
-# | internvla_a1                    | InternVLA-A1 in-process; upstream + sapien3 |
-# | openpi                          | openpi serve_policy (π₀ / π₀.₅) |
-# | univla                          | UniVLA HTTP server |
-# | starVLA                         | StarVLA websocket server |
-# | XVLA                            | X-VLA HTTP server |
-# | lingbot / lingbot_va            | LingBot-VA server (name drift → M4) |
-# | spatialvla                      | SpatialVLA server |
-# | GR00T / isaac-gr00t             | GR00T server (name drift → M4) |
-# | internvla_m1 / internvla-m1     | InternVLA-M1 server (name drift → M4) |
-# | dreamvla, octo, base            | upstream or any backend env (random) |
-#
-# Acceptance: the four ymls above + this table declaring the
-# rest as upstream-provided satisfies M10 docs clause (Q2=B).
+# DyniSafety conda environment recipes
+
+These ymls are **optional clean-slate recipes** for a new machine
+(`python` + `requirements/<backend>.txt`). They are **not** the names
+`paper_main` looks up.
+
+Runtime names live in `configs/models/*.yaml`. The matrix, aliases, and
+“do not rename working envs” rule: **[docs/user/install.md](../docs/user/install.md)**.
+
+| yml `name:` (recipe only) | Create as (`conda env create -n …`) | Backend |
+|---------------------------|-------------------------------------|---------|
+| `dynisafety-libero` | `openvla-oft` | LIBERO / MuJoCo |
+| `dynisafety-simplerenv` | `simpler_env` | SimplerEnv / SAPIEN 2.2.2 |
+| `dynisafety-robotwin` | `internvla_a1` (paper eval; not this yml name) | RoboTwin / SAPIEN 3 |
+| `dynisafety-robocasa` | `dynisafety-robocasa` | RoboCasa / NumPy 2 — mutex with the three above |
+
+```bash
+conda env create -n openvla-oft -f environment/dynisafety-libero.yml
+conda activate openvla-oft
+# torch (requirements/README.md) + pip -e ".[libero]" + scripts/setup/install_backend.sh libero
+```
+
+RoboCasa (numpy 2; do not mix with the three eval envs above):
+
+```bash
+conda env create -n dynisafety-robocasa -f environment/dynisafety-robocasa.yml
+conda activate dynisafety-robocasa
+export MUJOCO_GL=egl
+scripts/setup/install_backend.sh robocasa
+```
+
+A leftover env named `RoboTwin` is **not** the paper RoboTwin eval env.
+Paper robotwin jobs use `internvla_a1`.
+
+Model **server** envs are not shipped as yml. Keep the `server.env` spelling
+(`XVLA`, `starVLA`, `openpi`, `univla`, `internvla-m1`, `lingbot_va`, …) —
+see [docs/user/install.md](../docs/user/install.md).

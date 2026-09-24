@@ -46,11 +46,13 @@ extra:
       # interpenetrates another scene object (table / floor excluded).
       # Task overlays may set false to keep the SafeLIBERO authored pose.
       nudge_landing_xy: true
-      # Lateral start slots + linear/trapezoid paths. Default off: L2
-      # stays the status-quo jitter + arc. All keys are required;
+      # Lateral start slots + linear/trapezoid paths. Default on
+      # (paper_main / walkthrough). Disable with
+      # --set extra.libero.l2.spawn_diversity.enabled=false
+      # or walkthrough --no-diversity. All keys are required;
       # assemble errors if this mapping is missing.
       spawn_diversity:
-        enabled: false
+        enabled: true
         lateral_width_m: 0.15
         linear_z_clearance_m: 0.05
         linear_max_start_z_m: 0.35
