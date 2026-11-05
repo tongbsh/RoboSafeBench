@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hazardlib"
+dynamic = ["version"]
+description = "Hazard-as-Spec core: simulator-agnostic hazard specification, host contract and benchmark descriptors"
+readme = "README.md"
+requires-python = ">=3.8"
+# The core depends on numpy and pyyaml only (rule R0). Do NOT add simulators,
+# scipy or torch here; adapters live in `hazardhosts.<bench>` and are only
+# imported inside the matching benchmark environment.
+dependencies = [
+    "numpy",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+]
+
+[tool.setuptools.dynamic]
+version = {attr = "hazardlib.__version__"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["hazardlib*", "hazardhosts*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
