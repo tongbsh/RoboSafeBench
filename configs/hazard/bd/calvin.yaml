@@ -1,0 +1,73 @@
+# BenchmarkDescriptor DRAFT for CALVIN (T01).
+#
+# Filled ONLY from what docs/design/02_benchmark_profiles.md §1-§2 marks as
+# verified ([已核实]: source read at calvin@fa03f01 / calvin_env@797142c, or the
+# README). Everything else is `unknown` and is the probe checklist for task H1.
+# `unknown` is not a capability: BenchmarkDescriptor.tier() refuses to guess
+# (TierUndeterminedError) while tier-relevant fields are unknown, and
+# strict=True loading rejects the file until every unknown is probed away.
+name: calvin
+bd_version: "1.0"   # BD schema version, as in the 01 §2 example
+
+benchmark:
+  repo: mees/calvin
+  commits: {calvin: "fa03f01", calvin_env: "797142c"}
+  license: MIT   # README badge (02 §2 item 5); LICENSE file itself not checked
+
+python: {required: "3.8", env_name: calvin_venv}   # 02 §1 table, [已核实 README]
+
+engine:
+  name: pybullet
+  version: unknown   # [待探针]
+
+timebase:   # 02 §1 table / §2: bullet_time_step=240, control_freq=30, action_repeat=int(240//30)
+  physics_dt_s: 0.004166666666666667   # 1/240 s
+  control_dt_s: 0.03333333333333333    # 1/30 s
+  substeps_per_action: 8
+
+parallel:   # 02 does not state it; single PlayTableSimEnv is [推断], not verified
+  num_envs: unknown
+  batched: unknown
+
+loop_owner: user_script   # evaluate_policy.py owns the loop (02 §1 table, [已核实])
+hook_point: "wrap/subclass PlayTableSimEnv.step and run the hazard hooks around each of the 8 stepSimulation calls; evaluate_policy.make_env has an 'insert your own env wrapper' comment (02 §2, plan)"
+spawn_mode: runtime       # loadURDF is used in play_table_scene.load (02 §2 alloc_hazard row, [已核实]); mid-episode spawn itself is [待探针]
+kinematic_pose_set: unknown      # [待探针] mass-zero or constraint approach (02 §2 set_hazard_pose)
+release_with_velocity: unknown   # [待探针] restore mass + resetBaseVelocity (02 §2 release_to_physics)
+contact_tier: unknown            # getContactPoints is used in the repo [已核实]; relative normal velocity via computeLinkVelocity [待探针]
+distance: unknown                # getClosestPoints [待探针] (02 §2 min_distance)
+
+robot_contact_bodies:            # 02 §9 open question 4: not yet answerable declaratively
+  include: unknown
+  exclude: unknown
+
+state_access:
+  eef: true               # robot.get_observation(): TCP pose (02 §2 robot_state, [已核实])
+  gripper: true           # same call: gripper opening
+  base: unknown           # fixed-base Franka Panda is [推断]; 02 does not state a base pose
+  objects: true           # scene objects' get_state() (02 §2 object_poses, [已核实])
+  fixtures: true          # scene.get_obs() registers doors/buttons/switches/lights (02 §2 structure, [已核实])
+  support_surfaces: true  # `surfaces` from the scene YAML (02 §2 object_poses, [已核实])
+
+task_entity_source: oracle_config   # declarative Tasks start_info/end_info config (02 §2 structure, [已核实])
+
+success_oracle:
+  kind: state_diff   # Tasks.get_task_info_for_set differences start/end state (02 §2, [已核实])
+  readonly: unknown  # [待探针] C7: must not be affected by the hazard body
+
+snapshot_restore: true   # serialize()/reset_from_storage() restore robot+scene exactly (02 §2, [已核实])
+
+determinism:
+  same_seed_repro: unknown   # deterministicOverlappingPairs=1 is set [已核实] but the level needs C8
+
+invalid_sample_mapping:   # [待探针]
+  setup_invalid: unknown
+  sim_unstable: unknown
+
+observation_isolation:    # [待探针] C7/C9; robot_obs `contacts` may include hazard contacts (02 §2)
+  hazard_visible_in_rgb: unknown
+  hazard_in_state_vectors: unknown
+
+policy_interface:
+  kind: unknown
+  notes: ""

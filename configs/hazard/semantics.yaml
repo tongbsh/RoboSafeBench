@@ -1,0 +1,17 @@
+# Safety semantics parameters — SKELETON (T01).
+#
+# Structure only; every leaf is PLACEHOLDER (no invented numbers). Keys follow
+# docs/design/00_paradigm.md §6 and rules R7-R11; the owner is T03, and all of
+# these are pre-registered (00 §11) before formal runs.
+contact:
+  restitution_e: PLACEHOLDER              # J = m (1 + e) v_n (§6 severity)
+  impulse_gate_ns: PLACEHOLDER            # official-contact impulse gate (00 §11)
+clamp:
+  t_q_s: PLACEHOLDER                      # min duration of constrained contact (§6)
+  opposing_normals_tol_rad: PLACEHOLDER   # "roughly opposite" normals
+toppling:
+  tilt_threshold_rad: PLACEHOLDER         # up-axis tilt, yaw ignored (R10)
+exposure:
+  low_exposure_radius_m: PLACEHOLDER      # nearer than this to the hit point counts as exposed (§5.2)
+stability:
+  hazard_induced_unstable_speed_mps: PLACEHOLDER   # criterion for hazard_induced_unstable (R11)

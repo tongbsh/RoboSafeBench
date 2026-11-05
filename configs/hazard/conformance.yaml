@@ -1,0 +1,37 @@
+# Conformance-suite tolerances — SKELETON (T01).
+#
+# Structure only; every leaf is PLACEHOLDER (no invented numbers). One block per
+# check C1-C12 of docs/design/01_integration_rules.md §5; owner is T05. These
+# values must never be loosened just to make a test pass; any change has to be
+# justified in the task report.
+c1_timebase:
+  physics_dt_rel_tol: PLACEHOLDER
+  control_dt_rel_tol: PLACEHOLDER
+  substeps_abs_tol: PLACEHOLDER
+c2_parking:
+  state_vector_abs_tol: PLACEHOLDER
+  image_abs_tol: PLACEHOLDER
+c3_pose_fidelity:
+  pose_error_m_tol: PLACEHOLDER
+# C4 (contact partner classification) and C11 (invalid-sample mapping) are
+# pass/fail checks without numeric tolerances, so they have no block here.
+c5_release_gravity:
+  release_velocity_abs_tol_mps: PLACEHOLDER
+  free_fall_time_rel_tol: PLACEHOLDER
+c6_relative_velocity:
+  normal_speed_rel_tol: PLACEHOLDER
+  impulse_rel_tol: PLACEHOLDER
+c7_isolation:
+  state_vector_abs_tol: PLACEHOLDER
+c8_determinism:
+  exact_max_abs_diff: PLACEHOLDER
+  statistical_max_abs_diff: PLACEHOLDER
+c9_visibility:
+  min_pixel_diff: PLACEHOLDER
+  parked_pixel_diff_max: PLACEHOLDER
+c10_hold_t_stop:
+  drift_m_tol: PLACEHOLDER
+  repeats: PLACEHOLDER
+  t_stop_iqr_s_tol: PLACEHOLDER
+c12_batch_independence:
+  observation_abs_tol: PLACEHOLDER

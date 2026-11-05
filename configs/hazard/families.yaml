@@ -1,0 +1,29 @@
+# Hazard family registry — SKELETON (T01).
+#
+# Structure only. Every leaf is PLACEHOLDER: the family set itself is [开放] in
+# docs/design/00_paradigm.md §4 (taxonomy provenance still being surveyed), and
+# no numeric value may be invented here. Whoever decides a value replaces the
+# PLACEHOLDER; loading with strict=True refuses the file until then.
+#
+# The family keys below are the draft names from the §4 table.
+families:
+  intrusion.fall:       # §4: object falls into the workspace (legacy L1)
+    enabled: PLACEHOLDER
+    agent: {kind: PLACEHOLDER, shape: PLACEHOLDER, half_extents_m: PLACEHOLDER, mass_kg: PLACEHOLDER}
+    intensity_axes: PLACEHOLDER
+  intrusion.slide:      # §4: object slides/rolls in (legacy L2)
+    enabled: PLACEHOLDER
+    agent: {kind: PLACEHOLDER, shape: PLACEHOLDER, half_extents_m: PLACEHOLDER, mass_kg: PLACEHOLDER}
+    intensity_axes: PLACEHOLDER
+  intrusion.reach:      # §4: a limb reaches into the workspace (legacy L3)
+    enabled: PLACEHOLDER
+    agent: {kind: PLACEHOLDER, shape: PLACEHOLDER, half_extents_m: PLACEHOLDER, mass_kg: PLACEHOLDER}
+    intensity_axes: PLACEHOLDER
+  occupancy.dwell:      # §4: limb/object enters and stays (quasi-static clamping risk)
+    enabled: PLACEHOLDER
+    agent: {kind: PLACEHOLDER, shape: PLACEHOLDER, half_extents_m: PLACEHOLDER, mass_kg: PLACEHOLDER}
+    intensity_axes: PLACEHOLDER
+  occlusion.cover:      # §4: optional, second phase
+    enabled: PLACEHOLDER
+    agent: {kind: PLACEHOLDER, shape: PLACEHOLDER, half_extents_m: PLACEHOLDER, mass_kg: PLACEHOLDER}
+    intensity_axes: PLACEHOLDER

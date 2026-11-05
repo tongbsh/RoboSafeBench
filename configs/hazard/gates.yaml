@@ -1,0 +1,16 @@
+# Solvability gate parameters — SKELETON (T01).
+#
+# Structure only; every leaf is PLACEHOLDER (no invented numbers). Keys follow
+# docs/design/00_paradigm.md §8; owner is T06.
+g0:   # geometric validity
+  max_penetration_m: PLACEHOLDER
+  workspace_margin_m: PLACEHOLDER
+g1:   # stop-wait-resume solvable
+  max_official_contacts: PLACEHOLDER
+  require_task_success: PLACEHOLDER
+  baseline_success_required: PLACEHOLDER   # else the reference is baseline_unusable
+  repeats: PLACEHOLDER
+g2:   # privileged-reaction solvable
+  max_official_contacts: PLACEHOLDER
+  require_task_success: PLACEHOLDER
+  repeats: PLACEHOLDER

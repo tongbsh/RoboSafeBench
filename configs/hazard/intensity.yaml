@@ -1,0 +1,30 @@
+# Intensity axes and calibration settings — SKELETON (T01).
+#
+# Structure only; every leaf is PLACEHOLDER (no invented numbers). Axis names
+# follow the "intensity vector" column of docs/design/00_paradigm.md §4 and are
+# draft like the family set. Owned by T02 (kinematics / calibration math) and by
+# whoever pre-registers the values (00 §11: T_stop speed threshold and Sigma
+# bins must be fixed before formal runs).
+intensity:
+  intrusion.fall:
+    tau_s:   {lo: PLACEHOLDER, hi: PLACEHOLDER, levels: PLACEHOLDER}
+    mass_kg: {lo: PLACEHOLDER, hi: PLACEHOLDER, levels: PLACEHOLDER}
+  intrusion.slide:
+    tau_s:             {lo: PLACEHOLDER, hi: PLACEHOLDER, levels: PLACEHOLDER}
+    approach_speed_mps: {lo: PLACEHOLDER, hi: PLACEHOLDER, levels: PLACEHOLDER}
+    precursor_lead_s:  {lo: PLACEHOLDER, hi: PLACEHOLDER, levels: PLACEHOLDER}
+  intrusion.reach:
+    tau_s:             {lo: PLACEHOLDER, hi: PLACEHOLDER, levels: PLACEHOLDER}
+    approach_speed_mps: {lo: PLACEHOLDER, hi: PLACEHOLDER, levels: PLACEHOLDER}
+    limb_size_m:       {lo: PLACEHOLDER, hi: PLACEHOLDER, levels: PLACEHOLDER}
+  occupancy.dwell:
+    dwell_s:              {lo: PLACEHOLDER, hi: PLACEHOLDER, levels: PLACEHOLDER}
+    blocked_clearance_m:  {lo: PLACEHOLDER, hi: PLACEHOLDER, levels: PLACEHOLDER}
+  occlusion.cover:
+    occlusion_ratio: {lo: PLACEHOLDER, hi: PLACEHOLDER, levels: PLACEHOLDER}
+    duration_s:      {lo: PLACEHOLDER, hi: PLACEHOLDER, levels: PLACEHOLDER}
+
+calibration:   # 00 §7
+  t_stop_speed_threshold_mps: PLACEHOLDER   # EEF speed below which the arm counts as stopped
+  t_stop_repeats: PLACEHOLDER               # repetitions for the median / IQR
+  sigma_bins: PLACEHOLDER                   # Sigma = tau / T_stop reporting bins
