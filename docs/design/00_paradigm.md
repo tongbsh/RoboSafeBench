@@ -124,7 +124,7 @@ fall 族依赖引擎的真实重力：求解器必须使用宿主**实测**的�
 |---|---|---|
 | 「机器人侧」 | 机器人全部碰撞体（臂、夹爪、躯干，移动底盘与轮子计入），排除相机 / 传感器；**抓持中的物体计入但标为 `held_object` 类**；未抓持的任务物体是 `scene` 类，不计入危险与机器人接触 | LIBERO 含 `obj_of_interest`、RoboCasa 含底盘、SimplerEnv L3 忽略底盘与肩部、RoboTwin 只排除相机 |
 | 官方接触 | 采用 `dynamic_release` 方案：危险体运动学阶段的重叠只记 `kinematic_overlap`（不是官方接触）；一旦重叠，适配器回滚到最后一个无重叠位姿，以**未取下限**的入射速度释放到动力学，之后的接触才是官方接触 | MuJoCo 后端无冲量门槛；SAPIEN 后端有；各用不同方案 |
-| 严重度 | 解析冲量 `J = m·(1+e)·vₙ`（`e=0` 默认）；同时记 `vₙ`（首次官方接触时相对法向速度）与危险体质量。引擎峰值力只记为辅助量 `engine_peak_force_n` 并附 `force_source`，**不用于排序** | 单步瞬时法向力 / 冲量范数除以不统一的窗口（0.05 s / 0.01 s） |
+| 严重度 | 解析冲量 `J = m·(1+e)·vₙ`（`e` 取自 `semantics.yaml: contact.restitution_e`，预注册；主报告取 `e=0`，其余取值只做敏感性分析；**代码不设默认**，D9）；同时记 `vₙ`（首次官方接触时相对法向速度）与危险体质量。接触法向一律由**伙伴指向危险体**（D9）。引擎峰值力只记为辅助量 `engine_peak_force_n` 并附 `force_source`，**不用于排序** | 单步瞬时法向力 / 冲量范数除以不统一的窗口（0.05 s / 0.01 s） |
 | 约束状态与时长 | 官方接触期间，若危险体同时与一个静态场景体（或机器人另一部件）接触，且法向大致相对，持续时间 ≥ `t_q`，记 `clamp`；记录连续官方接触时长。`t_q` 来自 YAML，**预注册** | 仓库没有该信息（P0 F7） |
 | 近失 | 最小间距（有真几何查询则用，否则用原点代理并标 `separation_kind=surrogate`）；接触前剩余时间序列 | 原点距离代理，未标注 |
 | 倾倒 | 上轴倾角（**忽略绕 z 的偏航**），阈值 YAML | LIBERO / RoboCasa 用相对旋转总角（含偏航）；SAPIEN 后端忽略偏航 |
@@ -206,3 +206,4 @@ fall 族依赖引擎的真实重力：求解器必须使用宿主**实测**的�
 | D6 | 2026-11-06 | 带严重度的 `reach` 实例必须 `overshoot_m > 0`；`speed_profile ∈ {min_jerk, linear}`；T_stop 有删失（未停下）时标记为下界，不得直接用于 Σ | T02 汇报的限制与偏离项 |
 | D7 | 2026-11-06 | BD 新增顶层字段 `gravity_mps2`、`eef_contact_radius_m`（由 T04 步骤 0 实现）；`intensity.yaml` 删除 `intrusion.slide.precursor_lead_s` | T02-F 审阅：BD 加载器对未声明键报错，且 skeleton 里的 `precursor_lead_s` 与 D5 矛盾 |
 | D8 | 2026-11-06 | `margin_sigma` 保持纯数学；Σ 的受保护入口 `sigma_from_summary` 在 T06 实现，有删失时 T_stop 是下界、Σ 是上界，默认拒绝 | T02-F 汇报指出 `margin_sigma` 只收一个数，无法在内部检查 `n_censored` |
+| D9 | 2026-11-06 | 安全语义（T03）五项补充：**(a)** 接触法向统一为“伙伴指向危险体”（T01 的 `ContactObs.normal` 已如此），闭合速度 `v_n = max(0, (v_partner − v_hazard)·n)`，零法向抛错、**不再**像旧 `newton_force.py` 回退到速度方向；**(b)** 恢复系数 `e` 来自 YAML（预注册，主报告取 0），代码无默认；**(c)** 连续官方接触允许的最大间隙 `contact.gap_tolerance_s`（防止接触闪烁打断 `t_q`）；**(d)** `hazard_induced_unstable` 归因：不稳定发生时刻 ≥ 危险体 onset **且** 不稳定实体与危险体质心距离 ≤ `stability.hazard_induced_max_distance_m`（取代 skeleton 里的速度键）；距离不可得时按 `hazard_induced` 处理并单独计数 `attribution_ambiguous`（宁可保留，不得静默剔除）；检测由宿主负责，归因由 T03 的规则函数负责，T04 的 `report_instability` 调用它；**(e)** `exposure_low` 由 T03 的纯函数判定（窗口内被测机器人 EEF 到命中点的最小距离 > `exposure.low_exposure_radius_m`），T06 调用、不重写 | 合并 T01 后核对 T03 任务：T03 原文要重复定义 T01 已有的 `PartnerClass`/`ContactObs`；T01 汇报修订建议 4 要求定下法向方向；skeleton 的 `hazard_induced_unstable_speed_mps` 与 T04 的“窗口 + 距离”判据不一致；§6 的“`e=0` 默认”与“代码不设数值默认”冲突 |

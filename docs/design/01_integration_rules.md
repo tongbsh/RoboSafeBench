@@ -89,11 +89,11 @@ policy_interface: {kind: calvin_model_step, notes: "..."}
 | `release_to_physics(h, lin_vel, ang_vel)` | 变为动力学并具有给定速度；速度**必须**是调用者给的值，不得被下限修改 |
 | `robot_state(env) -> RobotState` | EEF 位姿与线速度、夹爪开度、底盘位姿（若有）、机器人碰撞体位置列表、`held_object` 名称（若有） |
 | `object_poses(env) -> Dict[str, Pose]` | 命名的任务物体与固定装置位姿；支撑面信息放在 `support_surfaces` |
-| `hazard_contacts(h) -> List[ContactObs]` | 自上次调用以来的接触观测：伙伴名称与类别（`robot_link` / `held_object` / `scene` / `hazard`）、世界系位置、法向、引擎冲量（若有）、时间戳。相对法向速度由核心用运动学数据补算；引擎若直接给也可附带 |
+| `hazard_contacts(h) -> List[ContactObs]` | 自上次调用以来的接触观测：伙伴名称与类别（`robot_link` / `held_object` / `scene` / `hazard`）、世界系位置、法向（**方向：由伙伴指向危险体**，即伙伴推危险体的方向，D9）、引擎冲量（若有）、时间戳。相对法向速度由核心用运动学数据补算；引擎若直接给也可附带 |
 | `time_state(env) -> TimeState` | `sim_time_s`、`physics_dt_s`、`control_dt_s` |
 | `task_success(env) -> bool` | **只读**转发基准自己的成功判定，**禁止**让它受危险体影响（见 R5） |
 | `hold_action(env) -> Action` | 基准原生的“保持 / 无动作”动作，用于 T_stop 与 Oracle 门 |
-| `install_hooks(runtime)` | 把 `runtime.on_reset / pre_step / post_step / on_episode_end` 挂到基准的重置与**最细物理步**上 |
+| `install_hooks(runtime)` | 把 `runtime.begin_episode / pre_step / post_step / end_episode` 挂到基准的重置与**最细物理步**上（与 §3.3 的 `HazardRuntime` 方法名一致；T01 汇报修订建议 1） |
 
 ### 3.2 可选
 
@@ -132,7 +132,7 @@ policy_interface: {kind: calvin_model_step, notes: "..."}
 
 **R10 倾倒。** 上轴倾角，忽略绕 z 的偏航，阈值来自 YAML。
 
-**R11 无效样本三分类。** `setup_invalid` / `sim_unstable` / `hazard_induced_unstable`。前两类映射基准原生机制并从分母排除、分别计数；第三类**必须**保留在分母中并单独汇报。
+**R11 无效样本三分类。** `setup_invalid` / `sim_unstable` / `hazard_induced_unstable`。前两类映射基准原生机制并从分母排除、分别计数；第三类**必须**保留在分母中并单独汇报。归因规则（不稳定时刻 ≥ onset 且距离 ≤ 阈值；距离不可得时保留并计 `attribution_ambiguous`）见 `00_paradigm.md` D9 d，由 T03 的 `classify_invalid` 实现，运行时不得另写判据。
 
 **R12 确定性与配对。** 实例是 (规格, 任务上下文, 基准任务编号, 布局 / 种子, 实例种子) 的纯函数。BD 声明 `same_seed_repro`。`exact` 时用快照做配对对照；否则用同布局、同策略种子的无危险运行做统计配对。
 
