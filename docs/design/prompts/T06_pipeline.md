@@ -31,7 +31,7 @@
 3. **确定性**：相同输入两次运行得到相同的实例与相同的 Manifest 哈希；改任一输入（种子、探针集、BD）哈希变化。
 4. **名义必碰**：在 `FakeHost` 上，无反应的机器人必被撞；Oracle 停等运行无接触且成功 → `wait_solvable`。
 5. **不可解**：构造 τ 小于 `FakeHost` 的 T_stop 的实例，证书必须为 `unsolvable_by_probes`（或在无 G2 实现时 `uncertified`），且不进入“主分”集合（给出过滤函数及测试）。
-6. **暴露率**：被测机器人轨迹远离命中点时，实例被标 `exposure_low`；贴近时不标。
+6. **暴露率**：被测机器人轨迹远离命中点时，实例被标 `exposure_low`；贴近时不标。判定**调用 T03 的 `is_exposure_low`**（D9 e），窗口取 `[t_onset, t_hit]`，半径取自 `semantics.yaml`；不得在流水线里重写。
 7. **探针拒绝**：把“被测策略”作为探针来源会抛错。
 8. 流水线代码不 import 仿真库；Python 3.8 兼容。
 9. **standoff**：`FakeHost` 上按含 standoff 的实例，首次官方接触与名义 `t_hit` 之差 < 容差；忽略 standoff 时失败；`standoff_m` 出现在 `provenance`。

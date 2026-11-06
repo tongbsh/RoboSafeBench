@@ -17,7 +17,7 @@
    - `fall` 族（`release_time_s == onset_time_s`、释放速度 0，D2）：onset 时摆放并释放，**之后不做运动学重叠检测与回滚**，其接触一律是官方接触（R8）；
    - 停放 / 取出（R6）：回合开始前保证危险体处于停放状态，回合结束后恢复停放；
    - 事件记录：用 T03 的语义计算 `v_rel_normal_mps`、`impulse_analytic_ns`、`contact_duration_s`、`constraint_state`、`min_separation_m`、`ttc_min_s`；
-   - 不稳定监测接口：宿主可调用 `runtime.report_instability(env, kind)`，运行时记 `sim_unstable` 或 `hazard_induced_unstable`（后者当且仅当不稳定发生在危险体活动窗口内且危险体距机器人小于参数给定距离）；
+   - 不稳定监测接口：宿主可调用 `runtime.report_instability(env, kind)`，运行时调用 T03 的 `classify_invalid`（D9 d）得到 `sim_unstable` 或 `hazard_induced_unstable`，**不得在运行时里自己再写一套判据**；距离不可得时按 T03 规则保留并带 `attribution_ambiguous`；阈值 `max_distance_m` 取自 `semantics.yaml`；
    - 所有阈值与模式从 `cfg`（来自 `configs/hazard/*.yaml`）读取。
    - 新建 `configs/hazard/runtime.yaml`：`max_step_ratio: 0.5`（R1 的已定值，D3）、`release_velocity_window_s`、`keyframe_dt_s`、`keyframe_interp_tol_m`（后三项写 `PLACEHOLDER`，试点后预注册；测试里用显式传入的字面量，不读 PLACEHOLDER）。
 2. `hazardlib/conformance/fakehost.py` — `FakeHost`：纯 numpy 的小世界：
