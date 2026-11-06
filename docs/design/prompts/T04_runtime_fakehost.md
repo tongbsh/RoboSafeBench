@@ -7,6 +7,9 @@
 
 ## 范围与产出
 
+0. **前置小改动（T02-F 审阅发现；单独成一次提交，先于其余工作；T01 的全部既有测试必须保持绿）**：
+   - a. 在 T01 的 `BenchmarkDescriptor`（`hazardlib/spec/benchmark_descriptor.py`）新增两个顶层字段 `gravity_mps2`、`eef_contact_radius_m`（类型 float；与 `timebase.physics_dt_s` 一样允许取 `"unknown"`，并进入 `unknown_fields()` / `require_complete()` 的检查；`tier()` 不受影响）。更新 `configs/hazard/bd/calvin.yaml` 草稿（两者写 `unknown`）。补测试：缺字段时报错、`strict=True` 下它们作为 unknown 被列出、BD 哈希随字段值变化。**原因**：现有加载器遇到未声明的键会直接报错（`_records.py` 的 `unexpected key(s)`），而 D1、D2 要求每个宿主声明这两项；FakeHost 的 BD 也要给出具体值。
+   - b. 在 `configs/hazard/intensity.yaml` 删除 `intrusion.slide.precursor_lead_s`（D5：可见提前量是诊断量 τ_vis，不是强度输入），并同步任何引用它的测试。
 1. `hazardlib/runtime.py` — `HazardRuntime(host, cfg)`：
    - `begin_episode(env, instance)`、`pre_step(env)`、`post_step(env)`、`end_episode(env) -> HazardEventLog`；支持多个环境下标并彼此独立；
    - 按**秒**推进关键帧；对每个钩子间隔调用 T02 的子步细分，保证 R1；

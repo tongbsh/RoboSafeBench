@@ -204,3 +204,5 @@ fall 族依赖引擎的真实重力：求解器必须使用宿主**实测**的�
 | D4 | 2026-11-06 | 释放速度 = 实例路径在固定窗口 `release_velocity_window_s` 上的后向差分，**不用**引擎钩子步长 | 钩子步长依赖会让同一实例在不同引擎上得到不同释放速度（T02 实测 reach 的 `overshoot_m=0` 情形下 3.9e-3 / 6.3e-4 / 4.0e-5 m/s 随钩子步长变化） |
 | D5 | 2026-11-06 | `t_onset` = 危险体开始运动的时刻，不要求已可见；`τ_vis` 作为诊断量记录 | 避免 τ 依赖相机几何；视觉策略真正可用的反应时间用 `τ_vis` 单独报告 |
 | D6 | 2026-11-06 | 带严重度的 `reach` 实例必须 `overshoot_m > 0`；`speed_profile ∈ {min_jerk, linear}`；T_stop 有删失（未停下）时标记为下界，不得直接用于 Σ | T02 汇报的限制与偏离项 |
+| D7 | 2026-11-06 | BD 新增顶层字段 `gravity_mps2`、`eef_contact_radius_m`（由 T04 步骤 0 实现）；`intensity.yaml` 删除 `intrusion.slide.precursor_lead_s` | T02-F 审阅：BD 加载器对未声明键报错，且 skeleton 里的 `precursor_lead_s` 与 D5 矛盾 |
+| D8 | 2026-11-06 | `margin_sigma` 保持纯数学；Σ 的受保护入口 `sigma_from_summary` 在 T06 实现，有删失时 T_stop 是下界、Σ 是上界，默认拒绝 | T02-F 汇报指出 `margin_sigma` 只收一个数，无法在内部检查 `n_censored` |

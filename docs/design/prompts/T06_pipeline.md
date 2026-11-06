@@ -37,7 +37,7 @@
 9. **standoff**：`FakeHost` 上按含 standoff 的实例，首次官方接触与名义 `t_hit` 之差 < 容差；忽略 standoff 时失败；`standoff_m` 出现在 `provenance`。
 10. **关键帧回放**：实例关键帧经线性插值回放，与解析路径的位置误差 ≤ `keyframe_interp_tol_m`；由关键帧得到的释放速度与 T02 的固定窗口后向差分一致。
 11. **拒绝**：`onset_margin_s < 0` 的实例、`overshoot_m = 0` 的带严重度 `reach` 实例，都被拒绝并有测试。
-12. **T_stop 删失**：构造“未停下”的重复，`aggregate` 的 `n_censored > 0` 时校准输出带“下界”标记，且 Σ 计算拒绝使用未标记的值。
+12. **T_stop 删失与 Σ 的受保护入口（D6、D8）**：`calibrate.margin_sigma(tau_s, t_stop_s)` 保持为纯数学（T02 的设计，只收一个数，看不到删失）。在 T06 新增受保护入口 `sigma_from_summary(tau_s, summary, allow_censored)`，返回 `(sigma, is_upper_bound)`：`summary.n_censored > 0` 时，T_stop 只是**下界**（机器人有重复没停下，中位数偏乐观），因此 Σ = τ/T_stop 是**上界**——默认（`allow_censored=False`）直接拒绝并抛错，显式允许时返回 `is_upper_bound=True`。校准输出（`calibration.yaml`）在有删失时带“T_stop 为下界”标记。**卫生测试**：用 AST 检查，除 `calibrate/` 内的受保护入口与测试文件外，任何模块不得直接调用 `margin_sigma`。
 
 ## 不要做
 不要实现任何真实基准的宿主；不要写 G2 的具体避障算法；不要做实验。
