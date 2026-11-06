@@ -37,15 +37,15 @@ def random_case(rng, family):
     direction = rng.normal(size=3)
     direction /= np.linalg.norm(direction)
     nominal = straight_path(rng.uniform(-1, 1, 3), rng.uniform(-1, 1, 3), 0.0, 6.0)
-    hook_dt = rng.uniform(0.001, 0.05)
+    window = rng.uniform(0.001, 0.05)
     if family == "intrusion.fall":
         params = {"g": G}
     elif family == "intrusion.slide":
-        params = {"direction": direction, "speed_mps": rng.uniform(0.2, 2.0), "hook_dt_s": hook_dt}
+        params = {"direction": direction, "speed_mps": rng.uniform(0.2, 2.0), "release_window_s": window}
     else:
         params = {"direction": direction, "reach_distance_m": rng.uniform(0.2, 1.0),
                   "overshoot_m": rng.uniform(0.05, 0.4),
-                  "speed_profile": ["min_jerk", "linear"][rng.randint(2)], "hook_dt_s": hook_dt}
+                  "speed_profile": ["min_jerk", "linear"][rng.randint(2)], "release_window_s": window}
     return nominal, t_hit, hit_point, tau, params
 
 
@@ -97,7 +97,7 @@ def test_fall_is_released_at_rest_at_the_onset_from_the_right_height():
 
 def test_slide_runs_at_constant_speed_along_the_direction_and_releases_at_the_hit():
     nominal = straight_path([0, 0, 0.3], [0, 0, 0.3], 0.0, 5.0)        # a stationary nominal EEF
-    params = {"direction": [0.0, 2.0, 0.0], "speed_mps": 0.8, "hook_dt_s": 0.004}
+    params = {"direction": [0.0, 2.0, 0.0], "speed_mps": 0.8, "release_window_s": 0.004}
     plan = build_hit_path("intrusion.slide", nominal, 3.0, [0.0, 0.0, 0.3], 0.5, params)
     np.testing.assert_allclose(plan.path.pos(plan.onset_time_s), [0.0, -0.4, 0.3])   # hit - v tau d
     assert plan.release_time_s == 3.0
@@ -111,7 +111,7 @@ def test_slide_runs_at_constant_speed_along_the_direction_and_releases_at_the_hi
 
 def test_relative_speed_uses_the_nominal_end_effector_velocity():
     nominal = straight_path([0, 0, 0], [0, 4, 0], 0.0, 4.0)           # moving at 1 m/s along +y
-    params = {"direction": [0, -1, 0], "speed_mps": 0.5, "hook_dt_s": 0.01}   # head-on slide
+    params = {"direction": [0, -1, 0], "speed_mps": 0.5, "release_window_s": 0.01}   # head-on slide
     plan = build_hit_path("intrusion.slide", nominal, 2.0, nominal.pos(2.0), 0.4, params)
     assert plan.diagnostics["relative_speed_at_hit_mps"] == pytest.approx(1.5, rel=1e-9)
 
@@ -138,7 +138,7 @@ def test_reach_duration_and_speed_match_an_independent_solution(profile):
         tau = rng.uniform(0.2, 1.0)
         nominal = straight_path([0, 0, 0], [1, 0, 0], 0.0, 6.0)
         params = {"direction": [1, 1, 0], "reach_distance_m": reach, "overshoot_m": overshoot,
-                  "speed_profile": profile, "hook_dt_s": 0.002}
+                  "speed_profile": profile, "release_window_s": 0.002}
         plan = build_hit_path("intrusion.reach", nominal, 4.0, [0.5, 0.5, 0.3], tau, params)
         u, duration, speed = reach_reference(reach, overshoot, tau, profile)
         assert plan.path.duration_s == pytest.approx(duration, rel=1e-9)
@@ -151,22 +151,22 @@ def test_reach_duration_and_speed_match_an_independent_solution(profile):
 
 def test_reach_release_velocity_is_the_backward_finite_difference_without_a_floor():
     nominal = straight_path([0, 0, 0], [1, 0, 0], 0.0, 6.0)
-    hook_dt = 0.02
+    window = 0.02
     params = {"direction": [0, 0, 1], "reach_distance_m": 0.6, "overshoot_m": 0.2,
-              "speed_profile": "min_jerk", "hook_dt_s": hook_dt}
+              "speed_profile": "min_jerk", "release_window_s": window}
     plan = build_hit_path("intrusion.reach", nominal, 4.0, [0.0, 0.0, 0.5], 0.7, params)
     np.testing.assert_array_equal(plan.release_velocity,
-                                  plan.path.finite_difference_velocity(4.0, hook_dt))   # R7, exact
+                                  plan.path.finite_difference_velocity(4.0, window))   # R7, exact
     total = 0.8
     max_accel = (10.0 / np.sqrt(3.0)) * 6.0 * total / plan.path.duration_s ** 2   # |s''| <= 10/sqrt(3)
     gap = np.linalg.norm(plan.release_velocity - plan.hit_velocity)
-    assert gap <= 0.5 * max_accel * hook_dt * (1 + 1e-9)    # first-order accuracy of the difference
+    assert gap <= 0.5 * max_accel * window * (1 + 1e-9)    # first-order accuracy of the difference
 
 
 def test_reach_without_overshoot_arrives_at_rest_for_min_jerk():
     nominal = straight_path([0, 0, 0], [1, 0, 0], 0.0, 6.0)
     params = {"direction": [1, 0, 0], "reach_distance_m": 0.5, "overshoot_m": 0.0,
-              "speed_profile": "min_jerk", "hook_dt_s": 0.01}
+              "speed_profile": "min_jerk", "release_window_s": 0.01}
     plan = build_hit_path("intrusion.reach", nominal, 3.0, [0.5, 0, 0], 0.5, params)
     assert plan.path.duration_s == pytest.approx(0.5, rel=1e-12)
     assert plan.diagnostics["hit_speed_mps"] < 1e-12
@@ -197,7 +197,7 @@ def test_sampled_nominal_path_is_accepted():
 
 def valid_slide():
     return ("intrusion.slide", straight_path([0, 0, 0], [1, 0, 0], 0.0, 4.0), 2.0, [0, 0, 0.3], 0.5,
-            {"direction": [1, 0, 0], "speed_mps": 0.5, "hook_dt_s": 0.01})
+            {"direction": [1, 0, 0], "speed_mps": 0.5, "release_window_s": 0.01})
 
 
 def call(overrides):
@@ -223,11 +223,11 @@ def test_baseline_slide_call_is_valid():
     ({4: -0.5}, "tau_s"),
     ({4: float("inf")}, "tau_s"),
     ({5: {"direction": [1, 0, 0], "speed_mps": 0.5}}, "missing"),
-    ({5: {"direction": [1, 0, 0], "speed_mps": 0.5, "hook_dt_s": 0.01, "extra": 1}}, "unexpected"),
-    ({5: {"direction": [0, 0, 0], "speed_mps": 0.5, "hook_dt_s": 0.01}}, "non-zero"),
-    ({5: {"direction": [1, 0, 0], "speed_mps": 0.0, "hook_dt_s": 0.01}}, "speed_mps"),
-    ({5: {"direction": [1, 0, 0], "speed_mps": 0.5, "hook_dt_s": 0.0}}, "hook_dt_s"),
-    ({5: {"direction": [1, 0, 0], "speed_mps": 0.5, "hook_dt_s": 0.6}}, "exceeds the kinematic phase"),
+    ({5: {"direction": [1, 0, 0], "speed_mps": 0.5, "release_window_s": 0.01, "extra": 1}}, "unexpected"),
+    ({5: {"direction": [0, 0, 0], "speed_mps": 0.5, "release_window_s": 0.01}}, "non-zero"),
+    ({5: {"direction": [1, 0, 0], "speed_mps": 0.0, "release_window_s": 0.01}}, "speed_mps"),
+    ({5: {"direction": [1, 0, 0], "speed_mps": 0.5, "release_window_s": 0.0}}, "release_window_s"),
+    ({5: {"direction": [1, 0, 0], "speed_mps": 0.5, "release_window_s": 0.6}}, "exceeds the kinematic phase"),
     ({5: [1, 2, 3]}, "params must be a mapping"),
 ])
 def test_invalid_calls_are_rejected_with_a_clear_message(overrides, match):
@@ -242,7 +242,7 @@ def test_fall_and_reach_parameter_validation():
     with pytest.raises(ValueError, match="missing"):
         build_hit_path("intrusion.fall", nominal, 2.0, [0, 0, 0.1], 0.4, {})
     good = {"direction": [1, 0, 0], "reach_distance_m": 0.5, "overshoot_m": 0.1,
-            "speed_profile": "min_jerk", "hook_dt_s": 0.01}
+            "speed_profile": "min_jerk", "release_window_s": 0.01}
     for key, bad, match in (("overshoot_m", -0.1, "overshoot_m"), ("reach_distance_m", 0.0, "reach"),
                             ("speed_profile", "cubic", "speed_profile")):
         with pytest.raises(ValueError, match=match):
@@ -258,8 +258,53 @@ def test_results_do_not_alias_the_caller_inputs():
     hit_point = np.array([0.0, 0.0, 0.3])
     direction = np.array([1.0, 0.0, 0.0])
     plan = build_hit_path("intrusion.slide", nominal, 2.0, hit_point,  0.5,
-                          {"direction": direction, "speed_mps": 0.5, "hook_dt_s": 0.01})
+                          {"direction": direction, "speed_mps": 0.5, "release_window_s": 0.01})
     hit_point[:] = 9.0
     direction[:] = 9.0
     np.testing.assert_allclose(plan.nominal_hit_point, [0, 0, 0.3])
     np.testing.assert_allclose(plan.path.pos(2.0), [0, 0, 0.3])
+
+
+def test_release_window_is_recorded_for_slide_and_reach_only():
+    nominal = straight_path([0, 0, 0], [1, 0, 0], 0.0, 6.0)
+    slide = build_hit_path("intrusion.slide", nominal, 3.0, [0, 0, 0.3], 0.5,
+                           {"direction": [1, 0, 0], "speed_mps": 0.5, "release_window_s": 0.02})
+    reach = build_hit_path("intrusion.reach", nominal, 3.0, [0, 0, 0.3], 0.5,
+                           {"direction": [0, 1, 0], "reach_distance_m": 0.5, "overshoot_m": 0.1,
+                            "speed_profile": "min_jerk", "release_window_s": 0.004})
+    fall = build_hit_path("intrusion.fall", nominal, 3.0, [0, 0, 0.3], 0.5, {"g": G})
+    assert slide.diagnostics["release_window_s"] == 0.02
+    assert reach.diagnostics["release_window_s"] == 0.004
+    assert "release_window_s" not in fall.diagnostics      # released at rest: no window
+    for plan in (slide, reach, fall):                      # the other keys are always present
+        assert {"nominal_ee_offset_m", "onset_margin_s", "travel_distance_m", "hit_speed_mps",
+                "relative_speed_at_hit_mps"} <= set(plan.diagnostics)
+
+
+def test_the_old_hook_step_name_is_rejected_without_an_alias():
+    nominal = straight_path([0, 0, 0], [1, 0, 0], 0.0, 6.0)
+    slide_old = {"direction": [1, 0, 0], "speed_mps": 0.5, "hook_dt_s": 0.01}
+    with pytest.raises(ValueError, match="missing: \\['release_window_s'\\].*unexpected: \\['hook_dt_s'\\]"):
+        build_hit_path("intrusion.slide", nominal, 3.0, [0, 0, 0.3], 0.5, slide_old)
+    both = dict(slide_old, release_window_s=0.01)
+    with pytest.raises(ValueError, match="unexpected: \\['hook_dt_s'\\]"):
+        build_hit_path("intrusion.slide", nominal, 3.0, [0, 0, 0.3], 0.5, both)
+    reach_old = {"direction": [0, 1, 0], "reach_distance_m": 0.5, "overshoot_m": 0.1,
+                 "speed_profile": "min_jerk", "hook_dt_s": 0.01}
+    with pytest.raises(ValueError, match="hook_dt_s"):
+        build_hit_path("intrusion.reach", nominal, 3.0, [0, 0, 0.3], 0.5, reach_old)
+    with pytest.raises(ValueError, match="unexpected"):    # fall never took a window
+        build_hit_path("intrusion.fall", nominal, 3.0, [0, 0, 0.3], 0.5, {"g": G, "release_window_s": 0.01})
+
+
+def test_release_velocity_depends_on_the_window_and_not_on_anything_else():
+    nominal = straight_path([0, 0, 0], [1, 0, 0], 0.0, 6.0)
+    base = {"direction": [0, 0, 1], "reach_distance_m": 0.6, "overshoot_m": 0.0, "speed_profile": "min_jerk"}
+    speeds = []
+    for window in (0.04, 0.02, 0.01):       # a min-jerk tip that arrives at rest: the windowed mean shrinks
+        plan = build_hit_path("intrusion.reach", nominal, 4.0, [0, 0, 0.5], 0.7,
+                              dict(base, release_window_s=window))
+        np.testing.assert_array_equal(plan.release_velocity,
+                                      plan.path.finite_difference_velocity(4.0, window))
+        speeds.append(float(np.linalg.norm(plan.release_velocity)))
+    assert speeds[0] > speeds[1] > speeds[2] > 0.0
