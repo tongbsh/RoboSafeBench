@@ -24,7 +24,12 @@ intensity:
     occlusion_ratio: {lo: PLACEHOLDER, hi: PLACEHOLDER, levels: PLACEHOLDER}
     duration_s:      {lo: PLACEHOLDER, hi: PLACEHOLDER, levels: PLACEHOLDER}
 
-calibration:   # 00 §7
+calibration:   # 00 §7, decision D3 in §13
   t_stop_speed_threshold_mps: PLACEHOLDER   # EEF speed below which the arm counts as stopped
+  t_stop_min_consecutive_samples: PLACEHOLDER   # estimate_t_stop's k: samples in a row below the threshold
   t_stop_repeats: PLACEHOLDER               # repetitions for the median / IQR
   sigma_bins: PLACEHOLDER                   # Sigma = tau / T_stop reporting bins
+  staircase:                                # staircase_update: simple up-down search for the 50% tau
+    step_s: PLACEHOLDER                     # tau change after each trial
+    tau_min_s: PLACEHOLDER                  # lower clamp of the track
+    tau_max_s: PLACEHOLDER                  # upper clamp of the track
