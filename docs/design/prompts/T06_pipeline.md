@@ -12,12 +12,15 @@
    - 输出 `TaskContext`：阶段时间线（由夹爪闭合 / 张开事件与成功时刻切分；阈值走 YAML）、任务相关实体（**顺序**：静态声明 → 被抓取或被移动的物体 → 注解；每个实体记录来源）、名义 EEF 路径（跨探针运行按阶段归一化时间取逐点中位）、占用分布、工作区边界；
    - 探针集描述（来源类别、运行数、参考策略名）进入 `provenance` 并参与哈希；**拒绝**任何标记为“被测策略”的来源（R4）。
 2. **实例化**（`hazardlib/instantiate/`）：`instantiate(spec, task_context, seed, bd) -> HazardInstance`：按 `00_paradigm.md` §5.2 选命中点与命中时刻，调用 T02 的 `build_hit_path`；是 `(spec, TC, 任务编号, 布局, 实例种子)` 的**纯函数**（用独立的随机数流，不共享全局随机状态）。
+   - **换算与记录**：调用 `build_hit_path` 之前，先按 `standoff = r_hazard(n̂) + eef_contact_radius_m` 把接触点换算成质心命中点，并把 `standoff_m` 写入 `provenance`（D1）；释放窗口参数传 `runtime.yaml` 的 `release_velocity_window_s`，**不是**引擎钩子步长（D4）；
+   - **关键帧**：把 T02 的解析 `Path` 采样成 `HazardInstance.keyframes`，间隔 `keyframe_dt_s`（YAML），并**测试**线性插值回放与解析路径的位置误差 ≤ `keyframe_interp_tol_m`（YAML）；危险体姿态取 `HazardSpec.agent` 指定的固定姿态（默认单位四元数），写入 `provenance`；
+   - **拒绝**：带严重度的 `reach` 实例 `overshoot_m` 必须 > 0，否则拒绝（`overshoot_m = 0` 属于 `occupancy.dwell`，D6）；
 3. **门控**（`hazardlib/gates/`）：
-   - G0：几何有效（工作区内、与静态场景体不穿透、停放位置合法）；
+   - G0：几何有效（工作区内、与静态场景体不穿透、停放位置合法）；拒绝 `diagnostics["onset_margin_s"] < 0` 的实例；记录 `τ_vis`（宿主提供 `render_check` 或可由相机几何估计时；否则为 `None` 并在证书备注里写明），**只记录、不过滤**（D5）；
    - G1：`run_g1(host, instance, reference_policy)` 编排“Oracle 停等恢复”运行；`ReferencePolicy` 抽象 = `{demo_replay, scripted, external_policy}`；先要求参考策略在**无危险**时成功，否则标 `baseline_unusable`；
    - G2：`PrivilegedAvoider` 抽象接口（`filter_action(action, robot_state, hazard_state)`），无实现时证书标 `uncertified`，**不得假称可解**；
    - 证书标签与 `00_paradigm.md` §8 一致。
-4. **校准**（`hazardlib/calibrate/`）：`run_t_stop_protocol(host, ...)` 按 §7 流程在宿主上测 T_stop（名义速度取自 TaskContext 的 EEF 速度中位数）；输出 `calibration.yaml`。
+4. **校准**（`hazardlib/calibrate/`）：`run_t_stop_protocol(host, ...)` 按 §7 流程在宿主上测 T_stop（名义速度取自 TaskContext 的 EEF 速度中位数）；输出 `calibration.yaml`；T_stop 有删失（`n_censored > 0`，机器人未停下）时标记为**下界**，Σ 的计算必须拒绝或显式带标记（D6）。
 5. **冻结**（`hazardlib/manifest/`）：生成 `Manifest`，含各哈希；`verify_manifest` 校验未被篡改。
 6. **CLI**：`hazardctl probe|instantiate|gate|calibrate|freeze`，输入输出为文件（YAML / JSONL），便于在不同环境的进程之间传递。
 
@@ -31,6 +34,10 @@
 6. **暴露率**：被测机器人轨迹远离命中点时，实例被标 `exposure_low`；贴近时不标。
 7. **探针拒绝**：把“被测策略”作为探针来源会抛错。
 8. 流水线代码不 import 仿真库；Python 3.8 兼容。
+9. **standoff**：`FakeHost` 上按含 standoff 的实例，首次官方接触与名义 `t_hit` 之差 < 容差；忽略 standoff 时失败；`standoff_m` 出现在 `provenance`。
+10. **关键帧回放**：实例关键帧经线性插值回放，与解析路径的位置误差 ≤ `keyframe_interp_tol_m`；由关键帧得到的释放速度与 T02 的固定窗口后向差分一致。
+11. **拒绝**：`onset_margin_s < 0` 的实例、`overshoot_m = 0` 的带严重度 `reach` 实例，都被拒绝并有测试。
+12. **T_stop 删失与 Σ 的受保护入口（D6、D8）**：`calibrate.margin_sigma(tau_s, t_stop_s)` 保持为纯数学（T02 的设计，只收一个数，看不到删失）。在 T06 新增受保护入口 `sigma_from_summary(tau_s, summary, allow_censored)`，返回 `(sigma, is_upper_bound)`：`summary.n_censored > 0` 时，T_stop 只是**下界**（机器人有重复没停下，中位数偏乐观），因此 Σ = τ/T_stop 是**上界**——默认（`allow_censored=False`）直接拒绝并抛错，显式允许时返回 `is_upper_bound=True`。校准输出（`calibration.yaml`）在有删失时带“T_stop 为下界”标记。**卫生测试**：用 AST 检查，除 `calibrate/` 内的受保护入口与测试文件外，任何模块不得直接调用 `margin_sigma`。
 
 ## 不要做
 不要实现任何真实基准的宿主；不要写 G2 的具体避障算法；不要做实验。

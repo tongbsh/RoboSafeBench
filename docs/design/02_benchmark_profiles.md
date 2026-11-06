@@ -57,6 +57,7 @@
 3. 探针来源：CALVIN 演示数据（`dataset/download_data.sh debug` 约 1.3 GB）、验证集的初始状态与语言标注；TaskContext 的角色来自判定器配置。
 4. 参考策略 / G2：无现成特权避障，G1 先用演示回放 + Oracle；G2 暂标 `uncertified`。
 5. 许可：MIT（README 徽章）。
+6. **重力为 −9.8**（`calvin_env/envs/play_table_env.py:133`，`setGravity(0, 0, -9.8)`）**[已核实]**，与其他基准常用的 9.81 不同；fall 族的 τ 反解必须用宿主实测值（`00_paradigm.md` D2）。PyBullet 动态体默认阻尼 **[待探针]**。
 
 ---
 

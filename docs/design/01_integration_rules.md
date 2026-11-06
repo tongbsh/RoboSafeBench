@@ -44,6 +44,7 @@ benchmark: {repo: mees/calvin, commits: {calvin: fa03f01, calvin_env: 797142c}, 
 python: {required: "3.8", env_name: calvin_venv}
 engine: {name: pybullet, version: ?}
 timebase: {physics_dt_s: 0.004167, control_dt_s: 0.0333, substeps_per_action: 8}
+gravity_mps2: ?                    # 宿主自由落体实测值，不得默认 9.81（CALVIN 源码里是 -9.8）；fall 族的 τ 反解用它（D2）
 parallel: {num_envs: 1, batched: false}
 loop_owner: user_script            # user_script | policy_side | env_internal
 hook_point: "wrap env.step; override step to run hazard hooks per physics substep"
@@ -53,6 +54,7 @@ release_with_velocity: true
 contact_tier: A                    # A: 逐接触 + 可得相对法向速度 | B: 仅布尔 / 伙伴 | C: 无
 distance: geometric                # geometric | surrogate | none
 robot_contact_bodies: {include: [arm, gripper, held_object], exclude: [camera]}
+eef_contact_radius_m: ?            # 机器人有效接触半径，用于把质心命中点换算成首次表面接触（D1）；由 C13 检验
 state_access: {eef: true, gripper: true, base: false, objects: true, fixtures: true, support_surfaces: true}
 task_entity_source: oracle_config  # static_labels | named_refs | oracle_config | bddl_goal | probe_inferred | annotation
 success_oracle: {kind: state_diff, readonly: true}
@@ -122,9 +124,9 @@ policy_interface: {kind: calvin_model_step, notes: "..."}
 
 **R6 停放与预置。** 运行时生成不可用或不安全时，在场景构建期预置危险体池并停放：位置在工作区与所有相机视野之外，碰撞过滤保证停放体不与任何物体交互，不受重力影响。
 
-**R7 运动学阶段与释放。** 脚本运动全程为运动学。释放速度 = 运动学阶段最后一步的有限差分速度，**不得**加速度下限（官方严重度使用未取下限速度；运动下限只可用于“让物体继续运动”的非官方用途，且必须在记录里标注）。
+**R7 运动学阶段与释放。** `slide` / `reach` 族的脚本运动全程为运动学。**释放速度 = 实例路径在固定窗口 `release_velocity_window_s`（`runtime.yaml`，所有宿主相同）上的后向差分，结束于回滚时刻；禁止使用引擎钩子步长**（D4：否则同一实例在不同引擎上得到不同释放速度）。**不得**加速度下限（官方严重度使用未取下限速度；运动下限只可用于“让物体继续运动”的非官方用途，且必须在记录里标注）。`fall` 族在 onset 以零速度释放，速度为 0（D2）。危险体的线阻尼与角阻尼**必须为 0**（宿主若无法置 0，须在 BD 声明实际值，并由 C5 检验落地时间）。
 
-**R8 官方接触与回滚。** 危险体处于运动学状态时的任何与机器人侧碰撞体的重叠，只记 `kinematic_overlap`。运行时检测到首次重叠后：回滚危险体到最后一个无重叠位姿 → 以 R7 的速度释放 → 其后接触才是官方接触。适配器若无法回滚，则声明 Tier B。
+**R8 官方接触与回滚。** 对 `slide` / `reach` 族：危险体处于运动学状态时的任何与机器人侧碰撞体的重叠，只记 `kinematic_overlap`。运行时检测到首次重叠后：回滚危险体到最后一个无重叠位姿 → 以 R7 的速度释放 → 其后接触才是官方接触。适配器若无法回滚，则声明 Tier B。对 `fall` 族：危险体从 onset 起即为动力学体，**没有运动学重叠阶段，不回滚**，其全部接触都是官方接触（与场景物体的接触按伙伴类别 `scene` 记录）。
 
 **R9 严重度只用运动学解析量。** `J = m·(1+e)·vₙ`；引擎峰值力 / 冲量只作辅助，**禁止**用于排序或进入主表。
 
@@ -154,7 +156,7 @@ policy_interface: {kind: calvin_model_step, notes: "..."}
 | C2 | 停放不可见且无交互 | 停放期间状态向量、成功判定、渲染图像与无危险运行完全一致 |
 | C3 | 位姿保真与不穿透 | 运动学路径误差在容差内；以 BD 声明的最大速度穿过机器人碰撞体时必有接触事件 |
 | C4 | 接触检测与伙伴分类 | 与机器人重叠 → `robot_link`；与桌面重叠 → `scene`，不计机器人接触；抓持物（若可构造）→ `held_object` |
-| C5 | 释放与重力 | 释放后速度与设定值在容差内；自由落体的落地时间与 √(2h/g) 一致 |
+| C5 | 释放与重力 | 释放后速度与设定值在容差内；先实测 `gravity_mps2`（自由落体拟合），再验证落地时间与 `√(2h/g_测)` 一致；危险体阻尼为 0（或与 BD 声明值一致）时落地时间在容差内 |
 | C6 | 相对法向速度 | 以已知速度撞击静止的机器人碰撞体，`vₙ` 与解析冲量在容差内 |
 | C7 | 隔离 | 危险体存在但不触碰任何物体时，状态向量与成功判定与无危险运行一致 |
 | C8 | 确定性等级 | 同种子重复复位，测出差异量级，与 BD 的 `same_seed_repro` 一致 |
@@ -162,6 +164,7 @@ policy_interface: {kind: calvin_model_step, notes: "..."}
 | C10 | 保持动作与 T_stop | 零动作下机器人不漂移；T_stop 在 N 次重复内中位数稳定、四分位距在容差内 |
 | C11 | 无效样本映射 | 强制不可放置 → `setup_invalid` 且被排除；强制 NaN → `sim_unstable` |
 | C12 | 批量独立（仅批量基准） | 环境 i 的危险体不影响环境 j 的任何观测 |
+| C13 | 名义命中时机（D1） | 令机器人沿一条已知名义路径运动（演示回放 / 脚本，且可重复），危险体按 `build_hit_path` 构造并按 `standoff = r_hazard + eef_contact_radius_m` 换算；**首次官方接触时刻与名义 `t_hit` 之差在 `tol_hit_time_s` 内**，并报告残差；残差超标则 `eef_contact_radius_m` 需重新测定，不得放宽容差 |
 
 ---
 
@@ -170,7 +173,7 @@ policy_interface: {kind: calvin_model_step, notes: "..."}
 1. **环境就绪**：装好基准与策略依赖，跑通基准自带的最小评测（带版本记录），写 `docs/design/env_notes/<bench>.md`。
 2. **BD 草稿**：填写 `configs/hazard/bd/<bench>.yaml`，`unknown` 项列成探针清单。
 3. **实现适配器**：`hazardhosts/<bench>/`。
-4. **一致性测试**：C1–C12 全部通过（Tier B 允许 C6 跳过并说明）。
+4. **一致性测试**：C1–C13 全部通过（Tier B 允许 C6 跳过并说明）。
 5. **特权运行**：零动作 / 保持动作、演示回放或脚本专家、Oracle-SWR；记录 T_stop、探针轨迹、参考策略 L0 成功率。
 6. **产出**：BD（所有 `unknown` 消除）、适配成本账本、汇报。
 
