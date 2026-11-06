@@ -1,9 +1,9 @@
 # hazardlib
 
 Simulator-agnostic core of the Hazard-as-Spec paradigm
-(`docs/design/00_paradigm.md`, `01_integration_rules.md`). **T01 scope: data
-structures and interfaces only**: no kinematics, safety semantics, runtime,
-probes, gates or conformance tests yet (tasks T02–T06).
+(`docs/design/00_paradigm.md`, `01_integration_rules.md`). Implemented so far: data
+structures and interfaces (T01) and the seconds-based kinematics and calibration math
+(T02). Not yet: safety semantics, runtime, probes, gates, conformance tests (T03–T06).
 
 ## Layout
 
@@ -15,6 +15,9 @@ hazardlib/
                                  Pose, RobotState, ContactObs, TimeState, Surface, HazardHandle, Action
     spec/                        HazardSpec, BenchmarkDescriptor, TaskContext, HazardInstance,
                                  Certificate, Manifest (+ PoseSequence)   to_dict / from_dict / validate
+    kinematics/                  Path / SampledPath, min_jerk, free-fall conversions, straight/arc/reach
+                                 paths, build_hit_path (nominal collision by construction), subdivide
+    calibrate/                   estimate_t_stop, aggregate_t_stop, margin_sigma, staircase_update
     hashing.py                   canonical JSON -> sha256 (format rules in the module docstring)
     config.py                    YAML loading for configs/hazard/ with strict mode
     _records.py                  internal dataclass <-> dict machinery
@@ -48,7 +51,16 @@ the working directory; set `HAZARDLIB_CONFIG_DIR` to point elsewhere.
 ## Conventions worth knowing
 
 * **No numbers in code.** Thresholds and defaults live in `configs/hazard/*.yaml`. The T01 YAML files
-  are structure with `PLACEHOLDER` leaves; a value is only real once someone replaces it.
+  are structure with `PLACEHOLDER` leaves; a value is only real once someone replaces it. Numeric
+  functions (kinematics, calibrate) take every number as an explicit argument; none has a default.
+* **Paths clamp.** `Path.pos(t)` holds the end points outside the span and `vel(t)` is zero outside it.
+* **Hit construction (decisions D1, D2, D4, D6 in `docs/design/00_paradigm.md` §13).** tau and `t_hit`
+  follow the *first surface contact*; `build_hit_path` works on centroids, so the caller passes
+  `hit_point = contact_point + standoff * n_hat` with `standoff = r_hazard + r_eef_contact` and records
+  `standoff_m`. The slide/reach release velocity is the backward difference over the fixed
+  `release_window_s` (YAML `release_velocity_window_s`), never the engine hook step. `fall` is released at
+  rest at the onset with the host's measured gravity. A `min_jerk` reach with `overshoot_m = 0` ends at rest
+  and must not carry severity. Details: the `kinematics/hit.py` docstring.
 * **`unknown` and `PLACEHOLDER` are not values.** `load_*(..., strict=True)` refuses any file containing
   either and lists every path. `strict=False` loads them so drafts can be reviewed.
 * **`BenchmarkDescriptor.tier()` never guesses.** If the Tier depends on an `unknown` field it raises
