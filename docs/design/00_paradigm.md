@@ -63,7 +63,7 @@
 | 族 | 现实对应 | 强度向量（主轴加粗） | 与旧 L 级对应 |
 |---|---|---|---|
 | `intrusion.fall` | 物体意外落入工作区 | **τ**、质量、落点 | L1 |
-| `intrusion.slide` | 物体滑 / 滚入工作区 | **τ**、逼近速度 v、预兆提前量 | L2 |
+| `intrusion.slide` | 物体滑 / 滚入工作区 | **τ**、逼近速度 v（可见提前量 τ_vis 只作诊断，见 §5.1） | L2 |
 | `intrusion.reach` | 人的肢体伸入工作区 | **τ**、逼近速度 v、肢体尺寸 | L3 |
 | `occupancy.dwell` | 肢体 / 物体进入并占位 | **驻留时长**、被堵净空 | 无（准静态夹持风险） |
 | `occlusion.cover`（可选，二期） | 物体遮挡相机视线 | **遮挡比例 φ**、持续时间 | 无 |
@@ -77,10 +77,14 @@
 ### 5.1 τ 的定义（名义可用反应时间）
 
 τ_nom ≔ t_hit − t_onset，其中
-- **t_hit**：名义（参考）EEF 轨迹与危险体首次接触的时刻；
-- **t_onset**：危险体开始朝名义路径运动、且进入相机视野（或开始可见）的时刻。
+- **t_hit**：名义（参考）EEF 轨迹与危险体**首次表面接触**的时刻。**[决定 D1]** 以首次表面接触为准，**不是**质心重合时刻：质心重合会让实际接触早于 t_hit 约 `(危险体半径 + 机器人有效接触半径) / 相对逼近速度`，在 τ ≈ 0.3–1 s 的量级上这个偏差可达 τ 的 6%–100%（举例：余量 0.09 m、相对速度 0.7 m/s 时早 0.13 s），并且会随危险体大小变化，破坏 τ 作为强度轴的意义；
+- **t_onset**：危险体**开始运动**的时刻。**[决定 D5]** 不要求此时危险体已进入相机视野。
 
 这是**与被测策略无关**的量。每个策略自己的实际最近接近、实际接触前剩余时间只作诊断，记在 `HazardEventLog`。
+
+**可见提前量 τ_vis ≔ t_hit − t_first_visible**（`t_first_visible` 为危险体首次出现在任一策略相机中的时刻）是**诊断量**，在 G0 里记录、随实例保存。对视觉策略，τ_vis 才是真正可用的反应时间；τ_vis ≪ τ 的实例要在报告里单独标出。阈值待试点后预注册，目前只记录、不过滤。
+
+**质心 → 接触的换算（实现约定）。** 运动学代码（`kinematics/hit.py`）以**质心**命中点为输入。调用方（T06）负责换算：`hit_point = contact_point + standoff · n̂`，其中 `standoff = r_hazard(n̂) + r_eef_contact`；`r_hazard(n̂)` 为危险体沿逼近方向的支撑半径，`r_eef_contact` 为 BD 声明的机器人有效接触半径（`eef_contact_radius_m`，各宿主实测）。`standoff_m` 必须写入实例的 `provenance`。该换算的正确性由一致性测试 C13 在每个宿主上检验。
 
 ### 5.2 “名义必碰”构造（nominal-collision-by-construction）
 
@@ -90,6 +94,17 @@
 3. 令 `t_onset = t* − τ`。
 
 意义：每个实例天然是「必须反应才能避免」的，可解性证书的含义因此明确（见 §8）。被测策略若根本没去 `p*` 附近，记为 `exposure_low`，在报告里单独汇报，不计入主分母。
+
+**各族的释放方式 [决定 D2、D4]。**
+
+| 族 | 运动与释放 | 释放速度 |
+|---|---|---|
+| `intrusion.fall` | 在 onset 把危险体摆到释放高度并**以零速度释放**，其后完全由引擎重力接管；该体从 onset 起即为动力学体，因此**没有运动学重叠阶段、不适用 R8 的回滚**，其接触从一开始就是官方接触 | 0 |
+| `intrusion.slide` / `intrusion.reach` | 运动学推进；R8 回滚后释放 | 实例路径在**固定窗口** `release_velocity_window_s` 上的后向差分，结束于回滚时刻（见 R7）；与引擎钩子步长无关 |
+
+fall 族依赖引擎的真实重力：求解器必须使用宿主**实测**的重力加速度 `gravity_mps2`（BD 字段），不得默认 9.81——例如 CALVIN 的 `load()` 里把重力设为 −9.8（`calvin_env/envs/play_table_env.py:133`），与其他基准不同；危险体的线 / 角阻尼必须为 0（PyBullet 默认非零，**[待探针]**）。落地时间与 `√(2h/g)` 的一致性由 C5 检验。
+
+**运动原语的取值集合。** `reach` 的 `speed_profile ∈ {min_jerk, linear}`；`slide` 为匀速。带严重度的 `reach` 实例必须 `overshoot_m > 0`（`overshoot_m = 0` 的 min-jerk 末端速度为 0，是准静态占位而非冲击，应归入 `occupancy.dwell`）。
 
 ### 5.3 时机模式
 
@@ -174,3 +189,18 @@
 - **保留不动（回归基线）：** `src/dynisafety/` 下四个后端与现有 L1–L3 手工设计，用作人工对照与回归；本设计不修改其行为。
 - **复用：** `core/contact.py`、`core/newton_force.py`、`backends/_engine/{mujoco,sapien}_contact.py`、Oracle / AEGIS、诊断 trace、`config_hash`、传输层（`policies/transports`）。
 - **新增（独立包，numpy + pyyaml，Python ≥3.8）：** `hazardlib/`（核心）与 `hazardhosts/`（适配器），配置在 `configs/hazard/`。Python 3.8 是为了能装进 CALVIN 的官方环境。
+
+---
+
+## 13. 决定记录（Decision log）
+
+只记录**已定**的设计决定及其依据，便于任务会话与审稿对照。修订请在此追加，不要改写历史条目。
+
+| 编号 | 日期 | 决定 | 依据 |
+|---|---|---|---|
+| D1 | 2026-11-06 | `t_hit` = 名义 EEF 与危险体的**首次表面接触**；运动学代码以质心为输入，调用方换算 `standoff`，并用新增的一致性测试 C13 在每个宿主上检验 | T02 汇报指出 §5.1 与 §5.2 不一致；独立估算显示接触余量在 τ=0.3–1 s 时占 τ 的 6%–100%（举例数值，非实测） |
+| D2 | 2026-11-06 | `fall` 族在 onset 零速释放、由引擎重力接管；求解器用宿主实测的 `gravity_mps2`；危险体阻尼为 0 | 落地时间由真实重力决定更贴近“物体坠落”现象，且 C5 已要求检验；CALVIN 重力为 −9.8，说明 g 不能默认 |
+| D3 | 2026-11-06 | 新增 YAML 键：`intensity.yaml` 的 `calibration`（T_stop 连续样本数、重复次数、阶梯法步长与范围）；新建 `runtime.yaml`（R1 位移比例 0.5 为已定值，`release_velocity_window_s`、`keyframe_dt_s`、`keyframe_interp_tol_m` 为 PLACEHOLDER） | T02 汇报列出的缺口；数值不凭空编造，试点后预注册 |
+| D4 | 2026-11-06 | 释放速度 = 实例路径在固定窗口 `release_velocity_window_s` 上的后向差分，**不用**引擎钩子步长 | 钩子步长依赖会让同一实例在不同引擎上得到不同释放速度（T02 实测 reach 的 `overshoot_m=0` 情形下 3.9e-3 / 6.3e-4 / 4.0e-5 m/s 随钩子步长变化） |
+| D5 | 2026-11-06 | `t_onset` = 危险体开始运动的时刻，不要求已可见；`τ_vis` 作为诊断量记录 | 避免 τ 依赖相机几何；视觉策略真正可用的反应时间用 `τ_vis` 单独报告 |
+| D6 | 2026-11-06 | 带严重度的 `reach` 实例必须 `overshoot_m > 0`；`speed_profile ∈ {min_jerk, linear}`；T_stop 有删失（未停下）时标记为下界，不得直接用于 Σ | T02 汇报的限制与偏离项 |

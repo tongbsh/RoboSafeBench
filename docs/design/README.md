@@ -3,7 +3,7 @@
 | 文件 | 内容 |
 |---|---|
 | `00_paradigm.md` | 范式：主张、对象、流水线、危险族、实例化规则、统一安全语义、校准、证书、方法学纪律 |
-| `01_integration_rules.md` | 通用接入规则：目录、BD 字段、`HazardHost` 契约、规则 R0–R16、一致性测试 C1–C12、适配器验收流程 |
+| `01_integration_rules.md` | 通用接入规则：目录、BD 字段、`HazardHost` 契约、规则 R0–R16、一致性测试 C1–C13、适配器验收流程 |
 | `02_benchmark_profiles.md` | 六个基准（LIBERO、SimplerEnv、RoboTwin、RoboCasa365、RoboDojo、CALVIN）各自怎么接 |
 | `03_work_plan.md` | 任务切分、依赖、分支与合并、汇报协议、服务器环境矩阵、进入实验阶段的门槛 |
 | `prompts/` | 喂给服务器上 Claude Code 新会话的任务文件 |
@@ -18,6 +18,7 @@
 |---|---|---|---|
 | T01 核心接口 | `prompts/T01_core_spec.md` | `claude/sweet-newton-2clmpw` | — |
 | T02 运动学 | `prompts/T02_kinematics.md` | `hazard/integration` | — |
+| T02-F T02 收尾（合并前） | `prompts/T02_followup.md` | `hazard/T02`（同一分支继续） | — |
 | T03 安全语义 | `prompts/T03_semantics.md` | `hazard/integration` | — |
 | T04 运行时与 FakeHost | `prompts/T04_runtime_fakehost.md` | `hazard/integration` | — |
 | T05 一致性套件 | `prompts/T05_conformance.md` | `hazard/integration` | — |
