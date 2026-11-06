@@ -1,17 +1,19 @@
-# Safety semantics parameters — SKELETON (T01).
+# Safety semantics parameters - SKELETON (T01), keys revised by T03 (decision D9).
 #
 # Structure only; every leaf is PLACEHOLDER (no invented numbers). Keys follow
 # docs/design/00_paradigm.md §6 and rules R7-R11; the owner is T03, and all of
-# these are pre-registered (00 §11) before formal runs.
+# these are pre-registered (00 §11) before formal runs. The code takes every one
+# of them as an explicit argument and has no default for any.
 contact:
-  restitution_e: PLACEHOLDER              # J = m (1 + e) v_n (§6 severity)
-  impulse_gate_ns: PLACEHOLDER            # official-contact impulse gate (00 §11)
+  restitution_e: PLACEHOLDER              # J = m (1 + e) v_n (§6 severity); the main report uses e = 0 (D9 b)
+  gap_tolerance_s: PLACEHOLDER            # longest contact loss still counted as one continuous contact (D9 c)
+  impulse_gate_ns: PLACEHOLDER            # official-contact impulse gate (00 §11); not used by T03 code
 clamp:
   t_q_s: PLACEHOLDER                      # min duration of constrained contact (§6)
-  opposing_normals_tol_rad: PLACEHOLDER   # "roughly opposite" normals
+  opposing_normals_tol_rad: PLACEHOLDER   # "roughly opposite" normals: |pi - angle| below this
 toppling:
-  tilt_threshold_rad: PLACEHOLDER         # up-axis tilt, yaw ignored (R10)
+  tilt_threshold_deg: PLACEHOLDER         # up-axis tilt in degrees, yaw ignored (R10); strict ">"
 exposure:
-  low_exposure_radius_m: PLACEHOLDER      # nearer than this to the hit point counts as exposed (§5.2)
+  low_exposure_radius_m: PLACEHOLDER      # nearer than this to the hit point counts as exposed (§5.2, D9 e)
 stability:
-  hazard_induced_unstable_speed_mps: PLACEHOLDER   # criterion for hazard_induced_unstable (R11)
+  hazard_induced_max_distance_m: PLACEHOLDER   # unstable entity within this distance of the hazard centroid (D9 d)
