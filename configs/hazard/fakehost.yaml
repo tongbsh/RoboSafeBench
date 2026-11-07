@@ -1,0 +1,69 @@
+# FakeHost conformance world (T05): the scene of `python -m hazardlib.conformance --host fake`
+# and of hazardlib/tests/test_mutants.py. Test data, not defaults: it defines the analytic world on
+# which the tolerances of conformance.yaml were derived (see the comments there and report T05).
+#
+# Geometry (metres, world frame, z up): table plane at z = 0; the end effector rests at
+# (0, 0, 0.3) carrying a hand sphere, an arm link, a camera body (excluded from the robot side)
+# and a held two-sphere mug under the hand. The parking pose is inside the top-down camera
+# footprint and below the table plane on purpose: a parked hazard that is not filtered both
+# renders and collides there (worst case for C2 / C9). Every probe path below was checked to
+# touch nothing but its intended partner (clearances >= 1 cm).
+adapter_version: "fakehost-builtin-1"
+world:
+  num_envs: 2
+  physics_dt_s: 0.002
+  substeps_per_action: 5
+  gravity_mps2: 9.81
+  restitution: 0.5
+  table_height_m: 0.0
+  table_min_xy_m: [-1.0, -1.0]
+  table_max_xy_m: [1.0, 1.0]
+  park_pos_m: [0.3, -0.45, -0.5]
+  robot_bodies:
+    - {name: robot0_hand, center_m: [0.0, 0.0, 0.0], radius_m: 0.03}
+    - {name: robot0_link, center_m: [0.0, -0.15, 0.1], radius_m: 0.03}
+    - {name: robot0_camera, center_m: [0.0, 0.15, 0.1], radius_m: 0.02}
+  held_object: mug
+  held_bodies:
+    - {name: mug_body, center_m: [0.0, 0.0, -0.06], radius_m: 0.025}
+    - {name: mug_handle, center_m: [0.04, 0.0, -0.06], radius_m: 0.01}
+  report_held_object_bodies: true
+  robot_include: ["prefix:robot0_", "held_object"]
+  robot_exclude: ["substr:camera"]
+  eef_contact_radius_m: 0.03
+  image_px: 64
+  image_min_xy_m: [-0.6, -0.6]
+  image_max_xy_m: [0.6, 0.6]
+  max_contacts_per_step: 8
+  tasks:
+    # the robot holds still at the start pose; the oracle (EEF within 1 cm of the goal) is true at rest
+    still:
+      path_times_s: [0.0, 30.0]
+      path_pos_m: [[0.0, 0.0, 0.3], [0.0, 0.0, 0.3]]
+      goal_pos_m: [0.0, 0.0, 0.3]
+      success_radius_m: 0.01
+      layouts:
+        cup:
+          - {name: cup, center_m: [0.25, -0.25, 0.05], radius_m: 0.05, on_hit_rotation_wxyz: null}
+    # still until 0.2 s, then 0.5 m/s along +x until 1.0 s, then still at the goal
+    motion:
+      path_times_s: [0.0, 0.2, 1.0, 30.0]
+      path_pos_m: [[0.0, 0.0, 0.3], [0.0, 0.0, 0.3], [0.4, 0.0, 0.3], [0.4, 0.0, 0.3]]
+      goal_pos_m: [0.4, 0.0, 0.3]
+      success_radius_m: 0.01
+      layouts:
+        empty: []
+scenario:
+  still: {task_id: still, layout_id: cup, seed: 0}
+  motion: {task_id: motion, layout_id: empty, seed: 0}
+  probe_agent: {kind: probe, shape: sphere, half_extents_m: [0.02], mass_kg: 0.05}
+  free_point_m: [0.2, 0.2, 0.15]
+  free_direction: [1.0, 0.0, 0.0]
+  strike: {body: robot0_hand, direction: [-1.0, 0.0, 0.0], radius_m: 0.03}
+  held_strike: {body: mug_body, direction: [0.0, 1.0, 0.0], radius_m: 0.025}
+  drop_point_m: [-0.2, 0.2, 0.2]
+  drop_surface_height_m: 0.0
+  motion_hit_time_s: 0.6
+  motion_hit_direction: [0.0, -1.0, 0.0]
+  motion_hold_time_s: 0.6
+  motion_duration_s: 1.2

@@ -13,6 +13,9 @@ FORBIDDEN_IMPORTS = {"torch", "scipy", "mujoco", "pybullet", "sapien", "robosuit
                      "hazardhosts", "typing_extensions"}
 FORBIDDEN_PREFIXES = ("isaac",)
 BENCH_PACKAGES = ["libero", "simplerenv", "robotwin", "robocasa", "robodojo", "calvin"]
+# The pytest plugin of the conformance suite (T05) is the only core file that may import pytest; the suite
+# itself (python -m hazardlib.conformance) runs without it.
+PYTEST_PLUGIN = CORE / "conformance" / "conftest.py"
 # Builtins that are only subscriptable at runtime from Python 3.9.
 GENERIC_BUILTINS = {"list", "dict", "tuple", "set", "frozenset", "type"}
 # Frozen copy of sys.stdlib_module_names from CPython 3.11.18 (305 names); Python 3.8 has no such attribute.
@@ -86,8 +89,15 @@ def test_core_dependencies_are_stdlib_numpy_yaml_or_itself_only():
     stdlib = set(getattr(sys, "stdlib_module_names", ())) or STDLIB_MODULE_NAMES_PY311
     allowed = stdlib | {"numpy", "yaml", "hazardlib"}
     for path in _sources(CORE):
+        extra = {"pytest"} if path == PYTEST_PLUGIN else set()
         for module in _imports(_parse(path)):
-            assert module.split(".")[0] in allowed, "%s imports %s" % (path.name, module)
+            assert module.split(".")[0] in allowed | extra, "%s imports %s" % (path.name, module)
+
+
+def test_only_the_conformance_pytest_plugin_imports_pytest():
+    importers = [path for path in _sources(CORE)
+                 if any(module.split(".")[0] == "pytest" for module in _imports(_parse(path)))]
+    assert importers == [PYTEST_PLUGIN]
 
 
 @pytest.mark.skipif(not hasattr(sys, "stdlib_module_names"), reason="sys.stdlib_module_names needs 3.10+")
