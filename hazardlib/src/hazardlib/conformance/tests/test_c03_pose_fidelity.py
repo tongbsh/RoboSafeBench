@@ -4,11 +4,11 @@
   (01 §3.1: a teleport leaves no residual velocity; §3.3 item 15: wxyz quaternions).
 * A kinematic intrusion into a robot body is reported in the step of the first overlapping pose (§3.3 item 7);
   the runtime's rollback pose reads back as commanded and is free of overlap (R8).
-* A hazard crossing a robot body at the fastest speed the BD admits produces a contact event: with
-  ``hazard_ccd: true`` (G0 then admits any speed) it crosses the whole overlap window within a fraction of a
-  physics step, centred between two step ends, so only continuous detection can see it; with ``hazard_ccd:
-  false`` it moves at a fraction of the R1 limit (what G0 admits). The runtime's ``r1_violation_count`` must
-  match the per-step displacement (R1, D11 d).
+* A hazard crossing a robot body produces a contact event. The crossing speed is set by the BD (01 §5, D13 h):
+  with ``hazard_ccd: true`` the hazard crosses the whole overlap window within half a physics step
+  (``ccd_crossing_physics_steps``), centred between two step ends, so only continuous detection can see it;
+  otherwise it moves at half the R1 limit speed (``r1_speed_fraction``). The BD has no maximum-speed field.
+  The runtime's ``r1_violation_count`` must match the per-step displacement (R1, D11 d).
 """
 import math
 
@@ -170,8 +170,8 @@ def run(ctx):
 
 CHECK = Check("C3", "pose fidelity, rollback and no tunnelling",
               "kinematic poses read back as commanded with zero velocity; a kinematic overlap is reported in its own "
-              "step and rolled back to a free pose; crossing a robot body at the fastest admissible speed yields a "
-              "contact event and a consistent r1_violation_count", run)
+              "step and rolled back to a free pose; crossing a robot body (within half a physics step with CCD, at "
+              "half the R1 limit speed without) yields a contact event and a consistent r1_violation_count", run)
 
 
 def test_c03_pose_fidelity(conformance):

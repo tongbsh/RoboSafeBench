@@ -13,7 +13,8 @@ A :class:`ConformanceTarget` bundles
 * optional code hooks: ``nominal_eef_path`` (the motion's known EEF path, when the host has one; otherwise C13
   records it by replay), ``build_hit_instance`` (the instance builder the pipeline uses on this host; C13 runs its
   instances in addition to the suite's own D1 builder) and ``inject_engine_fault`` (forces an engine fault that the
-  host must detect and report through ``report_instability``; C11).
+  host must detect and report through ``report_instability``). C11 needs ``inject_engine_fault``: a target without
+  it fails C11 (01 §5, D13 h).
 
 Adapter packages register a factory at import time: ``register_host("calvin", make_target)``. ``resolve_target``
 imports the modules it is given, then ``hazardhosts.<name>`` if the name is still unknown, and calls the factory.

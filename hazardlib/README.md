@@ -83,7 +83,26 @@ pytest hazardlib/src/hazardlib/conformance/tests --host=fake        # same check
 ```
 
 A host module calls `register_host(name, factory)`; the factory returns a `ConformanceTarget` (the host, its
-scenario geometry, a scripted motion, optionally its instance builder and a fault injector). `--host <name>`
-imports `hazardhosts.<name>` unless `--host-module` names the module. Tolerances and their derivations are in
-`configs/hazard/conformance.yaml`; the built-in host `fake` is FakeHost in the world of
-`configs/hazard/fakehost.yaml`. `tests/test_mutants.py` proves that each FakeHost mutation is caught.
+scenario geometry, a scripted motion, optionally its instance builder, and the fault injector
+`inject_engine_fault` that C11 needs). `--host <name>` imports `hazardhosts.<name>` unless `--host-module` names
+the module. Tolerances and their derivations are in `configs/hazard/conformance.yaml`; the built-in host `fake` is
+FakeHost in the world of `configs/hazard/fakehost.yaml`. `tests/test_mutants.py` proves that each FakeHost mutation
+is caught.
+
+Statuses follow 01 §5: a host lacking a capability a check needs (`CapabilityError`) fails that check; `error` is
+kept for a crash of the suite itself. Check-specific rules from D13 h:
+
+* C3 crosses a robot body within half a physics step when the BD declares `hazard_ccd: true`, otherwise at half
+  the R1 limit speed (the BD has no maximum-speed field).
+* C5 requires zero linear and angular hazard damping; the landing-time tolerance is a number of physics steps of
+  the BD's `physics_dt_s`.
+* C11 forces an engine fault through the adapter's `inject_engine_fault(env, hazard)`; without it C11 fails.
+  FakeHost has no real engine faults, so on FakeHost C11 verifies only the mapping path.
+* C12 runs on every host with `num_envs > 1`.
+* On a host declaring `same_seed_repro: statistical`, C2 / C7 / C12 compare against C8's same-seed bounds, given
+  per observation kind (state vectors; images, every camera on its own). While a bound is PLACEHOLDER the check is
+  `unverified` and the report carries the measured magnitude; the host's H task sets the bound.
+
+The report's `config_source` names the config directory relative to the repository root (`configs/hazard`), or
+`external:<directory name>` outside it, never a machine path; `config_hashes` pins the content. Freezing needs a
+`pass` report run without `probe_runtime` / `probe_calibration` fallbacks (D13 a).
