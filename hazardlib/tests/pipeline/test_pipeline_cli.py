@@ -3,10 +3,13 @@
 record x3 -> probe -> instantiate -> gate -> calibrate -> freeze -> verify, each a separate process exchanging
 YAML / JSONL files, on the braking FakeHost (T_stop = 0.2 s). Run twice: the Manifest hash must be identical.
 The freeze is bound to a real conformance report of the same host class and timebase (``W.conformance_target``,
-same BD hash) and to the calibration of the chain (D13 a, b).
+same BD hash) and to the calibration of the chain (D13 a, b); a report of the same host generated on the
+repository configuration is refused with every problem listed, and verify reports a modified calibration and a
+missing report together.
 """
 import json
 import os
+import shutil
 import subprocess
 import sys
 
@@ -98,6 +101,31 @@ def test_end_to_end_cli_chain_is_deterministic(tmp_path, conformance_reports):
                       "calibration.yaml", "--out-dir", "frozen_repo")
     assert refused.returncode == 2 and "cannot freeze: 5 config file(s) unresolved" in refused.stderr
     assert not (work / "frozen_repo").exists()
+
+    # same host and BD, but generated on the repository configuration: PLACEHOLDER runtime.yaml -> fallbacks
+    W.write_json(work / "repo_conformance.json", W.conformance_report(W.REPO_CONFIG_DIR, decel_mps2=W.DECEL_MPS2))
+    bad = run_cli(work, W.FIXTURE_CONFIG_DIR, "freeze", "--instances", "gated.jsonl", "--task-context",
+                  "tc_pick.yaml", "--specs", "specs.yaml", "--bd", "bd.yaml", "--seed", 0, "--adapter-version",
+                  conformance["adapter_version"], "--conformance", "repo_conformance.json", "--calibration",
+                  "calibration.yaml", "--out-dir", "frozen_bad")
+    print(bad.stderr.splitlines()[0])
+    header, problems = bad.stderr.splitlines()[0], bad.stderr.strip().splitlines()[1:]
+    assert bad.returncode == 2 and "cannot freeze with the conformance report repo_conformance.json" in header
+    assert header.endswith("%d problem(s):" % len(problems)) and "bd_hash" not in bad.stderr
+    for fragment in ("config 'runtime' hash", "runtime_config.restitution_e = ",
+                     "v_threshold_mps comes from conformance.yaml:probe_calibration."):
+        assert sum(fragment in p for p in problems) == 1, bad.stderr
+    assert not (work / "frozen_bad").exists()
+
+    shutil.copytree(str(work / "frozen"), str(work / "frozen_copy"))
+    calibration = yaml.safe_load((work / "frozen_copy" / "calibration.yaml").read_text())
+    calibration["t_stop"]["median_s"] = 0.1
+    (work / "frozen_copy" / "calibration.yaml").write_text(yaml.safe_dump(calibration, sort_keys=False))
+    (work / "frozen_copy" / "conformance_report.json").unlink()
+    broken = run_cli(work, W.FIXTURE_CONFIG_DIR, "verify", "--manifest-dir", "frozen_copy")
+    print(broken.stderr.strip().splitlines()[0])
+    assert broken.returncode == 2 and "2 problem(s)" in broken.stderr
+    assert "conformance_report.json is missing" in broken.stderr and "calibration.yaml was modified" in broken.stderr
 
     lines = (work / "frozen" / "instances.jsonl").read_text().splitlines()
     record = json.loads(lines[0])
