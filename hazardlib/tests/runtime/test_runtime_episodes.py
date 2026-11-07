@@ -301,4 +301,4 @@ def test_kinematic_overlap_events_are_kept():
     host, runtime = W.make(mutations=("bad_standoff",))
     W.run_episode(host, runtime, W.slide_instance(host), 1.0)
     kinds = [e.kind for e in runtime.contact_events(0)]
-    assert kinds[0] is EventKind.KINEMATIC_OVERLAP and EventKind.OFFICIAL in kinds
+    assert kinds[0] is EventKind.KINEMATIC_OVERLAP and EventKind.DYNAMIC in kinds

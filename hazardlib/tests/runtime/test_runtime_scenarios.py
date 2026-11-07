@@ -11,13 +11,13 @@ from hazardlib.host import PartnerClass
 from hazardlib.runtime import R1ViolationWarning
 from hazardlib.semantics import EventKind
 
-HIT_TOL = W.TOL["c13.hit_time_abs_tol_s"]
+HIT_TOL = W.TOL["c13_nominal_hit.hit_time_abs_tol_s"]
 VN_TOL = W.TOL["c6_relative_velocity.normal_speed_rel_tol"]
 FALL_TOL = W.TOL["c5_release_gravity.free_fall_time_rel_tol"]
 
 
-def _official(runtime, env=0):
-    return [e for e in runtime.contact_events(env) if e.kind is EventKind.OFFICIAL]
+def _dynamic(runtime, env=0):
+    return [e for e in runtime.contact_events(env) if e.kind is EventKind.DYNAMIC]
 
 
 # ------------------------------------------------------------------------------------- nominal hit (C13)
@@ -31,7 +31,7 @@ def test_nominal_instance_hits_at_the_nominal_time(family):
     assert abs(log.first_official_contact_t_s - inst.nominal_hit_time_s) < HIT_TOL
     assert log.partner_class is PartnerClass.ROBOT_LINK
     assert log.kinematic_overlap_count == 0
-    first = [e for e in _official(runtime) if e.partner_class is PartnerClass.ROBOT_LINK][0]
+    first = [e for e in _dynamic(runtime) if e.partner_class is PartnerClass.ROBOT_LINK][0]
     assert first.partner_name == "robot0_hand"
 
 
@@ -194,7 +194,7 @@ def test_vn_is_none_without_body_velocities():
     log = W.run_episode(host, runtime, W.slide_instance(host), 1.0)
     assert log.first_official_contact_t_s is not None
     assert log.v_rel_normal_mps is None and log.impulse_analytic_ns is None
-    event = [e for e in _official(runtime) if e.partner_class is PartnerClass.ROBOT_LINK][0]
+    event = [e for e in _dynamic(runtime) if e.partner_class is PartnerClass.ROBOT_LINK][0]
     assert event.v_normal_mps is None
 
 
@@ -206,7 +206,7 @@ def test_table_bounce_then_robot():
     log = W.run_episode(host, runtime, inst, 1.0, task="sweep_in")
     assert abs(log.first_scene_contact_t_s - 0.5) < HIT_TOL
     assert log.first_official_contact_t_s > log.first_scene_contact_t_s
-    robot = [e for e in _official(runtime) if e.partner_class is PartnerClass.ROBOT_LINK]
+    robot = [e for e in _dynamic(runtime) if e.partner_class is PartnerClass.ROBOT_LINK]
     assert robot[0].partner_name == "robot0_hand"
     assert robot[0].time_s == log.first_official_contact_t_s
     assert log.partner_class is PartnerClass.ROBOT_LINK and log.v_rel_normal_mps > 0
@@ -216,7 +216,7 @@ def test_table_only_contact_has_no_official_contact():
     host, runtime = W.make()
     log = W.run_episode(host, runtime, W.fall_onto(W.table_height_centroid(0.1)), 1.0, task="static")
     assert abs(log.first_scene_contact_t_s - 0.5) < HIT_TOL
-    scene = [e for e in _official(runtime) if e.partner_class is PartnerClass.SCENE]
+    scene = [e for e in _dynamic(runtime) if e.partner_class is PartnerClass.SCENE]
     assert scene and all(e.partner_name == "table" for e in scene)
     for field in ("first_official_contact_t_s", "partner_class", "v_rel_normal_mps", "impulse_analytic_ns",
                   "contact_duration_s", "constraint_state"):
@@ -229,7 +229,7 @@ def test_excluded_robot_body_counts_as_scene():
     inst = W.fall_onto(camera + np.array([0.0, 0.0, 0.02 + W.HAZARD_R]))
     log = W.run_episode(host, runtime, inst, 1.0)
     assert abs(log.first_scene_contact_t_s - 0.5) < HIT_TOL
-    assert [e.partner_name for e in _official(runtime)][0] == "robot0_camera"
+    assert [e.partner_name for e in _dynamic(runtime)][0] == "robot0_camera"
     assert log.first_official_contact_t_s is None
 
 
@@ -244,7 +244,7 @@ def test_multi_body_held_object_needs_held_object_bodies():
         plan = W.build_hit_path("intrusion.slide", nominal, 0.5, point, 0.3, params)
         inst = W.instance_from_plan(plan, "tray_hit", "slide_spec", W.sphere_agent())
         log = W.run_episode(host, runtime, inst, 1.0)
-        first = _official(runtime)[0]
+        first = _dynamic(runtime)[0]
         assert first.partner_name == "tray_a" and first.partner_class is expected
         if expected is PartnerClass.HELD_OBJECT:
             assert log.partner_class is PartnerClass.HELD_OBJECT

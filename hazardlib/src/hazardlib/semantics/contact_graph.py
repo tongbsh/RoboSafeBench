@@ -2,7 +2,8 @@
 
 Input is a time-ordered list of :class:`ContactStep` (one per hook step, **including steps with an empty
 contact list** - only a recorded empty step proves that contact was lost). The contacts are assumed to be
-official already (the runtime drops kinematic overlaps, R8). Normals point from the partner toward the hazard.
+post-release (``dynamic``) contacts already (the runtime drops kinematic overlaps, R8). Normals point from the
+partner toward the hazard.
 
 Definitions used here:
 

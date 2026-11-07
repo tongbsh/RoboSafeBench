@@ -1,7 +1,7 @@
 # Conformance-suite tolerances — SKELETON (T01).
 #
 # Structure only; every leaf is PLACEHOLDER (no invented numbers). One block per
-# check C1-C12 of docs/design/01_integration_rules.md §5; owner is T05. These
+# check C1-C13 of docs/design/01_integration_rules.md §5; owner is T05. These
 # values must never be loosened just to make a test pass; any change has to be
 # justified in the task report.
 c1_timebase:
@@ -35,3 +35,7 @@ c10_hold_t_stop:
   t_stop_iqr_s_tol: PLACEHOLDER
 c12_batch_independence:
   observation_abs_tol: PLACEHOLDER
+# tol_hit_time_s of C13. Must cover at least one physics step: the nominal
+# release fires one step early (D12 b), so a reach's first contact is off by O(dt).
+c13_nominal_hit:
+  hit_time_abs_tol_s: PLACEHOLDER

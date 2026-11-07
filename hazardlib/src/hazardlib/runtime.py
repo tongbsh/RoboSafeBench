@@ -38,7 +38,7 @@ Families (D11 b, dispatched on ``instance.family`` only):
 Contacts. The runtime re-classifies every contact with ``classify_partner`` and the BD's
 ``robot_contact_bodies`` (held-object names from ``RobotState.held_object_bodies``, else
 ``[held_object]``); a partner the host reports as ``hazard`` stays ``hazard``. After release, every contact
-becomes an ``official`` event; the official-contact quantities use robot-side partners only and
+becomes a ``dynamic`` event; the official-contact quantities use robot-side partners only and
 ``first_scene_contact_t_s`` records the first ``scene`` contact (D10 a). Every post-release hook, including
 those without contacts, is handed to ``summarize_contacts``. ``v_rel_normal_mps`` uses the snapshot of the
 previous hook (D10 c): the hazard's centre-of-mass velocity and the contacted collision body's velocity,
@@ -474,7 +474,7 @@ class HazardRuntime:
                     ep.impulse = analytic_impulse_ns(ep.instance.agent.mass_kg, v_normal, self.cfg.restitution_e)
             elif obs.partner_class is PartnerClass.SCENE and ep.first_scene_t is None:
                 ep.first_scene_t = obs.time_s
-            ep.events.append(ContactEvent.from_obs(obs, EventKind.OFFICIAL, v_normal))
+            ep.events.append(ContactEvent.from_obs(obs, EventKind.DYNAMIC, v_normal))
         ep.snapshot = (hazard, robot)
 
     def end_episode(self, env: int) -> HazardEventLog:

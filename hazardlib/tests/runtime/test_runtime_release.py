@@ -48,9 +48,9 @@ def test_overlap_is_recorded_and_rolled_back(family):
     assert release["kind"] == "rollback" and release["rollback_t_s"] == pytest.approx(0.4)
     expected = _path(inst).finite_difference_velocity(release["rollback_t_s"], W.WINDOW_S)
     np.testing.assert_allclose(release["readback_lin_vel_mps"], expected, rtol=0, atol=VEL_TOL)
-    official = [e for e in events if e.kind is EventKind.OFFICIAL]
-    assert official[0].time_s > overlaps[-1].time_s - 1e-12
-    assert log.first_official_contact_t_s == official[0].time_s
+    dynamic = [e for e in events if e.kind is EventKind.DYNAMIC]
+    assert dynamic[0].time_s > overlaps[-1].time_s - 1e-12
+    assert log.first_official_contact_t_s == dynamic[0].time_s
     assert log.released_t_s == pytest.approx(overlaps[0].time_s)
 
 
@@ -120,7 +120,7 @@ def test_no_room_for_the_release_window_is_setup_invalid():
     info = runtime.episode_info(0)
     assert info["setup_failed"] and "release window" in info["setup_reason"]
     assert log.invalid_class is InvalidClass.SETUP_INVALID and log.released_t_s is None
-    parked_after = [e for e in runtime.contact_events(0) if e.kind is EventKind.OFFICIAL]
+    parked_after = [e for e in runtime.contact_events(0) if e.kind is EventKind.DYNAMIC]
     assert parked_after == []
 
 

@@ -28,9 +28,10 @@ _MATCHERS = {
 
 
 class EventKind(str, enum.Enum):
-    """``official``: a contact after the hazard became dynamic. ``kinematic_overlap``: an overlap of a
-    kinematically driven hazard with the robot side, which is never an official contact (R8)."""
-    OFFICIAL = "official"
+    """``dynamic``: any contact after the hazard became dynamic, scene partners included; an *official
+    contact* (D10 a) is a ``dynamic`` event with a robot-side partner (D12 f). ``kinematic_overlap``: an
+    overlap of a kinematically driven hazard with the robot side, which is never an official contact (R8)."""
+    DYNAMIC = "dynamic"
     KINEMATIC_OVERLAP = "kinematic_overlap"
 
 

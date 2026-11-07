@@ -24,7 +24,7 @@ SLIDE_START = (-0.35, 0.0, 0.3)
 # Test tolerances. The conformance keys they stand for are still PLACEHOLDER (T05 / pilot); the prompt
 # forbids reading PLACEHOLDER in tests, so the literals live here, named after their YAML key.
 TOL = {
-    "c13.hit_time_abs_tol_s": 1e-6,                      # no key yet: see the T04 report
+    "c13_nominal_hit.hit_time_abs_tol_s": 1e-6,          # exact for FakeHost slide / fall; the reach test uses dt
     "c5_release_gravity.release_velocity_abs_tol_mps": 1e-9,
     "c5_release_gravity.free_fall_time_rel_tol": 1e-6,
     "c6_relative_velocity.normal_speed_rel_tol": 1e-4,   # gravity acts during the last physics step
