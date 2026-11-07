@@ -1,9 +1,11 @@
 """Sub-stepping so that a hazard never moves more than ``max_step_m`` between two hook calls (R1).
 
 The hook grid is ``t_start, t_start + hook_dt, t_start + 2 hook_dt, ...`` ending exactly at ``t_end``
-(the last interval may be shorter). Displacement is the straight-line distance between the positions at
-the two ends of an interval, which is what a hook-to-hook teleport actually does. ``subdivide`` keeps
-every hook instant and inserts times only where an interval exceeds ``max_step_m``.
+(the last interval may be shorter; a grid point within ``1e-9 * hook_dt`` of ``t_end`` is round-off and
+merges into ``t_end``, so the grid is always strictly increasing). Displacement is the straight-line
+distance between the positions at the two ends of an interval, which is what a hook-to-hook teleport
+actually does. ``subdivide`` keeps every hook instant and inserts times only where an interval exceeds
+``max_step_m``.
 """
 import math
 from typing import Any, List
@@ -15,7 +17,8 @@ from .path import Path
 
 
 def hook_times(t_start_s: float, t_end_s: float, hook_dt_s: float) -> np.ndarray:
-    """The hook instants over ``[t_start_s, t_end_s]``; the last one is exactly ``t_end_s``."""
+    """The hook instants over ``[t_start_s, t_end_s]``, strictly increasing; the last one is exactly
+    ``t_end_s``."""
     dt = positive_float("hook_dt_s", hook_dt_s)
     span = t_end_s - t_start_s
     if not span > 0:
@@ -23,6 +26,8 @@ def hook_times(t_start_s: float, t_end_s: float, hook_dt_s: float) -> np.ndarray
     count = int(math.ceil(span / dt))
     times = t_start_s + dt * np.arange(count + 1, dtype=np.float64)
     times[-1] = t_end_s
+    if count >= 2 and t_end_s - times[-2] <= 1e-9 * dt:
+        times = np.delete(times, -2)
     return times
 
 
