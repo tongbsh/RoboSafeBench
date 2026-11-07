@@ -20,6 +20,7 @@
 | T02 运动学 | `prompts/T02_kinematics.md` | `hazard/integration` | — |
 | T02-F T02 收尾（合并前） | `prompts/T02_followup.md` | `hazard/T02`（同一分支继续） | — |
 | T03 安全语义 | `prompts/T03_semantics.md` | `hazard/integration` | — |
+| T03-F T03 收尾（合并前） | `prompts/T03_followup.md` | `hazard/T03`（同一分支继续） | — |
 | T04 运行时与 FakeHost | `prompts/T04_runtime_fakehost.md` | `hazard/integration` | — |
 | T05 一致性套件 | `prompts/T05_conformance.md` | `hazard/integration` | — |
 | T06 流水线 | `prompts/T06_pipeline.md` | `hazard/integration` | — |

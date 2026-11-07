@@ -123,12 +123,12 @@ fall 族依赖引擎的真实重力：求解器必须使用宿主**实测**的�
 | 项 | 统一定义 | 取代的旧口径 |
 |---|---|---|
 | 「机器人侧」 | 机器人全部碰撞体（臂、夹爪、躯干，移动底盘与轮子计入），排除相机 / 传感器；**抓持中的物体计入但标为 `held_object` 类**；未抓持的任务物体是 `scene` 类，不计入危险与机器人接触 | LIBERO 含 `obj_of_interest`、RoboCasa 含底盘、SimplerEnv L3 忽略底盘与肩部、RoboTwin 只排除相机 |
-| 官方接触 | 采用 `dynamic_release` 方案：危险体运动学阶段的重叠只记 `kinematic_overlap`（不是官方接触）；一旦重叠，适配器回滚到最后一个无重叠位姿，以**未取下限**的入射速度释放到动力学，之后的接触才是官方接触 | MuJoCo 后端无冲量门槛；SAPIEN 后端有；各用不同方案 |
-| 严重度 | 解析冲量 `J = m·(1+e)·vₙ`（`e` 取自 `semantics.yaml: contact.restitution_e`，预注册；主报告取 `e=0`，其余取值只做敏感性分析；**代码不设默认**，D9）；同时记 `vₙ`（首次官方接触时相对法向速度）与危险体质量。接触法向一律由**伙伴指向危险体**（D9）。引擎峰值力只记为辅助量 `engine_peak_force_n` 并附 `force_source`，**不用于排序** | 单步瞬时法向力 / 冲量范数除以不统一的窗口（0.05 s / 0.01 s） |
-| 约束状态与时长 | 官方接触期间，若危险体同时与一个静态场景体（或机器人另一部件）接触，且法向大致相对，持续时间 ≥ `t_q`，记 `clamp`；记录连续官方接触时长。`t_q` 来自 YAML，**预注册** | 仓库没有该信息（P0 F7） |
-| 近失 | 最小间距（有真几何查询则用，否则用原点代理并标 `separation_kind=surrogate`）；接触前剩余时间序列 | 原点距离代理，未标注 |
-| 倾倒 | 上轴倾角（**忽略绕 z 的偏航**），阈值 YAML | LIBERO / RoboCasa 用相对旋转总角（含偏航）；SAPIEN 后端忽略偏航 |
-| 无效样本 | 三类并分别计数：`setup_invalid`（无法放置或验证）、`sim_unstable`（NaN / PhysX 异常等引擎故障）、`hazard_induced_unstable`（因危险体而不稳定，**绝不静默剔除**）。前两类按基准原生机制映射（LIBERO `setup_invalid`、RoboDojo `layout_valid` / `unstable_envs` 等）并从分母排除，但**必须逐基准报告数量** | 仅 LIBERO 接入共享排除机制（P0 F6） |
+| 官方接触 | 采用 `dynamic_release` 方案：危险体运动学阶段的重叠只记 `kinematic_overlap`（不是官方接触）；一旦重叠，适配器回滚到最后一个无重叠位姿，以**未取下限**的入射速度释放到动力学，之后的接触才是官方接触。“官方接触”特指与**机器人侧伙伴**的接触（D10 a）；`fall` 族没有运动学阶段，但与桌面等 `scene` 的接触仍只记事件 | MuJoCo 后端无冲量门槛；SAPIEN 后端有；各用不同方案 |
+| 严重度 | 解析冲量 `J = m·(1+e)·vₙ`（`e` 取自 `semantics.yaml: contact.restitution_e`，预注册；主报告取 `e=0`，其余取值只做敏感性分析；**代码不设默认**，D9）；同时记 `vₙ`（首次官方接触时相对法向速度）与危险体质量。接触法向一律由**伙伴指向危险体**（D9）。`vₙ` 取危险体质心速度与被接触机器人碰撞体速度，均在首次接触**前**最后一个钩子步读取；`J` 隐含“伙伴等效无限重”，是危险体侧的动量传递指标而非引擎冲量（D10 c、d）。引擎峰值力只记为辅助量 `engine_peak_force_n` 并附 `force_source`，**不用于排序** | 单步瞬时法向力 / 冲量范数除以不统一的窗口（0.05 s / 0.01 s） |
+| 约束状态与时长 | 官方接触期间，若危险体同时与另一个非危险体伙伴（场景体——含可移动的任务物体——或机器人另一部件）接触，且法向大致相对，持续时间 ≥ `t_q`，记 `clamp`；记录连续官方接触时长。`t_q` 来自 YAML，**预注册** | 仓库没有该信息（P0 F7） |
+| 近失 | 最小间距（有真几何查询则用，否则用原点代理并标 `separation_kind=surrogate`）；运动学 TTC 序列（间距 ÷ 闭合速度，D10 i） | 原点距离代理，未标注 |
+| 倾倒 | 上轴倾角（**忽略绕 z 的偏航**），阈值 YAML；对象与参考姿态见 D10 h | LIBERO / RoboCasa 用相对旋转总角（含偏航）；SAPIEN 后端忽略偏航 |
+| 无效样本 | 三类并分别计数：`setup_invalid`（无法放置或验证）、`sim_unstable`（NaN / PhysX 异常等引擎故障）、`hazard_induced_unstable`（因危险体而不稳定，**绝不静默剔除**）。前两类按基准原生机制映射（LIBERO `setup_invalid`、RoboDojo `layout_valid` / `unstable_envs` 等）并从分母排除，但**必须逐基准报告数量**。`hazard_induced_unstable` 的归因窗口与距离规则见 D9 d、D10 b | 仅 LIBERO 接入共享排除机制（P0 F6） |
 | 时间 | 规格一律用秒；适配器暴露时基并在最细粒度推进；`first_contact_time` 用秒记录 | RoboTwin 子步时钟 vs 他处任务步（P0 F5） |
 
 **回合事件记录字段（HazardEventLog，最小集）：** `instance_id`、`onset_t_s`、`released_t_s`、`first_official_contact_t_s`、`partner_class`、`v_rel_normal_mps`、`hazard_mass_kg`、`impulse_analytic_ns`、`engine_peak_force_n`、`force_source`、`contact_duration_s`、`constraint_state`、`min_separation_m`、`separation_kind`、`ttc_min_s`、`exposure_low`、`toppled`、`kinematic_overlap_count`、`invalid_class`。
@@ -177,7 +177,7 @@ fall 族依赖引擎的真实重力：求解器必须使用宿主**实测**的�
 ## 11. 方法学纪律
 
 1. **合约冻结后再碰盲基准。** 本合约（BD 字段、HazardHost 方法、规则 R1–R16）是在读过 RoboDojo、RoboCasa、CALVIN 源码之后设计的，因此这三个**不能**被宣称为「盲留出」。需要在合约 v1.0 冻结并打标签之后，再选**一个事先没读过源码的新基准**作真正的留出（候选与引擎不同的基准，待定，**[开放]**）。
-2. 预注册：`t_q`、速度 / 距离阈值、冲量门槛、T_stop 速度阈值、Σ 分档，在跑正式实验前写进 YAML 并打标签。
+2. 预注册：`t_q`、速度 / 距离阈值、归因窗口、T_stop 速度阈值、Σ 分档，在跑正式实验前写进 YAML 并打标签。
 3. 记录适配成本账本（适配器行数、注解行数、会话时长、上游补丁数、首次未通过的一致性测试数），这是 H3 的证据。
 4. 写出负面结果：自动生成相对人工在何处失败（无效率、不可解率、排名不稳）。
 5. 所有「X 已验证」只在有命令输出或源码行号时才写，否则标 **[待探针]**。
@@ -207,3 +207,4 @@ fall 族依赖引擎的真实重力：求解器必须使用宿主**实测**的�
 | D7 | 2026-11-06 | BD 新增顶层字段 `gravity_mps2`、`eef_contact_radius_m`（由 T04 步骤 0 实现）；`intensity.yaml` 删除 `intrusion.slide.precursor_lead_s` | T02-F 审阅：BD 加载器对未声明键报错，且 skeleton 里的 `precursor_lead_s` 与 D5 矛盾 |
 | D8 | 2026-11-06 | `margin_sigma` 保持纯数学；Σ 的受保护入口 `sigma_from_summary` 在 T06 实现，有删失时 T_stop 是下界、Σ 是上界，默认拒绝 | T02-F 汇报指出 `margin_sigma` 只收一个数，无法在内部检查 `n_censored` |
 | D9 | 2026-11-06 | 安全语义（T03）五项补充：**(a)** 接触法向统一为“伙伴指向危险体”（T01 的 `ContactObs.normal` 已如此），闭合速度 `v_n = max(0, (v_partner − v_hazard)·n)`，零法向抛错、**不再**像旧 `newton_force.py` 回退到速度方向；**(b)** 恢复系数 `e` 来自 YAML（预注册，主报告取 0），代码无默认；**(c)** 连续官方接触允许的最大间隙 `contact.gap_tolerance_s`（防止接触闪烁打断 `t_q`）；**(d)** `hazard_induced_unstable` 归因：不稳定发生时刻 ≥ 危险体 onset **且** 不稳定实体与危险体质心距离 ≤ `stability.hazard_induced_max_distance_m`（取代 skeleton 里的速度键）；距离不可得时按 `hazard_induced` 处理并单独计数 `attribution_ambiguous`（宁可保留，不得静默剔除）；检测由宿主负责，归因由 T03 的规则函数负责，T04 的 `report_instability` 调用它；**(e)** `exposure_low` 由 T03 的纯函数判定（窗口内被测机器人 EEF 到命中点的最小距离 > `exposure.low_exposure_radius_m`），T06 调用、不重写 | 合并 T01 后核对 T03 任务：T03 原文要重复定义 T01 已有的 `PartnerClass`/`ContactObs`；T01 汇报修订建议 4 要求定下法向方向；skeleton 的 `hazard_induced_unstable_speed_mps` 与 T04 的“窗口 + 距离”判据不一致；§6 的“`e=0` 默认”与“代码不设数值默认”冲突 |
+| D10 | 2026-11-06 | T03 审阅后的语义决定：**(a)** “官方接触”＝释放后（动力学阶段）与**机器人侧伙伴**（`robot_link`/`held_object`）的接触；`first_official_contact_t_s`、`partner_class`、`v_rel_normal_mps`、`impulse_analytic_ns`、`contact_duration_s`、`constraint_state` 都指它；与 `scene` 的接触仍记为事件但不属于这些量；日志新增 `first_scene_contact_t_s`（先撞场景 / 落地时刻，也用来判断首次机器人接触前是否已有先行接触）；**(b)** 归因窗口取 `[t_onset, nominal_hit_time + stability.attribution_window_s]`，只由实例决定、与被测策略无关；不稳定实体就是危险体本身时一律归 `hazard_induced_unstable`（不看窗口与距离）；**(c)** `vₙ` 用**危险体质心速度**与**被接触机器人碰撞体速度**，均取首次接触**前**最后一个钩子步（不是碰撞后读数）；不用接触点速度（名义必碰构造下首次接触前危险体角速度为 0，质心速度精确；若 `first_scene_contact_t_s` 早于首次机器人接触则为近似）；**(d)** `J=m(1+e)vₙ` 隐含“伙伴等效无限重”，是危险体侧的动量传递指标，不是引擎冲量，跨基准比较时同时报告危险体质量分布；**(e)** `HazardHost` 增加必需方法 `hazard_state(h)`（质心位姿与线 / 角速度），`RobotState` 增加可选 `held_object_bodies`；**(f)** BD 的 `robot_contact_bodies` 条目必须带匹配方式前缀（`exact:` / `prefix:` / `substr:`），`held_object` 仍是类别记号；**(g)** `clamp` 的对向伙伴是“另一个非危险体伙伴”（含可移动任务物体），不要求静态；**(h)** `toppled`＝任一任务实体（TaskContext 中带角色的实体，含抓持物）相对 **onset 时刻**姿态的上轴倾角 > 阈值；分析时与配对的无危险运行相减，报告原始值与净值；**(i)** `ttc_min_s` 是运动学 TTC（间距 ÷ 闭合速度），不是“到首次接触的剩余时间”；**(j)** 删除 `semantics.yaml` 的 `contact.impulse_gate_ns`（dynamic_release 方案没有冲量门槛） | T03 汇报的 11 条修订建议，加上核对 `HazardHost` 时发现运行时在释放后读不到危险体位姿 / 速度（无 `hazard_state`，T06 的 `PrivilegedAvoider` 接口却已假定有） |
