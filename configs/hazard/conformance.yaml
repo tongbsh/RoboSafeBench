@@ -18,10 +18,10 @@
 # report T05 lists which of them are too loose or too strict for real hosts.
 #
 # Unlike the T01 skeleton, C4 has a block (contact clock and normal checks); C11
-# is still pass/fail without numbers. c8_determinism.statistical_max_abs_diff
-# stays PLACEHOLDER: FakeHost is exact, so there is nothing to derive it from;
-# C8 reports a statistical host as unverified, with the magnitude, until an
-# adapter task sets it.
+# is still pass/fail without numbers. The two c8_determinism.statistical_* bounds
+# stay PLACEHOLDER: FakeHost is exact, so there is nothing to derive them from;
+# C8 (and C2 / C7 / C12) report a statistical host as unverified, with the
+# measured magnitude, until the H task of such a host sets them (D13 h).
 
 # ---------------------------------------------------------------------------
 # Probe magnitudes (shared by several checks). Not tolerances: they decide what
@@ -90,11 +90,23 @@ c4_partner_class:
 
 c5_release_gravity:
   release_velocity_abs_tol_mps: 0.25  # E/2: residual_velocity keeps 0.5 m/s of kinematic velocity, hook_dependent_release 1.5 m/s; e_ok 0
-  # Landing time: half a physics step relative to the FakeHost drop (h 0.18 m,
-  # t_land 0.1916 s): 0.5 x 0.002 / 0.1916 = 0.0052, rounded down. e_ok 1.7e-15;
-  # a linear damping of 0.5 /s (test-local) gives 0.0083.
-  free_fall_time_rel_tol: 0.005
-  gravity_rel_tol: 0.01        # = 2 x free_fall_time_rel_tol: t ~ g^-1/2, a g error this size moves the landing by half a step; e_ok 1.6e-15, GravityMismatch (2 %) E 0.02
+  # Landing time, in physics steps n of the BD's physics_dt_s (D13 h):
+  #   |t_land - sqrt(2 h / g_measured)| <= n x dt.
+  # An engine that detects scene contacts only at the end of a physics step
+  # stamps the landing up to one step late, so the quantisation error is at
+  # most one step: n = 1. FakeHost has CCD (exact contact times): e_ok 1e-13
+  # steps; the honest no-CCD FakeHost (step-end detection) is 0.61 steps off.
+  # E: an undeclared linear damping of 0.5 /s (test-local DampedFall) lands
+  # 3.66 steps early at the FakeHost drop (h = 0.78 m, t_land = 0.3988 s).
+  # The damping offset grows as c t_land^2 / 12 while n x dt is fixed, so
+  # scenario.drop_point_m in fakehost.yaml was raised from 0.2 m (0.81 steps,
+  # missed) to 0.8 m; E >= 2 n needs at least 0.5 m (2.2 steps).
+  free_fall_time_tol_physics_steps: 1.0
+  # t ~ g^-1/2: a relative g error eps moves the landing by eps x t_land / 2, so
+  # the g error that moves it by the landing tolerance is 2 n dt / t_land =
+  # 2 x 1 x 0.002 / 0.3988 = 0.01003 on the FakeHost drop, rounded down to
+  # 3 decimals. e_ok 5e-15; GravityMismatch (declares 2 x this) E 0.02.
+  gravity_rel_tol: 0.01
 
 c6_relative_velocity:
   # Relative errors of v_n (D10 c) and of m (1 + e) v_n; e_ok 6.6e-4 (contact
@@ -109,7 +121,14 @@ c7_isolation:
 
 c8_determinism:
   exact_max_abs_diff: 0.0      # BD "exact" means bit-identical repeats; NoisyReset (test-local) E = 1.4e-4
-  statistical_max_abs_diff: PLACEHOLDER  # no statistical FakeHost to derive it from; set by the adapter task from its measurements
+  # Same-seed difference bounds of a BD "statistical" host, one per observation
+  # kind (D13 h). C8 compares its same-seed repeats with them; on such a host
+  # C2 / C7 / C12 compare hazard vs hazard-free runs with them instead of
+  # requiring identity. FakeHost is exact, so there is nothing to derive them
+  # from: they stay PLACEHOLDER (those checks report the measured magnitude
+  # and are unverified) until the H task of a statistical host measures them.
+  statistical_state_vector_max_abs_diff: PLACEHOLDER  # max |a - b| over the elements of every policy state vector (units of the vector)
+  statistical_image_max_abs_diff: PLACEHOLDER         # max |a - b| over the pixels of one camera, grey levels (uint8); every camera compared on its own
   snapshot_replay_steps: 10    # control steps replayed after restore(snapshot)
 
 c9_visibility:

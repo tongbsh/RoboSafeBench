@@ -1,14 +1,17 @@
 """C12: batch independence. While a hazard is released onto the robot in environment 0, the last environment runs
 a hazard-free control; its policy observations and oracle must equal those of the same control run alone.
 
-Runs on every host with more than one environment, batched or not: environments served by one host object can
-share state either way. Skipped only on single-environment hosts, where there is nothing to compare (01 §5:
-batched benchmarks only)."""
+Runs on every host with ``num_envs > 1``, batched or not (01 §5, D13 h): environments served by one host object can
+share state either way. Skipped only on single-environment hosts, where there is nothing to compare.
+
+On a statistical host (BD ``same_seed_repro: statistical``) the observations are compared per kind with C8's bounds
+and the oracle only when C8's same-seed repeats agree on it (01 §5, D13 h; see ``common``)."""
 import numpy as np
 
 from hazardlib._records import is_unknown
-from hazardlib.conformance.common import flight_start, oracle_note, still_snapshot
-from hazardlib.conformance.harness import body_position, observation_diff, strike_instance
+from hazardlib.conformance.common import (flight_start, judge_statistical_kinds, judge_statistical_oracle,
+                                          oracle_note, same_seed_repeats, statistical_repro, still_snapshot)
+from hazardlib.conformance.harness import body_position, merge_max, observation_diff, strike_instance
 from hazardlib.conformance.suite import Check
 
 SECTION = "c12_batch_independence"
@@ -25,7 +28,7 @@ def run(ctx):
     host, scenario, strike, agent = ctx.host, ctx.scenario, ctx.scenario.strike, ctx.scenario.probe_agent
     n_envs = ctx.bd.parallel.num_envs
     ctx.require(not is_unknown(n_envs), "BD parallel.num_envs is unknown")
-    tol = ctx.number(SECTION, "observation_abs_tol")
+    repeats = same_seed_repeats(ctx) if statistical_repro(ctx) else None
     duration = ctx.number(SECTION, "duration_s")
     speed = ctx.number("probe", "strike_speed_mps")
     gap_steps = ctx.number("probe", "strike_gap_physics_steps")
@@ -55,24 +58,33 @@ def run(ctx):
     ctx.require(loud.log.first_official_contact_t_s is not None,
                 "the hazard in env %d never hit the robot, so the probe exercised nothing" % hazard_env)
     vector = image = 0.0
+    vectors, images = {}, {}
     success = []
     for a, b in zip(alone.samples, quiet.samples):
         diff = observation_diff(a.obs, b.obs)
         ctx.require(not diff.mismatch, "env %d observation keys or shapes changed: %s" % (observer, diff.mismatch))
         vector = max(vector, diff.vector_max_abs)
         image = max(image, diff.image_max_abs)
+        merge_max(vectors, diff.vectors)
+        merge_max(images, diff.images)
         if a.success != b.success:
             success.append(round(b.t_s, 6))
     ctx.record("environments", {"hazard": hazard_env, "observer": observer, "num_envs": n_envs})
     ctx.record("observer_max_abs_diff", {"vectors": vector, "images": image, "oracle_differs_at_s": success[:10]})
-    ctx.expect(max(vector, image) <= tol and not success,
-               "a hazard in env %d changes the observations of env %d by %.3g (tol %r)%s"
-               % (hazard_env, observer, max(vector, image), tol, oracle_note(success)))
+    if repeats is None:
+        tol = ctx.number(SECTION, "observation_abs_tol")
+        ctx.expect(max(vector, image) <= tol and not success,
+                   "a hazard in env %d changes the observations of env %d by %.3g (tol %r)%s"
+                   % (hazard_env, observer, max(vector, image), tol, oracle_note(success)))
+    else:
+        what = "env %d next to a hazard in env %d vs alone" % (observer, hazard_env)
+        judge_statistical_kinds(ctx, what, vectors, images)
+        judge_statistical_oracle(ctx, repeats, what, success, (quiet.log.task_success, alone.log.task_success))
 
 
 CHECK = Check("C12", "batch independence",
               "a hazard striking the robot in env 0 leaves the observations and oracle of the last env identical to "
-              "the same run alone", run, skip_when=_skip)
+              "the same run alone (statistical hosts: within C8's per-kind bounds)", run, skip_when=_skip)
 
 
 def test_c12_batch_independence(conformance):

@@ -1,12 +1,14 @@
-"""C11: invalid-sample mapping (R11, D9 d, D12 g).
+"""C11: invalid-sample mapping (R11, D9 d, D12 g, D13 h).
 
 * A slide placed overlapping a robot body at its first pose cannot be placed: ``setup_invalid``, re-parked (no
   contact or render afterwards), excluded from the metric denominator.
-* An engine fault forced by the adapter (``ConformanceTarget.inject_engine_fault``) must reach the runtime through
-  ``report_instability`` (01 §3.3 item 12): in a hazard-free control, and in a hazard episode before the onset, it is
-  ``sim_unstable`` (excluded); in the hazard body during the exposure it is ``hazard_induced_unstable`` (kept).
+* The adapter provides ``inject_engine_fault(env, hazard)`` (``ConformanceTarget.inject_engine_fault``), which forces
+  an engine fault the host's own way. The fault must reach the runtime through ``report_instability`` (01 §3.3
+  item 12): in a hazard-free control, and in a hazard episode before the onset, it is ``sim_unstable`` (excluded);
+  in the hazard body during the exposure it is ``hazard_induced_unstable`` (kept).
 
-A host that cannot force a fault fails this check: the mapping would otherwise be unproven.
+An adapter without ``inject_engine_fault`` fails this check (01 §5): the mapping would otherwise be unproven.
+FakeHost has no real engine faults; its injector only reports one, so on FakeHost C11 verifies the mapping path.
 """
 import numpy as np
 

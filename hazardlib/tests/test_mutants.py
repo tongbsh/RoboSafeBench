@@ -4,7 +4,9 @@ The suite is only as good as the defects it catches. Each FakeHost mutation (``f
 exactly the checks pinned in ``CAUGHT_BY``, each with status ``fail`` (a crash is not a catch), and the clean FakeHost
 must pass all of C1-C13. The test-local defects below (FakeHost subclasses and targets) cover host contract items
 the ten mutations do not touch; each must fail the checks named for it. Honest variants (no CCD, other gravity,
-other time step, one environment, no held object) must pass.
+other time step, one environment, no held object) must pass. On hosts that declare statistical repro, C2 / C7 / C8 /
+C12 are judged against C8's per-kind bounds (D13 h): unverified while they are PLACEHOLDER, and the defects in
+``STATISTICAL_DEFECTS`` must still fail under bounds the honest noisy host passes.
 """
 import copy
 import dataclasses
@@ -12,6 +14,7 @@ import functools
 import importlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -182,11 +185,54 @@ class NoisyReset(FakeHost):
         world.eef = world.eef + self._rng.normal(0.0, 1e-4, 3)
 
 
+def _declared_statistical(bd):
+    data = bd.to_dict()
+    data["determinism"]["same_seed_repro"] = "statistical"
+    return BenchmarkDescriptor.from_dict(data, strict=True)
+
+
 class StatisticalNoisyReset(NoisyReset):
     def describe(self):
-        data = super().describe().to_dict()
-        data["determinism"]["same_seed_repro"] = "statistical"
-        return BenchmarkDescriptor.from_dict(data, strict=True)
+        return _declared_statistical(super().describe())
+
+
+class FlakyOracle(FakeHost):
+    """task_success is inverted in every other episode: same-seed repeats do not reproduce the oracle."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._resets = 0
+
+    def reset_world(self, env, task_id, layout_id, seed):
+        super().reset_world(env, task_id, layout_id, seed)
+        self._resets += 1
+
+    def task_success(self, env):
+        return super().task_success(env) != (self._resets % 2 == 1)
+
+
+class StatisticalFlakyOracle(FlakyOracle):
+    def describe(self):
+        return _declared_statistical(super().describe())
+
+
+class StatisticalTwoCameras(StatisticalNoisyReset):
+    """A second policy camera, ``wrist_rgb``, brighter by WRIST_OFFSET grey levels in every other episode."""
+    WRIST_OFFSET = 3
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._resets = 0
+
+    def reset_world(self, env, task_id, layout_id, seed):
+        super().reset_world(env, task_id, layout_id, seed)
+        self._resets += 1
+
+    def policy_observation(self, env):
+        obs = super().policy_observation(env)
+        offset = self.WRIST_OFFSET * (self._resets % 2)
+        obs["wrist_rgb"] = np.clip(obs["rgb"].astype(np.int64) + offset, 0, 255).astype(np.uint8)
+        return obs
 
 
 class DriftingHold(FakeHost):
@@ -310,17 +356,134 @@ def test_each_local_defect_fails_its_checks(name, factory, checks):
     assert all(c["reason"] for c in report["checks"])
 
 
+def _config_with_bounds(vector, image):
+    """conformance.yaml with both statistical C8 bounds set (state vectors, images in grey levels)."""
+    base = ConformanceConfig.load()
+    files = copy.deepcopy(base.files)
+    files["conformance"]["c8_determinism"].update(statistical_state_vector_max_abs_diff=vector,
+                                                  statistical_image_max_abs_diff=image)
+    return ConformanceConfig(files, base.source)
+
+
 def test_c8_statistical_host_is_measured_then_judged_against_the_bound():
     target = make_fake_target(host_cls=StatisticalNoisyReset)
     check = _run(target, select=["C8"])["checks"][0]
-    assert check["status"] == "unverified" and "statistical_max_abs_diff is not set" in check["reason"]
+    assert check["status"] == "unverified"
+    assert "statistical_state_vector_max_abs_diff is not set" in check["reason"]
     magnitude = max(check["measured"]["repeat_max_abs_diff"]["vectors"],
                     check["measured"]["repeat_max_abs_diff"]["images"])
     assert magnitude > 0
-    loose = _config_with("c8_determinism", "statistical_max_abs_diff", 2 * magnitude)
-    strict = _config_with("c8_determinism", "statistical_max_abs_diff", 0.5 * magnitude)
+    loose = _config_with_bounds(2 * magnitude, 2 * magnitude)
+    strict = _config_with_bounds(0.5 * magnitude, 0.5 * magnitude)
     assert _run(make_fake_target(host_cls=StatisticalNoisyReset), ["C8"], loose)["checks"][0]["status"] == "pass"
     assert _run(make_fake_target(host_cls=StatisticalNoisyReset), ["C8"], strict)["checks"][0]["status"] == "fail"
+
+
+# ------------------------------------------------------- statistical hosts: C2 / C7 / C12 against C8 (D13 h)
+
+STATISTICAL_CHECKS = ["C2", "C7", "C8", "C12"]
+
+
+def _check(target, check_id, config=None):
+    return _run(target, [check_id], config)["checks"][0]
+
+
+@functools.lru_cache(maxsize=None)
+def _statistical_magnitudes(check_id):
+    """(state-vector, largest per-camera image) difference a check measures on StatisticalNoisyReset. The noise is
+    seeded per host, so every fresh host measures the same values."""
+    measured = _check(make_fake_target(host_cls=StatisticalNoisyReset), check_id)["measured"]["statistical"]
+    return measured["state_vector_max_abs_diff"], max((measured["images"] or {}).values(), default=0.0)
+
+
+@pytest.mark.parametrize("check_id", STATISTICAL_CHECKS)
+def test_statistical_host_with_placeholder_bounds_is_measured_not_judged(check_id):
+    check = _check(make_fake_target(host_cls=StatisticalNoisyReset), check_id)
+    vector, _ = _statistical_magnitudes(check_id)
+    assert check["status"] == "unverified", check["reason"]
+    assert "measured, not judged" in check["reason"] and "statistical_state_vector_max_abs_diff" in check["reason"]
+    assert vector > 0 and ("%.3g" % vector) in check["reason"]
+
+
+@pytest.mark.parametrize("check_id", STATISTICAL_CHECKS)
+def test_statistical_host_passes_bounds_at_twice_the_measured_magnitude(check_id):
+    vector, image = _statistical_magnitudes(check_id)
+    check = _check(make_fake_target(host_cls=StatisticalNoisyReset), check_id, _config_with_bounds(2 * vector,
+                                                                                                    2 * image))
+    assert check["status"] == "pass", check["reason"]
+    assert check["measured"]["statistical"]["state_vector_max_abs_diff"] == vector
+
+
+@pytest.mark.parametrize("check_id", STATISTICAL_CHECKS)
+def test_statistical_host_fails_bounds_at_half_the_measured_magnitude(check_id):
+    vector, image = _statistical_magnitudes(check_id)
+    check = _check(make_fake_target(host_cls=StatisticalNoisyReset), check_id, _config_with_bounds(0.5 * vector,
+                                                                                                    0.5 * image))
+    assert check["status"] == "fail" and "above the statistical bound" in check["reason"], check["reason"]
+
+
+class StatisticalSharedRender(SharedRender, StatisticalNoisyReset):
+    pass
+
+
+# name, target factory, checks that must fail on a statistical host whose bounds the honest StatisticalNoisyReset
+# passes (twice its largest magnitude over C2 / C7 / C8 / C12)
+STATISTICAL_DEFECTS = [
+    ("statistical_state_leak", lambda: make_fake_target(("state_leak",), host_cls=StatisticalNoisyReset),
+     ("C2", "C7")),
+    ("statistical_oracle_depends_on_hazard",
+     lambda: make_fake_target(("oracle_depends_on_hazard",), host_cls=StatisticalNoisyReset), ("C7",)),
+    ("statistical_render_leaks_across_envs", lambda: make_fake_target(host_cls=StatisticalSharedRender), ("C12",)),
+]
+
+
+def _honest_statistical_bounds():
+    vector = max(_statistical_magnitudes(c)[0] for c in STATISTICAL_CHECKS)
+    image = max(_statistical_magnitudes(c)[1] for c in STATISTICAL_CHECKS)
+    return 2 * vector, 2 * image
+
+
+@pytest.mark.parametrize("name,factory,checks", STATISTICAL_DEFECTS, ids=[d[0] for d in STATISTICAL_DEFECTS])
+def test_each_statistical_defect_fails_its_checks(name, factory, checks):
+    vector_bound, image_bound = _honest_statistical_bounds()
+    config = _config_with_bounds(vector_bound, image_bound)
+    honest = _run(make_fake_target(host_cls=StatisticalNoisyReset), list(checks), config)
+    assert set(_statuses(honest).values()) == {"pass"}, [(c["id"], c["reason"]) for c in honest["checks"]]
+    report = _run(factory(), list(checks), config)
+    assert _statuses(report) == {cid: "fail" for cid in checks}, [(c["id"], c["status"], c["reason"])
+                                                                  for c in report["checks"]]
+    if name == "statistical_state_leak":
+        for check in report["checks"]:
+            assert check["measured"]["statistical"]["state_vector_max_abs_diff"] > 100 * vector_bound
+
+
+@pytest.mark.parametrize("check_id", ["C2", "C7", "C12"])
+def test_statistical_host_does_not_judge_an_oracle_its_repeats_do_not_reproduce(check_id):
+    check = _check(make_fake_target(host_cls=StatisticalFlakyOracle), check_id, _config_with_bounds(0.0, 0.0))
+    assert check["status"] == "unverified", check["reason"]
+    assert "task_success not judged: same-seed repeats (C8) disagree" in check["reason"]
+    assert check["measured"]["statistical_oracle"]["repeats_oracle_differs_at_s"]
+    assert _check(make_fake_target(host_cls=FlakyOracle), check_id)["status"] == "fail"
+
+
+@pytest.mark.parametrize("check_id", ["C2", "C8", "C12"])
+def test_statistical_host_compares_every_camera_on_its_own(check_id):
+    check = _check(make_fake_target(host_cls=StatisticalTwoCameras), check_id,
+                   _config_with_bounds(1.0, 0.5 * StatisticalTwoCameras.WRIST_OFFSET))
+    images = check["measured"]["statistical"]["images"]
+    assert set(images) == {"rgb", "wrist_rgb"} and images["wrist_rgb"] == StatisticalTwoCameras.WRIST_OFFSET
+    over = sorted(camera for camera, d in images.items() if d > 0.5 * StatisticalTwoCameras.WRIST_OFFSET)
+    assert check["status"] == "fail" and "camera(s) %s differ" % over in check["reason"], check["reason"]
+
+
+def test_c5_landing_time_alone_catches_undeclared_damping():
+    """The landing-time criterion, not only the gravity fit, separates DampedFall with a margin of one tolerance."""
+    check = _run(make_fake_target(host_cls=DampedFall), ["C5"])["checks"][0]
+    steps = _setting("c5_release_gravity", "free_fall_time_tol_physics_steps")
+    assert check["status"] == "fail" and "physics steps" in check["reason"], check["reason"]
+    assert abs(check["measured"]["free_fall"]["fall_time_error_physics_steps"]) >= 2 * steps
+    step_end_detection = _run(make_fake_target(ccd=False), ["C5"])["checks"][0]["measured"]["free_fall"]
+    assert 0 < step_end_detection["fall_time_error_physics_steps"] <= steps
 
 
 def test_c13_unrepeatable_motion_is_unverified_not_passed():
@@ -524,12 +687,44 @@ def test_report_is_stable_across_runs():
     (lambda r: r["checks"][0].update(status="maybe"), "status"),
     (lambda r: r["checks"][0].update(status="fail", reason=None), "reason"),
     (lambda r: r.pop("bd_hash"), "bd_hash"),
+    (lambda r: r.update(config_source="/srv/checkout/configs/hazard"), "config_source"),
+    (lambda r: r.update(config_source="~/RoboSafeBench/configs/hazard"), "config_source"),
+    (lambda r: r.update(config_source="C:\\RoboSafeBench\\configs\\hazard"), "config_source"),
+    (lambda r: r.update(config_source="../elsewhere/configs"), "config_source"),
+    (lambda r: r.update(config_source="external:/tmp/configs"), "config_source"),
+    (lambda r: r.update(config_source="external:"), "config_source"),
 ])
 def test_report_validation_rejects_inconsistent_reports(tamper, message):
     report = json.loads(json.dumps(_report("clean")))
     tamper(report)
     with pytest.raises(ReportError, match=message):
         validate_report(report)
+
+
+def _machine_paths():
+    repo = Path(__file__).parents[2]
+    return {os.path.expanduser("~"), str(repo.absolute()), str(repo.resolve())}
+
+
+def test_report_json_contains_no_machine_path(tmp_path):
+    out = tmp_path / "report.json"
+    assert _cli()(["--host", "fake", "--out", str(out)]) == 0
+    text = out.read_text(encoding="utf-8")
+    assert [p for p in _machine_paths() if p in text] == []
+    assert read_report(out)["config_source"] == "configs/hazard"
+
+
+def test_an_external_config_dir_is_named_not_located(tmp_path):
+    config_dir = tmp_path / "frozen_configs"
+    config_dir.mkdir()
+    for name in ("conformance", "runtime", "semantics", "intensity", "fakehost"):
+        shutil.copy(str(SRC.parents[1] / "configs" / "hazard" / (name + ".yaml")), str(config_dir))
+    session = SuiteSession(make_fake_target(config_dir=config_dir), ConformanceConfig.load(config_dir))
+    out = tmp_path / "report.json"
+    write_report(run_suite(session, ["C1"]), out)
+    text = out.read_text(encoding="utf-8")
+    assert read_report(out)["config_source"] == "external:frozen_configs"
+    assert [p for p in _machine_paths() | {str(tmp_path)} if p in text] == []
 
 
 # ---------------------------------------------------------------------------------------------------- CLI

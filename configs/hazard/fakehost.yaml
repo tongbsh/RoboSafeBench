@@ -61,7 +61,7 @@ scenario:
   free_direction: [1.0, 0.0, 0.0]
   strike: {body: robot0_hand, direction: [-1.0, 0.0, 0.0], radius_m: 0.03}
   held_strike: {body: mug_body, direction: [0.0, 1.0, 0.0], radius_m: 0.025}
-  drop_point_m: [-0.2, 0.2, 0.2]
+  drop_point_m: [-0.2, 0.2, 0.8]   # high enough that C5's landing time separates an undeclared damping (conformance.yaml c5)
   drop_surface_height_m: 0.0
   motion_hit_time_s: 0.6
   motion_hit_direction: [0.0, -1.0, 0.0]

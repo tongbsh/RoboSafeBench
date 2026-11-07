@@ -9,6 +9,9 @@
   the source of every field goes into the report.
 * T_stop settings (C10) likewise come from ``intensity.yaml: calibration`` when resolved, otherwise from
   ``conformance.yaml: probe_calibration``.
+* Freezing needs a report run without any of these fallbacks (01 §5, D13 a). Their sources are in the report: the
+  RuntimeConfig fields in ``runtime_config``, the T_stop settings in C10's ``measured.t_stop_settings``.
+* The report names the config directory without a machine path (``config_source_label``).
 """
 import numbers
 from pathlib import Path
@@ -18,9 +21,33 @@ from .._records import MARKERS
 from ..config import ConfigError, default_config_dir, load_yaml
 from ..hashing import sha256_hex
 from ..runtime import RUNTIME_KEYS, SEMANTICS_KEYS, RuntimeConfig
+from .report import EXTERNAL_CONFIG_PREFIX
 
 #: Files whose parsed content is hashed into the report (``config_hashes``).
 CONFIG_FILES = ("conformance", "runtime", "semantics", "intensity")
+
+
+def repository_root() -> Optional[Path]:
+    """The checkout hazardlib belongs to: the first ancestor holding ``configs/hazard``, walking up from this file
+    and then from the working directory (``config.default_config_dir`` without the environment variable)."""
+    for start in (Path(__file__).resolve().parent, Path.cwd().resolve()):
+        for base in [start] + list(start.parents):
+            if (base / "configs" / "hazard").is_dir():
+                return base
+    return None
+
+
+def config_source_label(config_dir: Union[str, Path]) -> str:
+    """``config_dir`` as the report names it: relative to the repository root (``configs/hazard``) when inside it,
+    else ``external:<directory name>``."""
+    path = Path(config_dir).resolve()
+    root = repository_root()
+    if root is not None:
+        try:
+            return path.relative_to(root).as_posix()
+        except ValueError:
+            pass
+    return EXTERNAL_CONFIG_PREFIX + path.name
 
 
 def _resolved(value: Any) -> bool:
@@ -35,7 +62,8 @@ def _lookup(data: Any, path: Tuple[str, ...]) -> Any:
 
 
 class ConformanceConfig:
-    """Parsed config files by name (``conformance``, ``runtime``, ``semantics``, ``intensity``)."""
+    """Parsed config files by name (``conformance``, ``runtime``, ``semantics``, ``intensity``); ``source`` is the
+    report's ``config_source``."""
 
     def __init__(self, files: Mapping[str, Any], source: str) -> None:
         missing = [name for name in CONFIG_FILES if name not in files]
@@ -47,7 +75,7 @@ class ConformanceConfig:
     @classmethod
     def load(cls, config_dir: Optional[Union[str, Path]] = None) -> "ConformanceConfig":
         base = Path(config_dir) if config_dir is not None else default_config_dir()
-        return cls({name: load_yaml(base / (name + ".yaml")) for name in CONFIG_FILES}, str(base))
+        return cls({name: load_yaml(base / (name + ".yaml")) for name in CONFIG_FILES}, config_source_label(base))
 
     # ----------------------------------------------------------------------------------- conformance.yaml
 
