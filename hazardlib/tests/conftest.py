@@ -80,6 +80,7 @@ def manifest_dict():
         "bd_hash": _hex("a"),
         "probe_set_hash": _hex("b"),
         "spec_library_hash": _hex("c"),
+        "config_hashes": {"semantics": _hex("1"), "runtime": _hex("2")},
         "adapter_version": "0.0-test",
         "benchmark_commits": {"calvin": "fa03f01", "calvin_env": "797142c"},
         "seed": 123,

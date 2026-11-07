@@ -12,6 +12,8 @@ SECTION6_FIELDS = ["instance_id", "onset_t_s", "released_t_s", "first_official_c
                    "engine_peak_force_n", "force_source", "contact_duration_s", "constraint_state",
                    "min_separation_m", "separation_kind", "ttc_min_s", "exposure_low", "toppled",
                    "kinematic_overlap_count", "invalid_class"]
+OUTCOME_FIELDS = ["task_success", "max_tilt_deg", "r1_violation_count"]                  # D11 c
+PROVENANCE_FIELDS = ["bd_hash", "adapter_version", "manifest_hash", "benchmark_commits"]  # D11 c
 
 
 def full_log(instance_id="inst_0"):
@@ -21,12 +23,16 @@ def full_log(instance_id="inst_0"):
         engine_peak_force_n=3.5, force_source="pybullet_contact_normal_force", contact_duration_s=0.8,
         constraint_state=ConstraintState.CLAMP, min_separation_m=0.0, separation_kind="surrogate",
         ttc_min_s=0.0, exposure_low=False, toppled=True, kinematic_overlap_count=0,
-        invalid_class=InvalidClass.HAZARD_INDUCED_UNSTABLE, attribution_ambiguous=True)
+        invalid_class=InvalidClass.HAZARD_INDUCED_UNSTABLE, attribution_ambiguous=True,
+        task_success=False, max_tilt_deg=1.0 / 3.0, r1_violation_count=2, bd_hash="a" * 64,
+        adapter_version="0.0-test", manifest_hash="b" * 64,
+        benchmark_commits={"calvin": "fa03f01", "calvin_env": "797142c"})
 
 
-def test_fields_are_the_section_6_set_plus_schema_version_and_the_ambiguity_flag():
+def test_fields_are_the_section_6_set_plus_schema_version_ambiguity_outcome_and_provenance():
     names = list(full_log().to_dict())
-    assert names == ["schema_version"] + SECTION6_FIELDS + ["attribution_ambiguous"]
+    assert names == (["schema_version"] + SECTION6_FIELDS + ["attribution_ambiguous"] + OUTCOME_FIELDS
+                     + PROVENANCE_FIELDS)
 
 
 def test_round_trip_through_a_jsonl_file_is_lossless(tmp_path):
@@ -43,6 +49,34 @@ def test_round_trip_through_a_jsonl_file_is_lossless(tmp_path):
     assert back[0].invalid_class is InvalidClass.HAZARD_INDUCED_UNSTABLE
     assert back[0].kinematic_overlap_count == 0 and isinstance(back[0].kinematic_overlap_count, int)
     assert back[0].exposure_low is False and back[0].toppled is True and back[0].attribution_ambiguous is True
+    assert back[0].task_success is False and back[0].max_tilt_deg == 1.0 / 3.0
+    assert back[0].r1_violation_count == 2 and isinstance(back[0].r1_violation_count, int)
+    assert back[0].bd_hash == "a" * 64 and back[0].manifest_hash == "b" * 64
+    assert back[0].adapter_version == "0.0-test"
+    assert back[0].benchmark_commits == {"calvin": "fa03f01", "calvin_env": "797142c"}
+
+
+def test_benchmark_commits_is_copied_in_and_out():
+    commits = {"calvin": "fa03f01"}
+    log = HazardEventLog.new("i", benchmark_commits=commits)
+    commits["calvin"] = "0000000"
+    assert log.benchmark_commits == {"calvin": "fa03f01"}
+    out = log.to_dict()
+    out["benchmark_commits"]["calvin"] = "1111111"
+    assert log.benchmark_commits == {"calvin": "fa03f01"}
+
+
+def test_new_outcome_and_provenance_fields_are_none_not_zero_when_absent(tmp_path):
+    log = HazardEventLog.new("dev_run", task_success=True)
+    for name in ["max_tilt_deg", "r1_violation_count"] + PROVENANCE_FIELDS:
+        assert getattr(log, name) is None, name
+    path = tmp_path / "x.jsonl"
+    write_jsonl(path, [log, HazardEventLog.new("zeros", max_tilt_deg=0.0, r1_violation_count=0,
+                                                task_success=False)])
+    raw = [json.loads(line) for line in path.read_text().splitlines()]
+    assert raw[0]["r1_violation_count"] is None and raw[0]["max_tilt_deg"] is None
+    assert raw[0]["benchmark_commits"] is None and raw[0]["task_success"] is True
+    assert raw[1]["r1_violation_count"] == 0 and raw[1]["max_tilt_deg"] == 0.0 and raw[1]["task_success"] is False
 
 
 def test_the_file_has_one_json_object_per_line_with_enum_values_as_strings(tmp_path):
@@ -72,7 +106,7 @@ def test_keys_absent_from_a_line_read_back_as_none(tmp_path):
     path.write_text(json.dumps({"schema_version": SCHEMA_VERSION, "instance_id": "i", "onset_t_s": 0.5}) + "\n")
     log = read_jsonl(path)[0]
     assert log.onset_t_s == 0.5
-    for name in SECTION6_FIELDS[2:] + ["attribution_ambiguous"]:
+    for name in SECTION6_FIELDS[2:] + ["attribution_ambiguous"] + OUTCOME_FIELDS + PROVENANCE_FIELDS:
         assert getattr(log, name) is None, name
 
 
@@ -140,6 +174,13 @@ def test_first_scene_contact_is_optional_and_independent_of_the_official_contact
     ("invalid_class", "broken"),
     ("force_source", ""), ("force_source", 5),
     ("kinematic_overlap_count", -1), ("kinematic_overlap_count", 1.5), ("kinematic_overlap_count", True),
+    ("task_success", 1), ("task_success", "true"),
+    ("max_tilt_deg", -0.5), ("max_tilt_deg", float("nan")), ("max_tilt_deg", float("inf")), ("max_tilt_deg", "3"),
+    ("r1_violation_count", -1), ("r1_violation_count", 2.0), ("r1_violation_count", False),
+    ("bd_hash", ""), ("bd_hash", 7), ("adapter_version", ""), ("adapter_version", 1.0),
+    ("manifest_hash", ""), ("manifest_hash", ["x"]),
+    ("benchmark_commits", "fa03f01"), ("benchmark_commits", ["calvin"]), ("benchmark_commits", {"calvin": ""}),
+    ("benchmark_commits", {"": "fa03f01"}), ("benchmark_commits", {"calvin": 1234567}),
 ])
 def test_field_validation(field, value):
     with pytest.raises(ValueError, match=field):
