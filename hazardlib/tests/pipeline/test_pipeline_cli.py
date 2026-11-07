@@ -20,12 +20,16 @@ SPECS = [W.fall_spec(tau=0.3, frac=0.75, spec_id="fall_wait"),
          W.reach_spec(tau=0.3, speed=0.6, frac=0.75, spec_id="reach_wait")]
 
 
-def hazardctl(cwd, *args):
+def run_cli(cwd, config_dir, *args):
     env = dict(os.environ)
     env["PYTHONPATH"] = os.pathsep.join([str(W.HERE.parents[1] / "src"), str(W.HERE)])
-    proc = subprocess.run([sys.executable, "-m", "hazardlib.cli", "--config-dir", str(W.FIXTURE_CONFIG_DIR)]
+    return subprocess.run([sys.executable, "-m", "hazardlib.cli", "--config-dir", str(config_dir)]
                           + [str(a) for a in args], cwd=str(cwd), env=env, stdout=subprocess.PIPE,
                           stderr=subprocess.PIPE, universal_newlines=True)
+
+
+def hazardctl(cwd, *args):
+    proc = run_cli(cwd, W.FIXTURE_CONFIG_DIR, *args)
     assert proc.returncode == 0, proc.stderr
     line = proc.stdout.strip().splitlines()[-1]
     print(line)
@@ -81,3 +85,17 @@ def test_end_to_end_cli_chain_is_deterministic(tmp_path):
     assert again[4]["manifest_hash"] == frz["manifest_hash"]
     assert (tmp_path / "run1" / "frozen" / "instances.jsonl").read_text() == \
         (tmp_path / "run2" / "frozen" / "instances.jsonl").read_text()
+
+    work = tmp_path / "run1"
+    refused = run_cli(work, W.REPO_CONFIG_DIR, "freeze", "--instances", "gated.jsonl", "--task-context",
+                      "tc_pick.yaml", "--specs", "specs.yaml", "--bd", "bd.yaml", "--seed", 0, "--adapter-version",
+                      "fakehost-test", "--out-dir", "frozen_repo")
+    assert refused.returncode == 2 and "cannot freeze: 5 config file(s) unresolved" in refused.stderr
+    assert not (work / "frozen_repo").exists()
+
+    lines = (work / "frozen" / "instances.jsonl").read_text().splitlines()
+    record = json.loads(lines[0])
+    record["onset_time_s"] += 0.01
+    (work / "frozen" / "instances.jsonl").write_text("\n".join([json.dumps(record)] + lines[1:]) + "\n")
+    tampered = run_cli(work, W.FIXTURE_CONFIG_DIR, "verify", "--manifest-dir", "frozen")
+    assert tampered.returncode == 2 and "was modified" in tampered.stderr

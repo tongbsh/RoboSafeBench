@@ -244,10 +244,16 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
+    """Exit status 0 on success, 2 when the inputs are refused (a ``ValueError``: unresolved configuration, a
+    tampered Manifest, an R4 probe source...); anything else propagates with its traceback."""
     args = build_parser().parse_args(argv)
-    if args.config_dir is None:
-        args.config_dir = str(default_config_dir())
-    args.func(args)
+    try:
+        if args.config_dir is None:
+            args.config_dir = str(default_config_dir())
+        args.func(args)
+    except ValueError as exc:
+        print("hazardctl %s: error: %s" % (args.command, exc), file=sys.stderr)
+        return 2
     return 0
 
 
