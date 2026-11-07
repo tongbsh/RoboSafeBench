@@ -270,7 +270,13 @@ def _entity_list(task_entities: Optional[Sequence[str]]) -> Optional[List[str]]:
 
 class HazardRuntime:
     """See the module docstring. One runtime serves every environment index of one host; the episodes of
-    different indices are independent."""
+    different indices are independent.
+
+    One host, one live runtime (01 §3.3 item 16, D13 c): the constructor calls ``host.install_hooks(self)``, so a
+    runtime constructed later on the same host takes the hooks over and the earlier one is void from then on
+    (using it records wrong quantities). There is deliberately no guard against a second runtime: the
+    conformance suite takes the hooks over probe by probe. Drivers, the gates and the T_stop protocol therefore
+    hold one session (with its runtime) per host instead of the host itself."""
 
     def __init__(self, host: Any, cfg: RuntimeConfig, provenance: Optional[Provenance] = None) -> None:
         require_methods(host)
@@ -540,6 +546,23 @@ class HazardRuntime:
                 "setup_reason": ep.setup_reason, "r1_violation_count": ep.r1_violations,
                 "instability": None if ep.instability is None else dict(ep.instability),
                 "log": ep.log}
+
+    def hazard_handle(self, env: int) -> Optional[HazardHandle]:
+        """Privileged, like :meth:`hazard_state`: the handle of the hazard allocated for the running episode of
+        ``env``, for host calls that take a handle (``render_check``). ``None`` when no hazard is allocated."""
+        ep = self._running.get(_env_index(env))
+        return None if ep is None else ep.handle
+
+    def hazard_state(self, env: int) -> Optional[HazardState]:
+        """Privileged accessor (D13 d): ``host.hazard_state`` of the hazard allocated for the running episode of
+        ``env``, parked or not. ``None`` when no hazard is allocated: no running episode (not begun yet, or
+        ``end_episode`` has freed the hazard) or a control episode.
+
+        For the G1 Oracle, a G2 avoider and the gates only. It must never enter a policy observation (R5).
+        Only the runtime that currently holds the host's hooks answers correctly: a runtime constructed later
+        on the same host takes the hooks over and this one is void from then on (01 §3.3 item 16)."""
+        handle = self.hazard_handle(env)
+        return None if handle is None else self.host.hazard_state(handle)
 
     def _episode(self, env: int) -> Optional[_Episode]:
         env = _env_index(env)
