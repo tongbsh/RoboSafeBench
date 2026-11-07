@@ -2,6 +2,7 @@
 import ast
 import importlib
 import re
+import sys
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,42 @@ FORBIDDEN_PREFIXES = ("isaac",)
 BENCH_PACKAGES = ["libero", "simplerenv", "robotwin", "robocasa", "robodojo", "calvin"]
 # Builtins that are only subscriptable at runtime from Python 3.9.
 GENERIC_BUILTINS = {"list", "dict", "tuple", "set", "frozenset", "type"}
+# Frozen copy of sys.stdlib_module_names from CPython 3.11.18 (305 names); Python 3.8 has no such attribute.
+STDLIB_MODULE_NAMES_PY311 = frozenset({
+    "__future__", "_abc", "_aix_support", "_ast", "_asyncio", "_bisect", "_blake2", "_bootsubprocess", "_bz2",
+    "_codecs", "_codecs_cn", "_codecs_hk", "_codecs_iso2022", "_codecs_jp", "_codecs_kr", "_codecs_tw",
+    "_collections", "_collections_abc", "_compat_pickle", "_compression", "_contextvars", "_crypt", "_csv",
+    "_ctypes", "_curses", "_curses_panel", "_datetime", "_dbm", "_decimal", "_elementtree", "_frozen_importlib",
+    "_frozen_importlib_external", "_functools", "_gdbm", "_hashlib", "_heapq", "_imp", "_io", "_json",
+    "_locale", "_lsprof", "_lzma", "_markupbase", "_md5", "_msi", "_multibytecodec", "_multiprocessing",
+    "_opcode", "_operator", "_osx_support", "_overlapped", "_pickle", "_posixshmem", "_posixsubprocess",
+    "_py_abc", "_pydecimal", "_pyio", "_queue", "_random", "_scproxy", "_sha1", "_sha256", "_sha3", "_sha512",
+    "_signal", "_sitebuiltins", "_socket", "_sqlite3", "_sre", "_ssl", "_stat", "_statistics", "_string",
+    "_strptime", "_struct", "_symtable", "_thread", "_threading_local", "_tkinter", "_tokenize", "_tracemalloc",
+    "_typing", "_uuid", "_warnings", "_weakref", "_weakrefset", "_winapi", "_zoneinfo", "abc", "aifc",
+    "antigravity", "argparse", "array", "ast", "asynchat", "asyncio", "asyncore", "atexit", "audioop", "base64",
+    "bdb", "binascii", "bisect", "builtins", "bz2", "cProfile", "calendar", "cgi", "cgitb", "chunk", "cmath",
+    "cmd", "code", "codecs", "codeop", "collections", "colorsys", "compileall", "concurrent", "configparser",
+    "contextlib", "contextvars", "copy", "copyreg", "crypt", "csv", "ctypes", "curses", "dataclasses",
+    "datetime", "dbm", "decimal", "difflib", "dis", "distutils", "doctest", "email", "encodings", "ensurepip",
+    "enum", "errno", "faulthandler", "fcntl", "filecmp", "fileinput", "fnmatch", "fractions", "ftplib",
+    "functools", "gc", "genericpath", "getopt", "getpass", "gettext", "glob", "graphlib", "grp", "gzip",
+    "hashlib", "heapq", "hmac", "html", "http", "idlelib", "imaplib", "imghdr", "imp", "importlib", "inspect",
+    "io", "ipaddress", "itertools", "json", "keyword", "lib2to3", "linecache", "locale", "logging", "lzma",
+    "mailbox", "mailcap", "marshal", "math", "mimetypes", "mmap", "modulefinder", "msilib", "msvcrt",
+    "multiprocessing", "netrc", "nis", "nntplib", "nt", "ntpath", "nturl2path", "numbers", "opcode", "operator",
+    "optparse", "os", "ossaudiodev", "pathlib", "pdb", "pickle", "pickletools", "pipes", "pkgutil", "platform",
+    "plistlib", "poplib", "posix", "posixpath", "pprint", "profile", "pstats", "pty", "pwd", "py_compile",
+    "pyclbr", "pydoc", "pydoc_data", "pyexpat", "queue", "quopri", "random", "re", "readline", "reprlib",
+    "resource", "rlcompleter", "runpy", "sched", "secrets", "select", "selectors", "shelve", "shlex", "shutil",
+    "signal", "site", "smtpd", "smtplib", "sndhdr", "socket", "socketserver", "spwd", "sqlite3", "sre_compile",
+    "sre_constants", "sre_parse", "ssl", "stat", "statistics", "string", "stringprep", "struct", "subprocess",
+    "sunau", "symtable", "sys", "sysconfig", "syslog", "tabnanny", "tarfile", "telnetlib", "tempfile",
+    "termios", "textwrap", "this", "threading", "time", "timeit", "tkinter", "token", "tokenize", "tomllib",
+    "trace", "traceback", "tracemalloc", "tty", "turtle", "turtledemo", "types", "typing", "unicodedata",
+    "unittest", "urllib", "uu", "uuid", "venv", "warnings", "wave", "weakref", "webbrowser", "winreg",
+    "winsound", "wsgiref", "xdrlib", "xml", "xmlrpc", "zipapp", "zipfile", "zipimport", "zlib", "zoneinfo",
+})
 
 
 def _sources(root):
@@ -46,14 +83,26 @@ def test_core_imports_no_simulator_or_dynisafety(path):
 
 
 def test_core_dependencies_are_stdlib_numpy_yaml_or_itself_only():
-    import sys
-    stdlib = set(getattr(sys, "stdlib_module_names", ())) or {
-        "dataclasses", "enum", "functools", "hashlib", "json", "math", "numbers", "os", "pathlib",
-        "re", "typing", "__future__"}
+    stdlib = set(getattr(sys, "stdlib_module_names", ())) or STDLIB_MODULE_NAMES_PY311
     allowed = stdlib | {"numpy", "yaml", "hazardlib"}
     for path in _sources(CORE):
         for module in _imports(_parse(path)):
             assert module.split(".")[0] in allowed, "%s imports %s" % (path.name, module)
+
+
+@pytest.mark.skipif(not hasattr(sys, "stdlib_module_names"), reason="sys.stdlib_module_names needs 3.10+")
+def test_stdlib_imports_of_the_sources_are_in_the_frozen_copy():
+    """Keeps the 3.8 fallback above honest: what the running interpreter calls stdlib must be in the copy."""
+    imported = {module.split(".")[0] for path in _sources(SRC) for module in _imports(_parse(path))}
+    stdlib_used = imported & set(sys.stdlib_module_names)
+    assert stdlib_used, "no stdlib import found; the scan is broken"
+    assert stdlib_used <= STDLIB_MODULE_NAMES_PY311, sorted(stdlib_used - STDLIB_MODULE_NAMES_PY311)
+
+
+def test_the_frozen_stdlib_copy_does_not_admit_forbidden_packages():
+    assert len(STDLIB_MODULE_NAMES_PY311) == 305
+    assert not (STDLIB_MODULE_NAMES_PY311 & (FORBIDDEN_IMPORTS | {"numpy", "yaml", "hazardlib"}))
+    assert not any(name.startswith(FORBIDDEN_PREFIXES) for name in STDLIB_MODULE_NAMES_PY311)
 
 
 @pytest.mark.parametrize("path", _sources(SRC), ids=lambda p: str(p.relative_to(SRC)))
