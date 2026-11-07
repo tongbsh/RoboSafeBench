@@ -4,11 +4,11 @@ from hazardlib import ConfigError, load_config
 from hazardlib._records import find_markers
 
 EXPECTED = {
-    "contact": {"restitution_e", "gap_tolerance_s", "impulse_gate_ns"},
+    "contact": {"restitution_e", "gap_tolerance_s"},
     "clamp": {"t_q_s", "opposing_normals_tol_rad"},
     "toppling": {"tilt_threshold_deg"},
     "exposure": {"low_exposure_radius_m"},
-    "stability": {"hazard_induced_max_distance_m"},
+    "stability": {"hazard_induced_max_distance_m", "attribution_window_s"},
 }
 
 
@@ -28,6 +28,11 @@ def test_d9_key_changes_are_applied(semantics):
     assert "tilt_threshold_deg" in semantics["toppling"] and "tilt_threshold_rad" not in semantics["toppling"]
 
 
+def test_d10_key_changes_are_applied(semantics):
+    assert "impulse_gate_ns" not in semantics["contact"]                     # D10 j: no impulse gate
+    assert "attribution_window_s" in semantics["stability"]                  # D10 b
+
+
 def test_every_leaf_is_still_a_placeholder(semantics):
     leaves = [value for body in semantics.values() for value in body.values()]
     assert leaves and set(leaves) == {"PLACEHOLDER"}
@@ -42,4 +47,5 @@ def test_strict_loading_fails_naming_the_keys_and_non_strict_loads(config_dir):
     assert "unresolved value(s) with strict=True" in message
     assert "contact.gap_tolerance_s=PLACEHOLDER" in message
     assert "stability.hazard_induced_max_distance_m=PLACEHOLDER" in message
+    assert "stability.attribution_window_s=PLACEHOLDER" in message
     assert load_config("semantics", strict=False, config_dir=config_dir)["contact"]["gap_tolerance_s"] == "PLACEHOLDER"

@@ -1,4 +1,4 @@
-# Safety semantics parameters - SKELETON (T01), keys revised by T03 (decision D9).
+# Safety semantics parameters - SKELETON (T01), keys revised by T03 (decisions D9, D10).
 #
 # Structure only; every leaf is PLACEHOLDER (no invented numbers). Keys follow
 # docs/design/00_paradigm.md §6 and rules R7-R11; the owner is T03, and all of
@@ -7,7 +7,6 @@
 contact:
   restitution_e: PLACEHOLDER              # J = m (1 + e) v_n (§6 severity); the main report uses e = 0 (D9 b)
   gap_tolerance_s: PLACEHOLDER            # longest contact loss still counted as one continuous contact (D9 c)
-  impulse_gate_ns: PLACEHOLDER            # official-contact impulse gate (00 §11); not used by T03 code
 clamp:
   t_q_s: PLACEHOLDER                      # min duration of constrained contact (§6)
   opposing_normals_tol_rad: PLACEHOLDER   # "roughly opposite" normals: |pi - angle| below this
@@ -17,3 +16,4 @@ exposure:
   low_exposure_radius_m: PLACEHOLDER      # nearer than this to the hit point counts as exposed (§5.2, D9 e)
 stability:
   hazard_induced_max_distance_m: PLACEHOLDER   # unstable entity within this distance of the hazard centroid (D9 d)
+  attribution_window_s: PLACEHOLDER            # attribution window is [t_onset, nominal_hit_time + this] (D10 b)
