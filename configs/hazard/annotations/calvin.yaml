@@ -1,0 +1,6 @@
+# Per-task annotations for CALVIN (R2 annotation budget, task H1): 0 lines.
+# Every role of the CALVIN TaskContexts comes either from the oracle configuration (new_playtable_tasks.yaml,
+# read by hazardhosts/calvin/roles.py, source oracle_config) or from the probe's grasped / moved discovery
+# (source probe_inferred); none of the 23 tasks covered by the debug dataset needed a manual line.
+# Shape if one is ever needed: {<task_id>: {<role>: <entity name of CalvinHost.object_poses>}}.
+{}

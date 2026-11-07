@@ -1,0 +1,95 @@
+# CALVIN host settings (task H1): read by hazardhosts.calvin.host.CalvinHost and hazardhosts.calvin.target.
+# Scene facts here were measured by the probes in hazardlib/src/hazardhosts/calvin/probes/ (named per entry);
+# host choices carry their reason. Machine-specific paths are NOT here: the dataset directory and the EGL
+# device come from $CALVIN_DATASET_DIR and $CALVIN_EGL_DEVICE (or the factory arguments).
+adapter_version: "calvin-h1-1"
+
+dataset:
+  # layout id prefix -> split directory of the dataset (layout ids: "<prefix>/<frame>", see dataset.py)
+  splits: {val: validation, train: training}
+  # split whose .hydra/merged_config.yaml builds the env (the evaluation script uses the validation split)
+  env_split: val
+
+# Policy cameras. The dataset config also has `tactile` (DIGIT sensors rendered by pyrender/tacto from the
+# robot and scene meshes only, so a hazard never appears there); the evaluation models use static + gripper.
+cameras: [static, gripper]
+
+# The evaluation's success oracle: Tasks(...) from this file, relative to the calvin checkout (the parent of
+# the calvin_env directory). evaluate_policy.py loads the same file.
+oracle_tasks_config: calvin_models/conf/callbacks/rollout/tasks/new_playtable_tasks.yaml
+
+hazard_body:
+  # orange, not used by any CALVIN object (blocks are red / blue / pink, the table is wood and grey)
+  rgba: [1.0, 0.45, 0.0, 1.0]
+  # PyBullet's createMultiBody defaults, written out so that they are part of the configuration
+  lateral_friction: 0.5
+  spinning_friction: 0.0
+  rolling_friction: 0.0
+  restitution: 0.0
+  # collision filter of a released hazard: Bullet's default group of a dynamic body, colliding with all groups
+  collision_group: 1
+  collision_mask: -1
+  # Parked bodies are kinematic (mass 0), collide with nothing (filter mask 0) and sit here: 30 m below the
+  # floor plane (whose box ends at z = -10 m), beyond both cameras' far planes (static 10 m, gripper 2 m).
+  park_origin_m: [0.0, 0.0, -30.0]
+  park_spacing_m: [1.0, 0.0, 0.0]
+
+contacts:
+  # A hazard touches a partner when their closest-point distance (getClosestPoints) is <= this after a
+  # physics step. 0: geometric contact or overlap only (probes/physics.py: a resting sphere settles at -1e-5 m).
+  touch_distance_m: 0.0
+
+# min_distance(): getClosestPoints search radius (m); beyond it the reported distance is this value.
+min_distance_search_m: 10.0
+
+# Instability detector, run before and after every physics step on the robot joints, the scene joints, the
+# movable objects and every unparked hazard. Normal CALVIN motion stays far below these (the robot's joint
+# velocity is capped at max_velocity 2 rad/s, recorded blocks move < 2 m/s); an exploding solver exceeds them.
+instability:
+  max_lin_speed_mps: 100.0
+  max_ang_speed_radps: 1000.0
+  max_joint_speed: 100.0     # rad/s (revolute) or m/s (prismatic)
+
+# ConformanceTarget.inject_engine_fault: the body is given this linear speed (m/s), 10x the detector limit.
+fault_injection_speed_mps: 1000.0
+
+# support_surfaces(): upward faces of the fixed table, from probes/surfaces.py (vertical rays on a 5 mm grid with
+# the robot and the blocks moved away; faces within 1 degree of +z, >= 400 hits). Each box is the extent of the
+# hits at that height; fixtures standing on a face (button, switch, lamp housings) are not cut out. The drawer and
+# the sliding door move, so they are not support surfaces.
+support_surfaces:
+  - {name: table_top, min_m: [-0.44, -0.175, 0.44], max_m: [0.44, 0.02, 0.44], source: "probes/surfaces.py: table/base_link, z 0.440, 6381 hits"}
+  - {name: slider_shelf, min_m: [-0.36, 0.02, 0.441], max_m: [-0.105, 0.125, 0.441], source: "probes/surfaces.py: table/plank_link, z 0.441, 1123 hits"}
+  - {name: cabinet_top, min_m: [-0.44, 0.145, 0.648], max_m: [0.44, 0.175, 0.648], source: "probes/surfaces.py: table/base_link, z 0.648, 931 hits"}
+
+# Conformance scenario (hazardlib.conformance.target.Scenario; hazardhosts.calvin.target). Measured with
+# probes/scenario.py on the layouts named here (the commands are in the H1 report).
+scenario:
+  # Reset with the red block lifted in the gripper (frame 554105), judged against frame 554085 (block on the
+  # table): `scenario still` shows the oracle true and block_red held for 1.5 s of hold_action, TCP drift 0.4 mm.
+  still: {task_id: lift_red_block_table, layout_id: "val/554085..554105", seed: 0}
+  # Replay of the play data from frame 555000: the closed, empty gripper moves along +x at 0.2-0.37 m/s at
+  # z 0.52-0.53 from 0.7 s to 1.0 s (`scenario motion`); task id only names the oracle (not completed here).
+  motion: {task_id: unstack_block, layout_id: "val/555000", seed: 0}
+  probe_agent: {kind: probe, shape: sphere, half_extents_m: [0.02], mass_kg: 0.05}
+  # `scenario free`: clearance 0.065 m, 94 px in the static and 210 px in the gripper camera, >= 0.15 m free
+  # travel along all six axes.
+  free_point_m: [-0.055, -0.21, 0.52]
+  free_direction: [1.0, 0.0, 0.0]
+  # `scenario line`: from +x, link 4 is the first body on the line (normal 1.5 deg from head-on); radius_m is
+  # its extent along the line from its centre of mass for the 0.02 m probe sphere.
+  strike: {body: robot/panda_link4, direction: [-1.0, 0.0, 0.0], radius_m: 0.0675}
+  # `scenario line`: from -y, the held block is the first body on the line (normal 16.5 deg from head-on).
+  held_strike: {body: block_red, direction: [0.0, 1.0, 0.0], radius_m: 0.0301}
+  # `scenario drop`: the column above (0.25, -0.08) is free down to the table top (first touch at centre z 0.46).
+  # From z 0.70 the 0.02 m sphere lands at 2.2 m/s, 9.1 mm per physics step: below the R1 limit of 0.5 x its
+  # radius (from 1.04 m, 25 hooks of the C4 / C5 drops exceeded it).
+  drop_point_m: [0.25, -0.08, 0.70]
+  drop_surface_height_m: 0.44
+  # t = 25/30 s: frame 555025, inside the +x stretch; +y is perpendicular to the TCP velocity. (0.8 s, frame
+  # 555024, would do as well, but kinematics.subdivide.hook_times then repeats the last keyframe time:
+  # ceil((0.8 - 0.5) / 0.01) = 31 in floating point, see the H-calvin report.)
+  motion_hit_time_s: 0.8333333333333334
+  motion_hit_direction: [0.0, 1.0, 0.0]
+  motion_hold_time_s: 0.8
+  motion_duration_s: 1.2

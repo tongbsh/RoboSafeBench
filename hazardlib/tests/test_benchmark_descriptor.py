@@ -23,19 +23,42 @@ def test_requirements_constant_matches_the_integration_rules():
         "state_access.eef", "state_access.objects"]
 
 
-# --------------------------------------------------------------- calvin draft
+# --------------------------------------------------------------- calvin (T01 draft, completed by H1)
+
+# The T01 draft's `unknown` fields (02 §2 [待探针]); H1 resolved each with a probe or a conformance check.
+CALVIN_PROBED_FIELDS = [
+    "engine.version", "gravity_mps2", "hazard_ccd", "parallel.num_envs", "parallel.batched",
+    "kinematic_pose_set", "release_with_velocity", "contact_tier", "distance",
+    "robot_contact_bodies.include", "robot_contact_bodies.exclude", "eef_contact_radius_m",
+    "state_access.base", "success_oracle.readonly",
+    "determinism.same_seed_repro", "invalid_sample_mapping.setup_invalid",
+    "invalid_sample_mapping.sim_unstable", "observation_isolation.hazard_visible_in_rgb",
+    "observation_isolation.hazard_in_state_vectors", "policy_interface.kind"]
+
 
 @pytest.fixture
 def calvin(config_dir):
-    return load_bd("calvin", config_dir=config_dir)
+    return load_bd("calvin", strict=True, config_dir=config_dir)
 
 
-def test_calvin_draft_loads_non_strict_and_keeps_verified_facts(calvin):
+def _calvin_with_unknown(config_dir, paths):
+    from hazardlib.config import load_yaml
+    data = load_yaml(config_dir / "bd" / "calvin.yaml")
+    for path in paths:
+        node = data
+        *parents, leaf = path.split(".")
+        for key in parents:
+            node = node[key]
+        node[leaf] = "unknown"
+    return data
+
+
+def test_calvin_loads_strict_and_keeps_verified_facts(calvin):
     assert calvin.name == "calvin"
     assert calvin.benchmark.repo == "mees/calvin"
     assert calvin.benchmark.commits == {"calvin": "fa03f01", "calvin_env": "797142c"}
     assert calvin.python.required == "3.8" and calvin.python.env_name == "calvin_venv"
-    assert calvin.engine.name == "pybullet" and calvin.engine.version == "unknown"
+    assert calvin.engine.name == "pybullet" and calvin.engine.version == "3.2.7"
     # 02 §1: bullet_time_step=240, control_freq=30, action_repeat=int(240 // 30)
     assert calvin.timebase.physics_dt_s == pytest.approx(1.0 / 240.0, rel=1e-12)
     assert calvin.timebase.control_dt_s == pytest.approx(1.0 / 30.0, rel=1e-12)
@@ -46,40 +69,29 @@ def test_calvin_draft_loads_non_strict_and_keeps_verified_facts(calvin):
     assert calvin.task_entity_source == "oracle_config"
 
 
-def test_calvin_draft_unknown_fields_are_exactly_the_probe_checklist(calvin):
-    assert calvin.unknown_fields() == [
-        "engine.version", "gravity_mps2", "hazard_ccd", "parallel.num_envs", "parallel.batched",
-        "kinematic_pose_set", "release_with_velocity", "contact_tier", "distance",
-        "robot_contact_bodies.include", "robot_contact_bodies.exclude", "eef_contact_radius_m",
-        "state_access.base", "success_oracle.readonly",
-        "determinism.same_seed_repro", "invalid_sample_mapping.setup_invalid",
-        "invalid_sample_mapping.sim_unstable", "observation_isolation.hazard_visible_in_rgb",
-        "observation_isolation.hazard_in_state_vectors", "policy_interface.kind"]
+def test_calvin_has_no_unknown_field_left(calvin):
+    assert calvin.unknown_fields() == []
 
 
-def test_calvin_draft_tier_is_undetermined_and_names_the_blocking_fields(calvin):
-    """Derivation: eef/objects are verified true, but contact_tier,
-    kinematic_pose_set and release_with_velocity are [待探针] in 02 §2, so
-    neither A, B nor C can be asserted yet."""
+def test_calvin_is_tier_a(calvin):
+    assert calvin.tier() is Tier.A
+
+
+def test_calvin_tier_rests_on_the_probed_fields(config_dir):
+    """Derivation: eef/objects are verified true (02 §2); contact_tier, kinematic_pose_set and
+    release_with_velocity were [待探针] in the draft. Without them the tier is undetermined again."""
+    probed = ["contact_tier", "kinematic_pose_set", "release_with_velocity"]
     with pytest.raises(TierUndeterminedError) as err:
-        calvin.tier()
-    assert err.value.fields == ["contact_tier", "kinematic_pose_set", "release_with_velocity"]
+        BenchmarkDescriptor.from_dict(_calvin_with_unknown(config_dir, probed)).tier()
+    assert err.value.fields == probed
     assert "contact_tier" in str(err.value)
 
 
-def test_calvin_draft_becomes_tier_a_once_probes_confirm_the_01_example_values(calvin, config_dir):
-    from hazardlib.config import load_yaml
-    data = load_yaml(config_dir / "bd" / "calvin.yaml")
-    data["contact_tier"] = "A"
-    data["kinematic_pose_set"] = True
-    data["release_with_velocity"] = True
-    assert BenchmarkDescriptor.from_dict(data).tier() is Tier.A
-
-
-def test_calvin_draft_strict_lists_every_unknown(config_dir):
+def test_calvin_strict_would_list_every_probed_field(config_dir):
     with pytest.raises(SpecError) as err:
-        load_bd("calvin", strict=True, config_dir=config_dir)
-    for path in ("kinematic_pose_set", "determinism.same_seed_repro", "engine.version"):
+        BenchmarkDescriptor.from_dict(_calvin_with_unknown(config_dir, CALVIN_PROBED_FIELDS), strict=True)
+    assert "%d unknown" % len(CALVIN_PROBED_FIELDS) in str(err.value)
+    for path in CALVIN_PROBED_FIELDS:
         assert path in str(err.value)
 
 
