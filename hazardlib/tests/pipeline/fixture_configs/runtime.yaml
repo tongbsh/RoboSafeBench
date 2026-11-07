@@ -1,0 +1,6 @@
+# TEST FIXTURE (T06): a fully resolved copy of configs/hazard/runtime.yaml for the FakeHost pipeline tests.
+# Every value is test data chosen for the FakeHost world in pipeline_world.py, not a pre-registered threshold.
+max_step_ratio: 0.5
+release_velocity_window_s: 0.02
+keyframe_dt_s: 0.01
+keyframe_interp_tol_m: 0.001
