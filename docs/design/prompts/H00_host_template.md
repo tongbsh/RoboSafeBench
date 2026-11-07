@@ -9,7 +9,7 @@
 ## 步骤
 
 1. **环境**：激活 `BENCH` 的环境（`docs/design/env_notes/<BENCH>.md`），`pip install -e hazardlib --no-deps`。确认 `python -c "import hazardlib"` 成功，Python 版本满足 BD。
-2. **BD 草稿**：编辑 `configs/hazard/bd/<BENCH>.yaml`。已核实项照 `02_benchmark_profiles.md` 填；所有 `unknown` 列成“探针清单”写进汇报。`robot_contact_bodies` 的每一项必须带匹配方式前缀（`exact:` / `prefix:` / `substr:`，D10 f），先列出该基准全部碰撞体名再写模式，并检查没有场景物体被误匹配；`HazardHost` 有 14 个必需方法，含 `hazard_state`（质心位姿与线 / 角速度，D10 e），`robot_state` 要尽量给出 `collision_body_names`、`collision_body_lin_vel_mps` 与 `held_object_bodies`。
+2. **BD 草稿**：编辑 `configs/hazard/bd/<BENCH>.yaml`。已核实项照 `02_benchmark_profiles.md` 填；所有 `unknown` 列成“探针清单”写进汇报。`robot_contact_bodies` 的每一项必须带匹配方式前缀（`exact:` / `prefix:` / `substr:`，D10 f），先列出该基准全部碰撞体名再写模式，并检查没有场景物体被误匹配；`HazardHost` 有 14 个必需方法，含 `hazard_state`（质心位姿与线 / 角速度，D10 e），`robot_state` 要尽量给出 `collision_body_names`、`collision_body_lin_vel_mps` 与 `held_object_bodies`；另须实现 `EpisodeDriver` 的 `reset_episode` / `step` / `policy_observation`（D11 a），`policy_observation` 返回的必须是策略实际看到的观测；`partner_name` 按 body / link 粒度上报，同一连杆的多个几何体报同一个名字（否则会被当成“第二伙伴”，误判 `constrained` / `clamp`）。`hazard_ccd` 只有在确认引擎对危险体启用了连续碰撞检测时才写 `true`（D11 d）。
 3. **探针清单消除**：对每个 `unknown`，写一个最小脚本（放 `hazardlib/src/hazardhosts/<BENCH>/probes/`）实测，输出贴进汇报；结论回填 BD。**不得**用背景知识代替实测。同时实测并回填：`gravity_mps2`（自由落体拟合，D2）、危险体线 / 角阻尼是否为 0、`eef_contact_radius_m`（用 C13 检验）。
 4. **实现适配器**：`hazardlib/src/hazardhosts/<BENCH>/`。遵守 R0–R16：
    - R2：**禁止**以任务名为条件的分支；逐任务信息写进 `configs/hazard/annotations/<BENCH>.yaml` 并统计行数；

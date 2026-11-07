@@ -45,6 +45,7 @@ python: {required: "3.8", env_name: calvin_venv}
 engine: {name: pybullet, version: ?}
 timebase: {physics_dt_s: 0.004167, control_dt_s: 0.0333, substeps_per_action: 8}
 gravity_mps2: ?                    # 宿主自由落体实测值，不得默认 9.81（CALVIN 源码里是 -9.8）；fall 族的 τ 反解用它（D2）
+hazard_ccd: ?                      # 宿主是否对危险体启用连续碰撞检测；为 true 时 G0 不按 R1 位移比例拒绝实例（D11 d）
 parallel: {num_envs: 1, batched: false}
 loop_owner: user_script            # user_script | policy_side | env_internal
 hook_point: "wrap env.step; override step to run hazard hooks per physics substep"
@@ -96,6 +97,18 @@ policy_interface: {kind: calvin_model_step, notes: "..."}
 | `hold_action(env) -> Action` | 基准原生的“保持 / 无动作”动作，用于 T_stop 与 Oracle 门 |
 | `install_hooks(runtime)` | 把 `runtime.begin_episode / pre_step / post_step / end_episode` 挂到基准的重置与**最细物理步**上（与 §3.3 的 `HazardRuntime` 方法名一致；T01 汇报修订建议 1） |
 
+### 3.1a 回合驱动（`EpisodeDriver`，D11 a）
+
+与 `HazardHost` 分开声明；凡要跑一致性测试、门控（G1 / G2）或 T_stop 校准的宿主都**必须**实现。
+
+| 方法 | 语义与约束 |
+|---|---|
+| `reset_episode(env, task_id, layout_id, seed)` | 把基准重置到指定任务、布局（初始状态）与种子；重置过程中触发已安装的重置钩子（即 `runtime.begin_episode(env)`） |
+| `step(env, action)` | 用基准原生动作推进**一个控制步**；逐物理步的钩子在其内部触发 |
+| `policy_observation(env) -> Dict[str, Any]` | 策略实际看到的观测：图像（名 → `H×W×3 uint8`）与非视觉状态向量（名 → 一维 float 数组）。键名在同一宿主内保持稳定；C2、C7、C9 用它与无危险运行比较 |
+
+回合绑定：调用方先 `runtime.arm(env, instance, task_entities=None, control_id=None)` 登记下一回合的实例（`instance=None` 表示无危险对照回合，此时必须给 `control_id`，用作日志的 `instance_id`），再 `reset_episode`。基准原生评测循环（不经过 `reset_episode`）走的也是“先 `arm`、再由重置钩子触发 `begin_episode`”这条路径。
+
 ### 3.2 可选
 
 | 方法 | 作用 | 缺失时 |
@@ -107,13 +120,13 @@ policy_interface: {kind: calvin_model_step, notes: "..."}
 
 ### 3.3 HazardRuntime（核心，不由适配器实现）
 
-`begin_episode(env, instance)`、`pre_step(env)`、`post_step(env)`、`end_episode(env) -> HazardEventLog`。运行时负责：按秒推进关键帧、子步插值、碰撞前回滚与释放（R8）、事件记录、不稳定监测。适配器**只**转发钩子。
+`arm(env, instance, task_entities=None, control_id=None)`、`begin_episode(env)`、`pre_step(env)`、`post_step(env)`、`end_episode(env) -> HazardEventLog`（D11 a）。运行时负责：按秒推进关键帧、R1 复核（D11 d）、碰撞前回滚与释放（R8）、事件记录、不稳定监测。适配器**只**转发钩子。
 
 ---
 
 ## 4. 规则 R1–R16
 
-**R1 单位与时钟。** 规格里一律用秒与米，**禁止**出现步数常数。适配器在引擎能提供的**最细**粒度调用钩子。每次钩子调用中危险体位移**必须** ≤ 0.5 × 危险体最小半尺寸，否则适配器**必须**子步插值或使用连续检测（C3 检验）。
+**R1 单位与时钟。** 规格里一律用秒与米，**禁止**出现步数常数。适配器在引擎能提供的**最细**粒度调用钩子。每次钩子调用中危险体位移**必须** ≤ 0.5 × 危险体最小半尺寸。钩子已在最细物理步时，运行时无法在两个物理步之间插步，因此这是**检查项**（D11 d）：G0 预先拒绝违反的实例（运动学阶段按路径检查，动力学阶段按预测最大速度检查），除非 BD 声明 `hazard_ccd: true`；运行时逐钩子用 `hazard_state` 复核，并记 `r1_violation_count`（C3 检验）。
 
 **R2 无逐任务代码。** 适配器里**禁止**出现以任务名为条件的分支。逐任务信息只能写在 `configs/hazard/annotations/<bench>.yaml`（角色、主臂等声明式字段）。每一行注解计入「注解预算」，在汇报中报告；某任务无法用声明式注解接入，则标为 `unsupported` 并写明原因，**不得**为它写特例代码。
 
@@ -139,7 +152,7 @@ policy_interface: {kind: calvin_model_step, notes: "..."}
 
 **R13 不改上游。** 通过包装、子类、混入或在我们自己的启动脚本里做猴子补丁来接入。若子类覆盖需要复制上游代码，**必须**固定上游提交号并在 import 时断言；若补丁无法避免，存为 `patches/<bench>/*.patch`（仓库既有约定）并在汇报中列出。
 
-**R14 日志。** 每回合写 `hazard_events.jsonl`，字段见 `00_paradigm.md` §6，另含 BD 哈希、适配器版本、基准提交号、Manifest 哈希。逐步 trace（危险体位置、EEF 位置、接触事件、阶段）按控制频率写入，路径与格式沿用仓库诊断 trace 的约定。
+**R14 日志。** 每回合写 `hazard_events.jsonl`，字段见 `00_paradigm.md` §6，另含来源字段 `bd_hash`、`adapter_version`、`benchmark_commits`、`manifest_hash`，以及 `task_success`（D11 c）。Manifest 含所用 `configs/hazard/*.yaml` 的逐文件哈希；冻结时配置必须能 strict 加载。逐步 trace（危险体位置、EEF 位置、接触事件、阶段）按控制频率写入，路径与格式沿用仓库诊断 trace 的约定。
 
 **R15 大声失败。** 缺少声明的能力时，启动阶段就抛 `CapabilityError`；**禁止**静默降级、**禁止**用默认值掩盖缺失的接口。
 

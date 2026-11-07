@@ -12,14 +12,15 @@
    - `conftest.py`：`--host=<name>` 选项，通过注册表解析宿主工厂；`--host=fake` 使用 `FakeHost`；注册表 `register_host(name, factory)`，适配器包在 import 时注册；
    - `python -m hazardlib.conformance --host <name> --out report.json`：运行并输出 JSON 报告（每个测试的通过 / 失败 / 跳过及原因、测得的数值、BD 哈希、适配器版本）。
 2. `configs/hazard/conformance.yaml`：所有容差与阈值。**不要编造看似合理的数字然后当作标准**——先用 `FakeHost` 的解析值定出能区分“正确”与“变异体”的最宽容差，把推导过程写进 YAML 的注释和你的汇报；真实仿真器上的容差由各适配器任务在汇报里提出调整建议，**不得**在适配器任务里悄悄改。
-3. 变异体验证 `hazardlib/tests/test_mutants.py`：对 `FakeHost` 的每个变异开关（`tunneling`、`residual_velocity`、`state_leak`、`wrong_dt`、`no_rollback`、`park_interacts`、`oracle_depends_on_hazard`、`bad_standoff`、`hook_dependent_release`）断言**至少一个**对应的 C 测试失败；同时断言无缺陷的 `FakeHost` 通过全部 C 测试。给出“变异开关 → 抓到它的测试编号”对照表。
+3. 变异体验证 `hazardlib/tests/test_mutants.py`：对 `FakeHost` 的每个变异开关（`tunneling`、`residual_velocity`、`state_leak`、`wrong_dt`、`no_rollback`、`park_interacts`、`oracle_depends_on_hazard`、`bad_standoff`、`hook_dependent_release`、`post_impact_vn`）断言**至少一个**对应的 C 测试失败；同时断言无缺陷的 `FakeHost` 通过全部 C 测试。给出“变异开关 → 抓到它的测试编号”对照表。
+   回合由 `EpisodeDriver`（D11 a）驱动：C2、C7、C9 用 `policy_observation` 与无危险对照回合（`arm(env, None, control_id=...)`）逐键比较；C3 在高速穿越时同时检查接触事件与 `r1_violation_count`（D11 d）。
 4. C 测试的跳过规则：C6 在 Tier B 允许跳过；C12 仅批量基准；C8 在 BD 声明为 `statistical` 时改为测差异量级；其余不得跳过。跳过必须在报告里写明原因，且**不能因为适配器没实现而跳过**。
 5. **C13（名义命中时机，D1）**：在 `FakeHost` 上实现完整版本——用 `build_hit_path` 构造含 `standoff` 的实例，令机器人沿已知名义路径运动，断言首次官方接触时刻与名义 `t_hit` 之差 < `tol_hit_time_s`；`bad_standoff` 变异体必须使它失败。真实宿主上若没有可重复的名义回放，C13 报告为 `unverified`（**不是**通过），并在汇报里写明原因。C5 同时要求：先实测 `gravity_mps2` 再比较落地时间，并覆盖“FakeHost 取不同重力”的情形。
 
 ## 验收标准（贴输出）
 
 1. `pytest hazardlib/tests -q` 与 `python -m hazardlib.conformance --host fake` 在 `hz38`、`hz311` 全绿。
-2. 变异体对照表完整：9 个变异开关各被至少一个测试抓住；若某个缺陷没有对应测试能抓到，**补测试**，不要降低要求。
+2. 变异体对照表完整：10 个变异开关各被至少一个测试抓住；若某个缺陷没有对应测试能抓到，**补测试**，不要降低要求。
 3. 报告 JSON 的结构稳定（含 schema 版本号），能被 T06 与汇报脚本读取。
 4. 套件不 import 任何仿真库。
 
