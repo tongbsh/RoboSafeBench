@@ -3,6 +3,7 @@ import pytest
 
 from hazardlib.kinematics import (arc_path, free_fall_path, hook_times, needs_substeps, reach_path,
                                   step_displacements, straight_path, subdivide)
+from hazardlib.kinematics.subdivide import insert_instants
 
 PHYSICS_DT = 1.0 / 240.0
 
@@ -22,6 +23,63 @@ def test_hook_times_grid():
                 (0.0, 1.0, float("nan"))):
         with pytest.raises(ValueError):
             hook_times(*bad)
+
+
+def check_hook_grid(grid, t_start, t_end, hook_dt):
+    assert grid[0] == t_start and grid[-1] == t_end
+    steps = np.diff(grid)
+    assert np.all(steps > 0)
+    assert np.all(steps <= hook_dt * (1.0 + 1e-9))
+
+
+@pytest.mark.parametrize("t_start, t_end, hook_dt", [
+    (0.5, 0.8, 0.01),                 # 0.3 / 0.01 rounds up to 31 intervals
+    (0.25, 0.4, 0.01),                # 0.15 / 0.01 rounds up to 16 intervals
+    (11 / 30.0 - 0.1, 11 / 30.0, 0.01),   # the grid lands ~6e-17 s short of the end
+    (0.0, 0.3, 0.1),
+    (1.0, 1.0 + 0.7, 0.1),
+])
+def test_hook_times_round_off_does_not_repeat_the_end(t_start, t_end, hook_dt):
+    grid = hook_times(t_start, t_end, hook_dt)
+    check_hook_grid(grid, t_start, t_end, hook_dt)
+    assert len(grid) == int(round((t_end - t_start) / hook_dt)) + 1
+
+
+def test_hook_times_is_strictly_increasing_on_the_suite_grid():
+    for k in range(9, 160):
+        t_hit = k / 30.0
+        for tau in (0.1, 0.15, 0.2, 0.3, 0.6):
+            if t_hit - tau <= 0:
+                continue
+            for hook_dt in (0.01, 1.0 / 30.0, PHYSICS_DT):
+                check_hook_grid(hook_times(t_hit - tau, t_hit, hook_dt), t_hit - tau, t_hit, hook_dt)
+
+
+def test_insert_instants_gives_way_to_an_instant_one_ulp_off_the_grid():
+    onset, release = 0.5250000000000001, 0.8250000000000001
+    grid = hook_times(onset, 0.9932511799963635, 0.01)
+    assert grid[30] == 0.8250000000000002                         # one ulp past the release instant
+    times = insert_instants(grid, [release, release], 0.01)
+    check_hook_grid(times, grid[0], grid[-1], 0.01)
+    assert release in times.tolist() and 0.8250000000000002 not in times.tolist()
+    assert len(times) == len(grid)
+
+
+def test_insert_instants_keeps_distinct_instants_and_the_grid_ends():
+    grid = hook_times(0.0, 1.0, 0.25)
+    times = insert_instants(grid, [0.1, 0.5, 0.6, 1e-12, 1.0 - 1e-12, -1.0, 2.0], 0.25)
+    assert times.tolist() == [0.0, 0.1, 0.25, 0.5, 0.6, 0.75, 1.0]
+    np.testing.assert_array_equal(insert_instants(grid, [], 0.25), grid)
+    with pytest.raises(ValueError):
+        insert_instants(grid, [0.5], 0.0)
+
+
+def test_subdivide_stays_strictly_increasing_at_a_round_off_end():
+    path = straight_path([0, 0, 0], [3, 0, 0], 0.5, 0.8)
+    times = subdivide(path, 0.02, 0.01)
+    assert np.all(np.diff(times) > 0)
+    assert times[0] == 0.5 and times[-1] == 0.8
+    assert max_step(path, times) <= 0.02
 
 
 def test_fast_straight_path_is_subdivided_to_the_step_limit():

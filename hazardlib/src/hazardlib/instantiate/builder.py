@@ -25,7 +25,7 @@ Steps:
    ``0 <= p_ref_z - top <= 2 h_z + eef_contact_radius_m``; none -> rejected ``no_support_surface``. The normal
    is then tilted out of the horizontal plane so that ``p_ref + standoff(n) n`` has the required height.
 5. **Keyframes** sample the analytic path every ``keyframe_dt_s`` (``hook_times``), plus ``t_hit`` and the
-   release time; the largest linear-interpolation error at interior points must be <= ``keyframe_interp_tol_m``
+   release time (``insert_instants``: a grid point within round-off of either gives way); the largest linear-interpolation error at interior points must be <= ``keyframe_interp_tol_m``
    (else rejected ``keyframe_interp_error``). Orientation: the identity for every keyframe (``AgentSpec``
    has no orientation field yet; recorded as ``hazard_quat_source``).
 6. **Rejections** raise :class:`InstanceRejected` with a reason in :data:`REJECT_REASONS`; a malformed spec or
@@ -43,7 +43,7 @@ from .._records import is_unknown
 from ..hashing import sha256_hex
 from ..kinematics.hit import FAMILY_FALL, FAMILY_REACH, FAMILY_SLIDE, build_hit_path
 from ..kinematics.path import SampledPath
-from ..kinematics.subdivide import hook_times
+from ..kinematics.subdivide import hook_times, insert_instants
 from ..spec.benchmark_descriptor import BenchmarkDescriptor
 from ..spec.hazard_spec import AgentSpec, HazardSpec
 from ..spec.instance import HazardInstance
@@ -293,8 +293,7 @@ def instantiate(spec: HazardSpec, task_context: TaskContext, seed: int, bd: Benc
 
     path = plan.path
     grid = hook_times(path.t_start_s, path.t_end_s, settings.keyframe_dt_s)
-    inner = [t for t in (plan.nominal_hit_time_s, plan.release_time_s) if path.t_start_s < t < path.t_end_s]
-    times = np.unique(np.concatenate([grid, np.array(inner, dtype=np.float64)]))
+    times = insert_instants(grid, [plan.nominal_hit_time_s, plan.release_time_s], settings.keyframe_dt_s)
     positions = path.pos(times)
     replay = SampledPath(times, positions, None)
     fractions = np.linspace(0.0, 1.0, 9)[1:-1]
