@@ -493,7 +493,13 @@ $ nvidia-smi        （Processes 节选：GPU 2 的全部行；pid 73117 不出�
 ```
 
 - 渲染进程只出现在 GPU 2 上，类型 G（图形进程）。GPU 2 上原有的计算进程（pid 54522）不是本任务的，没有动。
-- 会话早些时候也跑过带触觉相机的渲染（tacto / pyrender，`EGL_DEVICE_ID=2`）：`renders 4964 rgb keys ['rgb_gripper', 'rgb_static', 'rgb_tactile']`（`egl_tactile_run.log`）。当时的 `nvidia-smi` 输出没有存档。
+- 会话早些时候也跑过带触觉相机的渲染（tacto / pyrender，`EGL_DEVICE_ID=2`）：`renders 4964 rgb keys ['rgb_gripper', 'rgb_static', 'rgb_tactile']`，pid 4191912（`egl_tactile_run.log`）。第 18 s 时的 `nvidia-smi` 输出见 `egl_tactile_nvidia_smi.log`。该 pid 只出现在 GPU 2，类型 G，256 MiB，pyrender 同样落在 GPU 2：
+
+  ```text
+      2   N/A  N/A            3844      G   /usr/lib/xorg/Xorg                        4MiB |
+      2   N/A  N/A         4191283      C   .../conda/envs/gfnvla/bin/python        712MiB |
+      2   N/A  N/A         4191912      G   python                                  256MiB |
+  ```
 - 该进程在 `env.close()` 后没有退出，由我 kill 掉；日志末尾是 `__del__` 里的 `pybullet.error: Not connected to physics server`（E00 已知坑 4 的又一种情况）。适配器本身只开静态和夹爪两路相机。
 
 ### 6. 特权运行（D14，**以下数字全部是“试点”**）
