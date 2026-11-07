@@ -2,6 +2,8 @@
 
 record x3 -> probe -> instantiate -> gate -> calibrate -> freeze -> verify, each a separate process exchanging
 YAML / JSONL files, on the braking FakeHost (T_stop = 0.2 s). Run twice: the Manifest hash must be identical.
+The freeze is bound to a real conformance report of the same host class and timebase (``W.conformance_target``,
+same BD hash) and to the calibration of the chain (D13 a, b).
 """
 import json
 import os
@@ -11,8 +13,9 @@ import sys
 import yaml
 
 import pipeline_world as W
+from pipeline_world import conformance_dir, conformance_reports  # noqa: F401 (fixtures)
 
-HOST = ["--host", "pipeline_world:make_host", "--host-arg", "decel_mps2=2.5"]
+HOST = ["--host", "pipeline_world:make_host", "--host-arg", "decel_mps2=%r" % W.DECEL_MPS2]
 SPECS = [W.fall_spec(tau=0.3, frac=0.75, spec_id="fall_wait"),
          W.fall_spec(tau=0.1, frac=0.5, spec_id="fall_short"),
          W.fall_spec(tau=0.5, phase="carry", frac=0.5, spec_id="fall_high"),
@@ -36,8 +39,9 @@ def hazardctl(cwd, *args):
     return json.loads(line)
 
 
-def chain(work):
+def chain(work, report):
     work.mkdir()
+    W.write_json(work / "conformance.json", report)
     (work / "specs.yaml").write_text(yaml.safe_dump({"specs": [s.to_dict() for s in SPECS]}, sort_keys=False))
     (work / "entities.yaml").write_text(yaml.safe_dump(W.STATIC_ENTITIES))
     (work / "workspace.yaml").write_text(yaml.safe_dump(W.WORKSPACE))
@@ -57,14 +61,15 @@ def chain(work):
     cal = hazardctl(work, "calibrate", "--task-context", "tc_pick.yaml", *HOST, *follower, "--seed", 0, "--env", 0,
                     "--out", "calibration.yaml")
     frz = hazardctl(work, "freeze", "--instances", "gated.jsonl", "--task-context", "tc_pick.yaml", "--specs",
-                    "specs.yaml", "--bd", "bd.yaml", "--seed", 0, "--adapter-version", "fakehost-test",
-                    "--calibration", "calibration.yaml", "--out-dir", "frozen")
+                    "specs.yaml", "--bd", "bd.yaml", "--seed", 0, "--adapter-version", report["adapter_version"],
+                    "--conformance", "conformance.json", "--calibration", "calibration.yaml", "--out-dir", "frozen")
     ver = hazardctl(work, "verify", "--manifest-dir", "frozen", "--bd", "bd.yaml")
     return probe, inst, gate, cal, frz, ver
 
 
-def test_end_to_end_cli_chain_is_deterministic(tmp_path):
-    probe, inst, gate, cal, frz, ver = chain(tmp_path / "run1")
+def test_end_to_end_cli_chain_is_deterministic(tmp_path, conformance_reports):
+    conformance = conformance_reports(decel_mps2=W.DECEL_MPS2)
+    probe, inst, gate, cal, frz, ver = chain(tmp_path / "run1", conformance)
     assert probe["phases"] == ["approach", "carry"] and probe["runs_used"] == 3
     assert inst["instances"] == 4 and inst["rejected_by_reason"] == {"no_support_surface": 1}
     assert gate["rejections_by_reason"] == {"release_height_out_of_workspace": 1}
@@ -81,7 +86,7 @@ def test_end_to_end_cli_chain_is_deterministic(tmp_path):
             labels[record["instance"]["spec_id"]] = record["instance"]["certificate"]["label"]
     assert labels == {"fall_wait": "wait_solvable", "fall_short": "uncertified", "reach_wait": "wait_solvable"}
 
-    again = chain(tmp_path / "run2")
+    again = chain(tmp_path / "run2", conformance)
     assert again[4]["manifest_hash"] == frz["manifest_hash"]
     assert (tmp_path / "run1" / "frozen" / "instances.jsonl").read_text() == \
         (tmp_path / "run2" / "frozen" / "instances.jsonl").read_text()
@@ -89,7 +94,8 @@ def test_end_to_end_cli_chain_is_deterministic(tmp_path):
     work = tmp_path / "run1"
     refused = run_cli(work, W.REPO_CONFIG_DIR, "freeze", "--instances", "gated.jsonl", "--task-context",
                       "tc_pick.yaml", "--specs", "specs.yaml", "--bd", "bd.yaml", "--seed", 0, "--adapter-version",
-                      "fakehost-test", "--out-dir", "frozen_repo")
+                      conformance["adapter_version"], "--conformance", "conformance.json", "--calibration",
+                      "calibration.yaml", "--out-dir", "frozen_repo")
     assert refused.returncode == 2 and "cannot freeze: 5 config file(s) unresolved" in refused.stderr
     assert not (work / "frozen_repo").exists()
 

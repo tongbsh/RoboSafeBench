@@ -13,14 +13,15 @@
     hazardctl [--config-dir DIR] calibrate   --task-context TC.yaml --host M:F --policy M:F --seed S --env E
                                              --out calibration.yaml
     hazardctl [--config-dir DIR] freeze      --instances gated.jsonl --task-context TC.yaml ... --specs specs.yaml
-                                             --bd bd.yaml --seed S --adapter-version V [--calibration C.yaml]
-                                             --out-dir DIR
+                                             --bd bd.yaml --seed S --adapter-version V --conformance report.json
+                                             --calibration calibration.yaml --out-dir DIR
     hazardctl [--config-dir DIR] verify      --manifest-dir DIR [--bd bd.yaml]
 
 ``M:F`` is ``module:callable``: hosts are built as ``F(**host_args)``, policies and avoiders as
 ``F(host, **args)``; ``--host-arg`` / ``--policy-arg`` / ``--avoider-arg`` take ``key=value`` (value parsed as
 YAML). ``--config-dir`` defaults to ``$HAZARDLIB_CONFIG_DIR`` / the repository's ``configs/hazard``. Every
-command prints a one-line JSON summary.
+command prints a one-line JSON summary. ``freeze`` needs the conformance report of ``python -m
+hazardlib.conformance --out`` and the ``calibration.yaml`` of ``calibrate`` (D13 a, b).
 """
 import argparse
 import json
@@ -34,7 +35,6 @@ from .config import default_config_dir
 from .driving import EpisodeSession
 from .gates.settings import GateSettings
 from .gates.stage import gate_instances
-from .hashing import sha256_hex
 from .instantiate.builder import InstanceRejected, instantiate
 from .instantiate.settings import InstantiateSettings
 from .manifest.freeze import freeze, verify_manifest, write_frozen
@@ -153,12 +153,13 @@ def cmd_calibrate(args: argparse.Namespace) -> None:
 def cmd_freeze(args: argparse.Namespace) -> None:
     instances, _ = read_records(args.instances)
     contexts = list(_contexts(args.task_context).values())
-    calibration_hash = sha256_hex(read_yaml(args.calibration)) if args.calibration else None
     frozen = freeze(instances, contexts, read_specs(args.specs), read_bd(args.bd), args.config_dir,
-                    args.adapter_version, args.seed, calibration_hash)
+                    args.adapter_version, args.seed, args.conformance, args.calibration)
     write_frozen(args.out_dir, frozen)
     _emit("freeze", out_dir=args.out_dir, manifest_hash=frozen.report["manifest_hash"],
-          entries=frozen.report["n_entries"], labels=frozen.report["labels"])
+          entries=frozen.report["n_entries"], labels=frozen.report["labels"],
+          conformance_report_hash=frozen.manifest.conformance_report_hash,
+          calibration_hash=frozen.manifest.calibration_hash)
 
 
 def cmd_verify(args: argparse.Namespace) -> None:
@@ -232,7 +233,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--bd", required=True)
     p.add_argument("--seed", type=int, required=True)
     p.add_argument("--adapter-version", required=True)
-    p.add_argument("--calibration")
+    p.add_argument("--conformance", required=True, help="conformance report JSON (python -m hazardlib.conformance)")
+    p.add_argument("--calibration", required=True, help="calibration.yaml of hazardctl calibrate")
     p.add_argument("--out-dir", required=True)
     p.set_defaults(func=cmd_freeze)
 
