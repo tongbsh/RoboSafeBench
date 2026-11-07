@@ -32,3 +32,11 @@ calibration:   # 00 §7, decision D3 in §13
     step_s: PLACEHOLDER                     # tau change after each trial
     tau_min_s: PLACEHOLDER                  # lower clamp of the track
     tau_max_s: PLACEHOLDER                  # upper clamp of the track
+
+t_stop_protocol:   # how run_t_stop_protocol drives the host (T06, hazardlib/calibrate/protocol.py; 00 §7)
+  trigger_speed_fraction: PLACEHOLDER       # hold is issued once the EEF speed >= this x the probe's median EEF speed
+  record_s: PLACEHOLDER                     # seconds recorded after the hold; a run not stopped by then is censored (D6)
+
+mapping:   # intensity -> primitive parameters (T06, hazardlib/instantiate/mapping.py)
+  intrusion.reach:
+    overshoot_fraction: PLACEHOLDER         # overshoot_m / reach_distance_m; must be > 0 for a reach with severity (D6)
