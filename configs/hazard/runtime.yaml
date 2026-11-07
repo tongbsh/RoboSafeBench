@@ -1,0 +1,10 @@
+# HazardRuntime settings (T04; rules R1, R7, decisions D3, D4, D11 d).
+#
+# max_step_ratio is decided (R1 / D3). The other values are PLACEHOLDER until the
+# pilot pre-registers them (00 §11); nothing in the code supplies a default.
+# HazardRuntime reads max_step_ratio and release_velocity_window_s; the two
+# keyframe keys are used by the instance builder and gate G0 (T06).
+max_step_ratio: 0.5                       # R1: hazard displacement per hook must stay <= this x min half extent
+release_velocity_window_s: PLACEHOLDER    # R7 / D4: backward-difference window of the release velocity (same on every host)
+keyframe_dt_s: PLACEHOLDER                # spacing of the instance keyframes (T06 builder)
+keyframe_interp_tol_m: PLACEHOLDER        # max distance between interpolated keyframes and the analytic path (T06 G0)
