@@ -1,4 +1,5 @@
 """configs/hazard/conformance.yaml after T05: every value is set and derived, except the statistical C8 bound."""
+import math
 import re
 
 from hazardlib import load_config
@@ -72,9 +73,13 @@ def test_coupled_values_follow_their_documented_formulas(config_dir):
     assert c.number("c13_nominal_hit", "replay_repeat_abs_tol_m") == 0.5 * hit_tol * slide
     assert abs(c.number("probe_calibration", "t_stop_speed_threshold_mps")
                - c.number("c10_hold_t_stop", "drift_m_tol") / c.number("c10_hold_t_stop", "hold_duration_s")) < 1e-12
-    assert c.number("c5_release_gravity", "gravity_rel_tol") == 2 * c.number("c5_release_gravity",
-                                                                             "free_fall_time_rel_tol")
-    probe_radius = load_config("fakehost", strict=True, config_dir=config_dir)["scenario"]["probe_agent"]
-    radius = probe_radius["half_extents_m"][0]
+    fakehost = load_config("fakehost", strict=True, config_dir=config_dir)
+    radius = fakehost["scenario"]["probe_agent"]["half_extents_m"][0]
+    drop = fakehost["scenario"]["drop_point_m"][2] - fakehost["scenario"]["drop_surface_height_m"] - radius
+    t_land = math.sqrt(2 * drop / fakehost["world"]["gravity_mps2"])
+    steps = c.number("c5_release_gravity", "free_fall_time_tol_physics_steps")
+    landing_tol_s = steps * fakehost["world"]["physics_dt_s"]
+    # t ~ g^-1/2: the g error that moves the FakeHost landing by the landing tolerance, rounded down to 3 decimals
+    assert c.number("c5_release_gravity", "gravity_rel_tol") == math.floor(2 * landing_tol_s / t_land * 1000) / 1000
     assert abs(c.number("c3_pose_fidelity", "orientation_error_rad_tol")
                - c.number("c3_pose_fidelity", "pose_error_m_tol") / radius) < 1e-12

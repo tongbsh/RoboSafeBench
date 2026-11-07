@@ -323,6 +323,16 @@ def test_c8_statistical_host_is_measured_then_judged_against_the_bound():
     assert _run(make_fake_target(host_cls=StatisticalNoisyReset), ["C8"], strict)["checks"][0]["status"] == "fail"
 
 
+def test_c5_landing_time_alone_catches_undeclared_damping():
+    """The landing-time criterion, not only the gravity fit, separates DampedFall with a margin of one tolerance."""
+    check = _run(make_fake_target(host_cls=DampedFall), ["C5"])["checks"][0]
+    steps = _setting("c5_release_gravity", "free_fall_time_tol_physics_steps")
+    assert check["status"] == "fail" and "physics steps" in check["reason"], check["reason"]
+    assert abs(check["measured"]["free_fall"]["fall_time_error_physics_steps"]) >= 2 * steps
+    step_end_detection = _run(make_fake_target(ccd=False), ["C5"])["checks"][0]["measured"]["free_fall"]
+    assert 0 < step_end_detection["fall_time_error_physics_steps"] <= steps
+
+
 def test_c13_unrepeatable_motion_is_unverified_not_passed():
     target = make_fake_target()
     episodes = []

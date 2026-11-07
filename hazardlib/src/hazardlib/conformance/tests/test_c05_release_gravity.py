@@ -4,13 +4,15 @@
   ``release_to_physics``, exactly the commanded velocity: not one derived from the last kinematic poses, and
   without residual teleport velocity added (01 §3.1, §3.3 item 8, R7).
 * A hazard released at rest falls freely: the gravity fitted to its ``hazard_state`` heights matches the BD's
-  ``gravity_mps2``, and the landing time on the support surface matches ``sqrt(2 h / g_measured)`` (zero damping,
-  R7; the BD has no damping field, so zero is what is checked).
+  ``gravity_mps2``, and the landing time on the support surface matches ``sqrt(2 h / g_measured)`` to within
+  ``free_fall_time_tol_physics_steps`` physics steps of the BD's ``physics_dt_s`` (D13 h). The hazard's linear and
+  angular damping must be zero (R7): the BD has no damping field, and a host that cannot set zero is not Tier A.
 """
 import math
 
 import numpy as np
 
+from hazardlib._records import is_unknown
 from hazardlib.conformance.harness import drop_instance, path_instance, support_radius
 from hazardlib.conformance.suite import Check
 
@@ -47,6 +49,8 @@ def _release(ctx, probe, tol):
 
 def _free_fall(ctx, probe, tol):
     scenario, agent = ctx.scenario, ctx.scenario.probe_agent
+    dt = ctx.bd.timebase.physics_dt_s
+    ctx.require(not is_unknown(dt), "BD timebase.physics_dt_s is unknown; the landing tolerance is in physics steps")
     up = np.array([0.0, 0.0, 1.0])
     height = scenario.drop_point_m[2] - scenario.drop_surface_height_m - support_radius(agent, up)
     g_declared = ctx.bd.gravity_mps2
@@ -71,23 +75,25 @@ def _free_fall(ctx, probe, tol):
     fall_measured = t_land_abs - t_release
     fall_expected = math.sqrt(2.0 * height / g_measured)
     g_error = abs(g_declared - g_measured) / g_measured
-    t_error = abs(fall_measured - fall_expected) / fall_expected
+    t_error = abs(fall_measured - fall_expected)
     ctx.record("free_fall", {"height_m": height, "samples": len(samples), "g_measured_mps2": g_measured,
                              "g_declared_mps2": g_declared, "g_rel_error": g_error,
                              "fall_time_measured_s": fall_measured, "fall_time_expected_s": fall_expected,
-                             "fall_time_rel_error": t_error,
+                             "bd_physics_dt_s": dt, "fall_time_error_s": t_error,
+                             "fall_time_error_physics_steps": t_error / dt,
                              "fit_residual_max_m": float(np.max(np.abs(np.polyval(coeffs, t) - z)))})
     ctx.expect(g_error <= tol["gravity"], "free fall measures g = %.6g m/s^2, the BD declares %.6g (rel. error %.3g > "
                                           "%r)" % (g_measured, g_declared, g_error, tol["gravity"]))
-    ctx.expect(t_error <= tol["fall_time"], "landing after %.6g s, sqrt(2h/g_measured) = %.6g s (rel. error %.3g > "
-                                            "%r): damping or a contact offset" % (fall_measured, fall_expected, t_error,
-                                                                                  tol["fall_time"]))
+    ctx.expect(t_error <= tol["fall_time_steps"] * dt,
+               "landing after %.6g s, sqrt(2h/g_measured) = %.6g s: off by %.3g physics steps of %.6g s (> %r): "
+               "damping or a contact offset" % (fall_measured, fall_expected, t_error / dt, dt,
+                                                tol["fall_time_steps"]))
 
 
 def run(ctx):
     tol = {"velocity": ctx.number(SECTION, "release_velocity_abs_tol_mps"),
            "gravity": ctx.number(SECTION, "gravity_rel_tol"),
-           "fall_time": ctx.number(SECTION, "free_fall_time_rel_tol")}
+           "fall_time_steps": ctx.number(SECTION, "free_fall_time_tol_physics_steps")}
     probe = ctx.probe()
     _release(ctx, probe, tol)
     _free_fall(ctx, probe, tol)
@@ -95,7 +101,7 @@ def run(ctx):
 
 CHECK = Check("C5", "release velocity and gravity",
               "hazard_state right after release reads the commanded velocity; free-fall gravity matches the BD; "
-              "landing time matches sqrt(2h/g_measured)", run)
+              "landing time matches sqrt(2h/g_measured) to within a tolerance in physics steps (zero damping)", run)
 
 
 def test_c05_release_gravity(conformance):
