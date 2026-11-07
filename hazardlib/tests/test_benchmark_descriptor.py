@@ -48,9 +48,10 @@ def test_calvin_draft_loads_non_strict_and_keeps_verified_facts(calvin):
 
 def test_calvin_draft_unknown_fields_are_exactly_the_probe_checklist(calvin):
     assert calvin.unknown_fields() == [
-        "engine.version", "parallel.num_envs", "parallel.batched", "kinematic_pose_set",
-        "release_with_velocity", "contact_tier", "distance", "robot_contact_bodies.include",
-        "robot_contact_bodies.exclude", "state_access.base", "success_oracle.readonly",
+        "engine.version", "gravity_mps2", "hazard_ccd", "parallel.num_envs", "parallel.batched",
+        "kinematic_pose_set", "release_with_velocity", "contact_tier", "distance",
+        "robot_contact_bodies.include", "robot_contact_bodies.exclude", "eef_contact_radius_m",
+        "state_access.base", "success_oracle.readonly",
         "determinism.same_seed_repro", "invalid_sample_mapping.setup_invalid",
         "invalid_sample_mapping.sim_unstable", "observation_isolation.hazard_visible_in_rgb",
         "observation_isolation.hazard_in_state_vectors", "policy_interface.kind"]
@@ -226,6 +227,63 @@ def test_every_top_level_and_nested_key_is_required(bd_d):
             d[section].pop(key)
             with pytest.raises(SpecError, match=key):
                 BenchmarkDescriptor.from_dict(d)
+
+
+# ----------------------------------------------- D1 / D2 / D11 d top-level fields
+
+NEW_FIELDS = ("gravity_mps2", "eef_contact_radius_m", "hazard_ccd")
+
+
+@pytest.mark.parametrize("key", NEW_FIELDS)
+def test_new_top_level_fields_are_required(bd_d, key):
+    d = copy.deepcopy(bd_d)
+    d.pop(key)
+    with pytest.raises(SpecError, match="missing required key.*%s" % key):
+        BenchmarkDescriptor.from_dict(d)
+
+
+@pytest.mark.parametrize("key", NEW_FIELDS)
+def test_new_fields_may_be_unknown_and_strict_lists_them(make_bd_dict, key):
+    bd = BenchmarkDescriptor.from_dict(make_bd_dict(**{key: "unknown"}))
+    assert bd.unknown_fields() == [key]
+    assert bd.tier() is Tier.A  # not tier-relevant
+    with pytest.raises(SpecError, match=key):
+        BenchmarkDescriptor.from_dict(make_bd_dict(**{key: "unknown"}), strict=True)
+
+
+def test_all_three_unknown_are_named_by_strict(make_bd_dict):
+    d = make_bd_dict(gravity_mps2="unknown", eef_contact_radius_m="unknown", hazard_ccd="unknown")
+    with pytest.raises(SpecError) as err:
+        BenchmarkDescriptor.from_dict(d, strict=True)
+    assert "3 unknown" in str(err.value)
+    for key in NEW_FIELDS:
+        assert key in str(err.value)
+
+
+@pytest.mark.parametrize("key,value", [
+    ("gravity_mps2", 9.8), ("eef_contact_radius_m", 0.035), ("hazard_ccd", True)])
+def test_bd_hash_follows_the_new_field_values(make_bd_dict, key, value):
+    base = BenchmarkDescriptor.from_dict(make_bd_dict())
+    changed = BenchmarkDescriptor.from_dict(make_bd_dict(**{key: value}))
+    assert getattr(changed, key) == value
+    assert changed.hash() != base.hash()
+
+
+@pytest.mark.parametrize("override,match", [
+    ({"gravity_mps2": 0.0}, "gravity_mps2"),
+    ({"gravity_mps2": -9.8}, "gravity_mps2"),
+    ({"gravity_mps2": "9.81"}, "expected a number"),
+    ({"eef_contact_radius_m": -0.01}, "eef_contact_radius_m"),
+    ({"hazard_ccd": 1}, "expected a bool"),
+    ({"hazard_ccd": "yes"}, "expected a bool"),
+])
+def test_new_field_values_are_checked(make_bd_dict, override, match):
+    with pytest.raises(SpecError, match=match):
+        BenchmarkDescriptor.from_dict(make_bd_dict(**override))
+
+
+def test_eef_contact_radius_may_be_zero(make_bd_dict):
+    assert BenchmarkDescriptor.from_dict(make_bd_dict(eef_contact_radius_m=0.0)).eef_contact_radius_m == 0.0
 
 
 def test_unexpected_keys_are_rejected_at_every_level(bd_d):

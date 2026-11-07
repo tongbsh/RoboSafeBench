@@ -25,6 +25,9 @@ timebase:   # 02 §1 table / §2: bullet_time_step=240, control_freq=30, action_
   control_dt_s: 0.03333333333333333    # 1/30 s
   substeps_per_action: 8
 
+gravity_mps2: unknown   # [待探针] measured free fall (D2); play_table_env.py sets -9.8 in load(), but the value used must be the measured one
+hazard_ccd: unknown     # [待探针] whether the adapter enables continuous collision detection for hazard bodies (D11 d)
+
 parallel:   # 02 does not state it; single PlayTableSimEnv is [推断], not verified
   num_envs: unknown
   batched: unknown
@@ -40,6 +43,8 @@ distance: unknown                # getClosestPoints [待探针] (02 §2 min_dist
 robot_contact_bodies:            # 02 §9 open question 4: not yet answerable declaratively
   include: unknown
   exclude: unknown
+
+eef_contact_radius_m: unknown    # [待探针] effective robot contact radius for the standoff conversion (D1), checked by C13
 
 state_access:
   eef: true               # robot.get_observation(): TCP pose (02 §2 robot_state, [已核实])
