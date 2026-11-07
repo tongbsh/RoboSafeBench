@@ -19,9 +19,10 @@
 | **T06** | 流水线：探针 / 实例化 / 门控 / 校准 / 冻结 | T04 | 否 | `hazardctl` 子命令，FakeHost 上端到端 | 中到大 |
 | **T05-F** | T05 收尾：落实 D13 h（C5 落地时间容差按物理步、statistical 宿主的 C2 / C7 / C12 判据与按观测键的 C8 上限、报告路径不含本机绝对路径，见 `prompts/T05_followup.md`） | T05、T06 | 否 | 小提交 | 小 |
 | **T06-F** | T06 收尾：落实 D13 a–d（冻结绑定一致性报告、Manifest 增 `conformance_report_hash` / `calibration_hash`、运行时特权访问器 `hazard_state`，见 `prompts/T06_followup.md`） | T05、T06 | 否 | 小提交 | 小到中 |
+| **T07** | 核心收尾：落实 D15 a、b、e（机器人几何求 standoff 与 G0 早接触、碰撞体路径不含抓持物、宿主注册回退，见 `prompts/T07_followup.md`） | T05-F、T06-F、`fix-hook-times` | 否 | 小提交 | 中 |
 | **E00** | 基准环境搭建（按基准参数化） | 无 | 是 | `docs/design/env_notes/<bench>.md`，基准自带最小评测跑通 | 视基准 |
 | **H1** | CALVIN 适配器 | T01–T06（含 T05-F、T06-F）、E00(calvin) | 是 | 适配器、BD、一致性测试通过、特权运行、成本账本 | 中 |
-| **H2** | RoboCasa365 适配器 | T01–T06（含 T05-F、T06-F）、E00(robocasa) | 是 | 同上 | 中 |
+| **H2** | RoboCasa365 适配器 | T01–T06（含 T05-F、T06-F）、T07、E00(robocasa) | 是 | 同上 | 中 |
 | **H3** | LIBERO（SafeLIBERO）适配器 | T01–T06（含 T05-F、T06-F）、E00(libero) | 是 | 同上 | 中 |
 | **H4** | SimplerEnv 适配器 | T01–T06（含 T05-F、T06-F）、E00(simplerenv) | 是 | 同上 | 中 |
 | **H5** | RoboTwin 适配器 | T01–T06（含 T05-F、T06-F）、E00(robotwin) | 是 | 同上 | 中到大 |
@@ -42,7 +43,7 @@
 - 集成分支：`hazard/integration`（由协调者从 `claude/sweet-newton-2clmpw` 创建）。
 - 每个任务会话建分支 `hazard/<ID>`：T01 与 E00 从 `claude/sweet-newton-2clmpw` 起；依赖 T01 及之后的任务从 `hazard/integration` 起（协调者在 T01 通过后合并进去）。
 - 任务会话**只提交并推送自己的分支**，**不合并、不开 PR、不改 `docs/design/00–03`**；对设计文档的修订意见写进自己的汇报。
-- 协调者合并顺序：T01 → T02、T03 → T04 → T05、T06 → T05-F、T06-F → H*。
+- 协调者合并顺序：T01 → T02、T03 → T04 → T05、T06 → T05-F、T06-F → H*。D15 之后 T07 先于 H2 合并；H1 接入 D15 a 的机器人几何另做收尾（H1-F），在 T07 合并之后。
 
 ---
 

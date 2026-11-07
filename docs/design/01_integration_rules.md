@@ -55,7 +55,8 @@ release_with_velocity: true
 contact_tier: A                    # A: 逐接触 + 可得相对法向速度 | B: 仅布尔 / 伙伴 | C: 无
 distance: geometric                # geometric | surrogate | none；none 与 surrogate 一样按质心距离计算并记 separation_kind=surrogate（D12 c）
 robot_contact_bodies: {include: ["prefix:robot0_", "exact:panda_hand", held_object], exclude: ["substr:camera"]}   # 每项必须带匹配方式前缀；held_object 是类别记号（D10 f）
-eef_contact_radius_m: ?            # 机器人有效接触半径，用于把质心命中点换算成首次表面接触（D1）；由 C13 检验
+eef_contact_radius_m: ?            # 机器人有效接触半径，用于把质心命中点换算成首次表面接触（D1）；有机器人几何时 standoff 改用几何（D15 a）；由 C13 检验
+robot_point_spacing_m: ?           # robot_collision_points 采样点的最大间距；unknown 表示宿主不提供机器人几何（D15 a）
 state_access: {eef: true, gripper: true, base: false, objects: true, fixtures: true, support_surfaces: true}
 task_entity_source: oracle_config  # static_labels | named_refs | oracle_config | bddl_goal | probe_inferred | annotation
 success_oracle: {kind: state_diff, readonly: true}
@@ -88,7 +89,7 @@ policy_interface: {kind: calvin_model_step, notes: "..."}
 | `set_hazard_pose(h, pos, quat)` | 运动学瞬移；调用后该体为运动学（不受力）。**禁止**留下残余速度 |
 | `set_hazard_visible(h, visible)` | 停放 / 取出。停放时**必须**不与任何物体交互、不在任何相机视野内 |
 | `release_to_physics(h, lin_vel, ang_vel)` | 变为动力学并具有给定速度；速度**必须**是调用者给的值，不得被下限修改 |
-| `robot_state(env) -> RobotState` | EEF 位姿与线速度、夹爪开度、底盘位姿（若有）、机器人碰撞体位置列表（及可选的名称与线速度）、`held_object` 名称与其碰撞体名列表 `held_object_bodies`（若有，D10 e） |
+| `robot_state(env) -> RobotState` | EEF 位姿与线速度、夹爪开度、底盘位姿（若有）、机器人碰撞体位置列表（及可选的名称、线速度与朝向 `collision_body_quat`，D15 a）、`held_object` 名称与其碰撞体名列表 `held_object_bodies`（若有，D10 e） |
 | `hazard_state(h) -> HazardState` | 危险体质心的世界系位姿与线 / 角速度（D10 e）。运行时释放后靠它读取危险体运动：近失、TTC、倾倒、`vₙ`、不稳定归因的距离都依赖它。运动学阶段读回的应是刚刚设置的位姿，速度为 0 |
 | `object_poses(env) -> Dict[str, Pose]` | 命名的任务物体与固定装置位姿；支撑面信息放在 `support_surfaces` |
 | `hazard_contacts(h) -> List[ContactObs]` | 自上次调用以来的接触观测：伙伴名称与类别（`robot_link` / `held_object` / `scene` / `hazard`）、世界系位置、法向（**方向：由伙伴指向危险体**，即伙伴推危险体的方向，D9）、引擎冲量（若有）、时间戳。相对法向速度由核心用运动学数据补算；引擎若直接给也可附带 |
@@ -117,6 +118,7 @@ policy_interface: {kind: calvin_model_step, notes: "..."}
 | `snapshot(env)` / `restore(env, snap)` | 精确保存 / 恢复 | 配对对照退化为统计配对（BD `determinism`） |
 | `support_surfaces(env) -> List[Surface]` | 台面、柜体、门等支撑面 | 由探针从物体位姿估计，标注来源 |
 | `render_check(h) -> bool` | 危险体是否出现在策略相机中（C9 辅助） | 用图像差分 |
+| `robot_collision_points(env) -> Dict[str, ndarray]` | 机器人自身每个碰撞体（不含抓持物）的碰撞几何表面采样点（M × 3，该刚体系，回合内不变），点间距不超过 BD 的 `robot_point_spacing_m`；名字与 `collision_body_names` 一致。提供它时 `RobotState.collision_body_quat` 必填。核心用它求 standoff 与 G0 的早接触（D15 a） | standoff 退回 `r_hazard + eef_contact_radius_m`，G0 只用刚体原点 |
 
 ### 3.3 HazardRuntime（核心，不由适配器实现）
 
@@ -144,7 +146,7 @@ policy_interface: {kind: calvin_model_step, notes: "..."}
 ### 3.4 探针 trace 约定（D13 k）
 
 探针 trace 是 `TaskContext` 的输入，宿主录制时应满足：
-- 报告机器人碰撞体的位置与 `held_object`。没有碰撞体位置时，G0 的 `early_contact` 只检查 EEF，`provenance` 记 `early_contact_check: eef_only`，汇报须说明 `fall` 落向夹爪时腕部 / 前臂可能先被砸到；
+- 报告机器人碰撞体的位置（提供几何时连同朝向）与 `held_object`。核心只对机器人自身刚体求路径，抓持物单列，名单在运行之间不一致时只丢掉不稳定的刚体（D15 b）。没有碰撞体位置时，G0 的 `early_contact` 只检查 EEF，`provenance` 记 `early_contact_check: eef_only`，汇报须说明 `fall` 落向夹爪时腕部 / 前臂可能先被砸到；
 - 声明夹爪信号是测量值还是命令值；
 - 控制频率低的基准，在物理步分辨率上报夹爪事件（或在阈值处插值），否则探针阶段边界的分辨率只有一个控制步；
 - 在 `env_notes/<bench>.md` 或 BD 中给出工作区上界与桌面高度的数值，拿不到的标 [待探针]，用于事先计算 `fall` 族的可行 τ 区间。
@@ -209,7 +211,7 @@ policy_interface: {kind: calvin_model_step, notes: "..."}
 | C10 | 保持动作与 T_stop | 零动作下机器人不漂移；T_stop 在 N 次重复内中位数稳定、四分位距在容差内 |
 | C11 | 无效样本映射 | 强制不可放置 → `setup_invalid` 且被排除；适配器提供 `inject_engine_fault(env, hazard)`，用本宿主的方式强制引擎故障 → `sim_unstable` / `hazard_induced_unstable` 按 R11 归类；不提供即判 `fail`。FakeHost 没有真实引擎故障，只验证映射路径（D13 h） |
 | C12 | 多环境独立（`num_envs > 1` 的宿主，D13 h） | 环境 i 的危险体不影响环境 j 的任何观测（statistical 宿主见上） |
-| C13 | 名义命中时机（D1） | 令机器人沿一条已知名义路径运动（演示回放 / 脚本，且可重复），危险体按 `build_hit_path` 构造并按 `standoff = r_hazard + eef_contact_radius_m` 换算；**首次官方接触时刻与名义 `t_hit` 之差在 `tol_hit_time_s`（`c13_nominal_hit.hit_time_abs_tol_s`）内**，并报告残差；残差超标则 `eef_contact_radius_m` 需重新测定，不得放宽容差。容差至少覆盖一个物理步：reach 的释放速度是 R7 的窗口差分而不是路径在 `t_hit` 的瞬时速度，名义释放又提前一步（D12 b），命中时刻误差为 O(dt·\|v(t_hit) − v_rel\| / \|v_rel\|) |
+| C13 | 名义命中时机（D1） | 令机器人沿一条已知名义路径运动（演示回放 / 脚本，且可重复），危险体按 `build_hit_path` 构造，standoff 按 D15 a 换算（有机器人几何时为沿 n 的首次接触距离，否则 `r_hazard + eef_contact_radius_m`）；**首次官方接触时刻与名义 `t_hit` 之差在 `tol_hit_time_s`（`c13_nominal_hit.hit_time_abs_tol_s`）内**，并报告残差；残差超标则重新测定机器人几何或 `eef_contact_radius_m`，不得放宽容差。容差至少覆盖一个物理步：reach 的释放速度是 R7 的窗口差分而不是路径在 `t_hit` 的瞬时速度，名义释放又提前一步（D12 b），命中时刻误差为 O(dt·\|v(t_hit) − v_rel\| / \|v_rel\|) |
 
 ---
 
