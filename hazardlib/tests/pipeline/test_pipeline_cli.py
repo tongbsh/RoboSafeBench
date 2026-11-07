@@ -1,0 +1,101 @@
+"""End to end on FakeHost through ``hazardctl`` (T06 item 6; acceptance 2, 3).
+
+record x3 -> probe -> instantiate -> gate -> calibrate -> freeze -> verify, each a separate process exchanging
+YAML / JSONL files, on the braking FakeHost (T_stop = 0.2 s). Run twice: the Manifest hash must be identical.
+"""
+import json
+import os
+import subprocess
+import sys
+
+import yaml
+
+import pipeline_world as W
+
+HOST = ["--host", "pipeline_world:make_host", "--host-arg", "decel_mps2=2.5"]
+SPECS = [W.fall_spec(tau=0.3, frac=0.75, spec_id="fall_wait"),
+         W.fall_spec(tau=0.1, frac=0.5, spec_id="fall_short"),
+         W.fall_spec(tau=0.5, phase="carry", frac=0.5, spec_id="fall_high"),
+         W.slide_spec(spec_id="slide_on_pick"),
+         W.reach_spec(tau=0.3, speed=0.6, frac=0.75, spec_id="reach_wait")]
+
+
+def run_cli(cwd, config_dir, *args):
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join([str(W.HERE.parents[1] / "src"), str(W.HERE)])
+    return subprocess.run([sys.executable, "-m", "hazardlib.cli", "--config-dir", str(config_dir)]
+                          + [str(a) for a in args], cwd=str(cwd), env=env, stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE, universal_newlines=True)
+
+
+def hazardctl(cwd, *args):
+    proc = run_cli(cwd, W.FIXTURE_CONFIG_DIR, *args)
+    assert proc.returncode == 0, proc.stderr
+    line = proc.stdout.strip().splitlines()[-1]
+    print(line)
+    return json.loads(line)
+
+
+def chain(work):
+    work.mkdir()
+    (work / "specs.yaml").write_text(yaml.safe_dump({"specs": [s.to_dict() for s in SPECS]}, sort_keys=False))
+    (work / "entities.yaml").write_text(yaml.safe_dump(W.STATIC_ENTITIES))
+    (work / "workspace.yaml").write_text(yaml.safe_dump(W.WORKSPACE))
+    follower = ["--policy", "pipeline_world:make_follower"]
+    records = [(follower + ["--policy-arg", "name=follower"], 0),
+               (["--policy", "pipeline_world:make_demo"], 1),
+               (follower + ["--policy-arg", "name=follower_fast", "--policy-arg", "time_scale=1.25"], 2)]
+    for k, (policy, seed) in enumerate(records):
+        hazardctl(work, "record", *HOST, *policy, "--task", "pick", "--layout", "L0", "--seed", seed,
+                  "--horizon-s", W.PROBE_HORIZON_S, "--env", 0, "--out", "trace_%d.jsonl" % k, "--bd-out", "bd.yaml")
+    probe = hazardctl(work, "probe", "--traces", "trace_0.jsonl", "trace_1.jsonl", "trace_2.jsonl",
+                      "--out", "tc_pick.yaml", "--entities", "entities.yaml", "--workspace", "workspace.yaml")
+    inst = hazardctl(work, "instantiate", "--specs", "specs.yaml", "--task-context", "tc_pick.yaml", "--bd", "bd.yaml",
+                     "--seed", 0, "--count", 1, "--out", "instances.jsonl")
+    gate = hazardctl(work, "gate", "--instances", "instances.jsonl", "--task-context", "tc_pick.yaml", *HOST,
+                     *follower, "--seed", 0, "--env", 0, "--out", "gated.jsonl", "--report", "gate_report.yaml")
+    cal = hazardctl(work, "calibrate", "--task-context", "tc_pick.yaml", *HOST, *follower, "--seed", 0, "--env", 0,
+                    "--out", "calibration.yaml")
+    frz = hazardctl(work, "freeze", "--instances", "gated.jsonl", "--task-context", "tc_pick.yaml", "--specs",
+                    "specs.yaml", "--bd", "bd.yaml", "--seed", 0, "--adapter-version", "fakehost-test",
+                    "--calibration", "calibration.yaml", "--out-dir", "frozen")
+    ver = hazardctl(work, "verify", "--manifest-dir", "frozen", "--bd", "bd.yaml")
+    return probe, inst, gate, cal, frz, ver
+
+
+def test_end_to_end_cli_chain_is_deterministic(tmp_path):
+    probe, inst, gate, cal, frz, ver = chain(tmp_path / "run1")
+    assert probe["phases"] == ["approach", "carry"] and probe["runs_used"] == 3
+    assert inst["instances"] == 4 and inst["rejected_by_reason"] == {"no_support_surface": 1}
+    assert gate["rejections_by_reason"] == {"release_height_out_of_workspace": 1}
+    assert gate["labels"] == {"uncertified": 1, "wait_solvable": 2} and gate["n_main_score"] == 2
+    assert cal["t_stop_is_lower_bound"] is False and abs(cal["t_stop_median_s"] - 0.2) < 1e-9
+    assert frz["entries"] == 3 and ver["ok"] is True and ver["manifest_hash"] == frz["manifest_hash"]
+
+    report = yaml.safe_load((tmp_path / "run1" / "gate_report.yaml").read_text())
+    assert report["upstream_rejections_by_reason"] == {"no_support_surface": 1}
+    labels = {}
+    for line in (tmp_path / "run1" / "gated.jsonl").read_text().splitlines():
+        record = json.loads(line)
+        if "instance" in record:
+            labels[record["instance"]["spec_id"]] = record["instance"]["certificate"]["label"]
+    assert labels == {"fall_wait": "wait_solvable", "fall_short": "uncertified", "reach_wait": "wait_solvable"}
+
+    again = chain(tmp_path / "run2")
+    assert again[4]["manifest_hash"] == frz["manifest_hash"]
+    assert (tmp_path / "run1" / "frozen" / "instances.jsonl").read_text() == \
+        (tmp_path / "run2" / "frozen" / "instances.jsonl").read_text()
+
+    work = tmp_path / "run1"
+    refused = run_cli(work, W.REPO_CONFIG_DIR, "freeze", "--instances", "gated.jsonl", "--task-context",
+                      "tc_pick.yaml", "--specs", "specs.yaml", "--bd", "bd.yaml", "--seed", 0, "--adapter-version",
+                      "fakehost-test", "--out-dir", "frozen_repo")
+    assert refused.returncode == 2 and "cannot freeze: 5 config file(s) unresolved" in refused.stderr
+    assert not (work / "frozen_repo").exists()
+
+    lines = (work / "frozen" / "instances.jsonl").read_text().splitlines()
+    record = json.loads(lines[0])
+    record["onset_time_s"] += 0.01
+    (work / "frozen" / "instances.jsonl").write_text("\n".join([json.dumps(record)] + lines[1:]) + "\n")
+    tampered = run_cli(work, W.FIXTURE_CONFIG_DIR, "verify", "--manifest-dir", "frozen")
+    assert tampered.returncode == 2 and "was modified" in tampered.stderr

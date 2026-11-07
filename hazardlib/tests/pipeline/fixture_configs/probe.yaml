@@ -1,0 +1,10 @@
+# TEST FIXTURE (T06): a fully resolved copy of configs/hazard/probe.yaml (test data only).
+min_source_kinds: 2
+gripper_closed_below: 0.5
+gripper_open_above: 0.8
+min_consistent_runs: 2
+path_samples_per_phase: 50
+moved_object_min_displacement_m: 0.01
+entity_min_run_fraction: 0.5
+moving_speed_min_mps: 0.01
+surface_below_object_m: 0.05

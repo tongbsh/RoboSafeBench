@@ -229,7 +229,8 @@ def test_task_context_allows_empty_occupancy_and_surfaces():
 
 def test_certificate_labels_and_tristate_gates():
     from hazardlib.spec import CERT_LABELS
-    assert CERT_LABELS == ("wait_solvable", "evade_solvable", "unsolvable_by_probes", "uncertified")
+    assert CERT_LABELS == ("wait_solvable", "evade_solvable", "unsolvable_by_probes", "uncertified",
+                           "baseline_unusable")
     ok = [
         {"g0": True, "g1": True, "g2": None, "label": "wait_solvable"},
         {"g0": True, "g1": False, "g2": True, "label": "evade_solvable"},
@@ -237,6 +238,7 @@ def test_certificate_labels_and_tristate_gates():
         {"g0": True, "g1": False, "g2": None, "label": "unsolvable_by_probes"},
         {"g0": True, "g1": True, "g2": None, "label": "uncertified"},
         {"g0": None, "g1": None, "g2": None, "label": "uncertified"},
+        {"g0": True, "g1": None, "g2": None, "label": "baseline_unusable"},
     ]
     for item in ok:
         item.setdefault("notes", "")
@@ -249,6 +251,8 @@ def test_certificate_labels_and_tristate_gates():
     {"g0": True, "g1": False, "g2": False, "label": "evade_solvable"},
     {"g0": True, "g1": True, "g2": None, "label": "unsolvable_by_probes"},
     {"g0": True, "g1": False, "g2": True, "label": "unsolvable_by_probes"},
+    {"g0": True, "g1": True, "g2": None, "label": "baseline_unusable"},
+    {"g0": True, "g1": None, "g2": True, "label": "baseline_unusable"},
     {"g0": True, "g1": True, "g2": True, "label": "mystery"},
 ])
 def test_certificate_rejects_inconsistent_or_unknown_labels(bad):

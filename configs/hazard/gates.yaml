@@ -5,12 +5,17 @@
 g0:   # geometric validity
   max_penetration_m: PLACEHOLDER
   workspace_margin_m: PLACEHOLDER
+  early_contact_tol_m: PLACEHOLDER   # [onset, t_hit) min distance to the nominal robot must be >= standoff - this (T06)
 g1:   # stop-wait-resume solvable
   max_official_contacts: PLACEHOLDER
   require_task_success: PLACEHOLDER
-  baseline_success_required: PLACEHOLDER   # else the reference is baseline_unusable
+  baseline_success_required: PLACEHOLDER   # else the reference is baseline_unusable (min success fraction over `repeats` hazard-free runs, T06)
   repeats: PLACEHOLDER
+  horizon_extra_s: PLACEHOLDER             # episode length = max(nominal success time, t_hit) + this (T06)
+  resume_hazard_speed_mps: PLACEHOLDER     # Oracle resumes once the released hazard is slower than this or outside the workspace ... (T06)
+  resume_settle_s: PLACEHOLDER             # ... for this long (T06)
 g2:   # privileged-reaction solvable
   max_official_contacts: PLACEHOLDER
   require_task_success: PLACEHOLDER
   repeats: PLACEHOLDER
+  horizon_extra_s: PLACEHOLDER             # as g1.horizon_extra_s (T06)

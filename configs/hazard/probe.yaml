@@ -1,0 +1,13 @@
+# Probe -> TaskContext settings (T06, hazardlib/probe/context.py; rules R3, R4; 00 §5.4).
+#
+# min_source_kinds is decided by R4 / 00 §5.4 ("至少两类来源"). The other values are PLACEHOLDER until the
+# pilot pre-registers them (00 §11); nothing in the code supplies a default.
+min_source_kinds: 2                       # R4: distinct source kinds (demo_replay / scripted / external_policy) among the runs used
+gripper_closed_below: PLACEHOLDER         # normalised opening (opening / largest |opening| of the run) below which the gripper is closed
+gripper_open_above: PLACEHOLDER           # ... above which it is open again (hysteresis; must exceed gripper_closed_below, <= 1)
+min_consistent_runs: PLACEHOLDER          # successful hazard-free runs with the modal gripper-event signature that are required
+path_samples_per_phase: PLACEHOLDER       # nominal EEF path samples per phase (phase-normalised time)
+moved_object_min_displacement_m: PLACEHOLDER   # an object displaced more than this within a run counts as moved
+entity_min_run_fraction: PLACEHOLDER      # fraction of the runs in which an object must be grasped / moved to become a task entity
+moving_speed_min_mps: PLACEHOLDER         # EEF samples slower than this are left out of the nominal speed median (T_stop protocol)
+surface_below_object_m: PLACEHOLDER       # estimated support top = lowest task-object centre minus this (only without host surfaces)
