@@ -8,12 +8,19 @@ fresh :class:`~hazardlib.conformance.harness.Probe` objects, and collects the ou
 * ``require(ok, message)``: a hard requirement (the check stops here);
 * ``unverified(message)``: the property cannot be verified on this host (e.g. C13 without a repeatable replay);
   never used for a missing adapter capability, which is a failure;
+* ``unjudged(message)``: a soft ``unverified``: a quantity was measured but cannot be judged yet (e.g. a statistical
+  host while the C8 bound of that observation kind is still PLACEHOLDER, D13 h); the check goes on and ends
+  ``unverified`` with every such message, unless a requirement failed;
 * ``record(key, value)``: a measured value for the report; ``number(section, key)``: a tolerance from
   ``conformance.yaml``, recorded with the outcome.
 
-Statuses: ``pass``, ``fail`` (a requirement was violated or a needed setting is unresolved), ``error`` (the
-check crashed: the host raised, or a contract method returned something malformed), ``skip`` (only where 01 §5
-allows it, with the reason), ``unverified``.
+Statuses: ``pass``, ``fail`` (a requirement was violated, a needed setting is unresolved, or the host lacks a
+capability the check needs: a ``CapabilityError`` is the host's defect, 01 §5 / D13 h), ``error`` (only the suite
+itself crashed: any other exception, e.g. a contract method returned something malformed; the traceback is kept),
+``skip`` (only where 01 §5 allows it, with the reason), ``unverified``.
+
+Checks of one run may share measurements through ``SuiteSession.shared`` (C8's same-seed repeats, which C2 / C7 /
+C12 consult on statistical hosts).
 """
 import dataclasses
 import importlib
@@ -115,6 +122,7 @@ class CheckContext:
         self.measured = {}  # type: Dict[str, Any]
         self.tolerances = {}  # type: Dict[str, Any]
         self.failures = []  # type: List[str]
+        self.unjudged_reasons = []  # type: List[str]
         self.notes = []  # type: List[str]
 
     # -- settings ------------------------------------------------------------------------------------------
@@ -176,6 +184,9 @@ class CheckContext:
     def unverified(self, message: str) -> None:
         raise CheckUnverified(message)
 
+    def unjudged(self, message: str) -> None:
+        self.unjudged_reasons.append(message)
+
 
 class SuiteSession:
     """One target, its BD and settings, and the outcomes of the checks run so far."""
@@ -188,6 +199,7 @@ class SuiteSession:
         self.bd = target.host.describe()
         self.runtime_cfg, self.runtime_sources = self.config.runtime_config()
         self.outcomes = {}  # type: Dict[str, CheckOutcome]
+        self.shared = {}  # type: Dict[str, Any]
 
     @classmethod
     def open(cls, host: str, modules: Sequence[str] = (), config_dir: Optional[str] = None) -> "SuiteSession":
@@ -220,13 +232,15 @@ class SuiteSession:
                 status, reason = STATUS_PASS, None
                 if ctx.failures:
                     status, reason = STATUS_FAIL, "; ".join(ctx.failures)
+                elif ctx.unjudged_reasons:
+                    status, reason = STATUS_UNVERIFIED, "; ".join(ctx.unjudged_reasons)
             except CheckFailed as exc:
                 status, reason = STATUS_FAIL, "; ".join(ctx.failures + [str(exc)])
             except CheckUnverified as exc:
                 if ctx.failures:
                     status, reason = STATUS_FAIL, "; ".join(ctx.failures)
                 else:
-                    status, reason = STATUS_UNVERIFIED, str(exc)
+                    status, reason = STATUS_UNVERIFIED, "; ".join(ctx.unjudged_reasons + [str(exc)])
             except ConfigError as exc:
                 status, reason = STATUS_FAIL, "settings: %s" % exc
             except CapabilityError as exc:

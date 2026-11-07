@@ -18,10 +18,10 @@
 # report T05 lists which of them are too loose or too strict for real hosts.
 #
 # Unlike the T01 skeleton, C4 has a block (contact clock and normal checks); C11
-# is still pass/fail without numbers. c8_determinism.statistical_max_abs_diff
-# stays PLACEHOLDER: FakeHost is exact, so there is nothing to derive it from;
-# C8 reports a statistical host as unverified, with the magnitude, until an
-# adapter task sets it.
+# is still pass/fail without numbers. The two c8_determinism.statistical_* bounds
+# stay PLACEHOLDER: FakeHost is exact, so there is nothing to derive them from;
+# C8 (and C2 / C7 / C12) report a statistical host as unverified, with the
+# measured magnitude, until the H task of such a host sets them (D13 h).
 
 # ---------------------------------------------------------------------------
 # Probe magnitudes (shared by several checks). Not tolerances: they decide what
@@ -121,7 +121,14 @@ c7_isolation:
 
 c8_determinism:
   exact_max_abs_diff: 0.0      # BD "exact" means bit-identical repeats; NoisyReset (test-local) E = 1.4e-4
-  statistical_max_abs_diff: PLACEHOLDER  # no statistical FakeHost to derive it from; set by the adapter task from its measurements
+  # Same-seed difference bounds of a BD "statistical" host, one per observation
+  # kind (D13 h). C8 compares its same-seed repeats with them; on such a host
+  # C2 / C7 / C12 compare hazard vs hazard-free runs with them instead of
+  # requiring identity. FakeHost is exact, so there is nothing to derive them
+  # from: they stay PLACEHOLDER (those checks report the measured magnitude
+  # and are unverified) until the H task of a statistical host measures them.
+  statistical_state_vector_max_abs_diff: PLACEHOLDER  # max |a - b| over the elements of every policy state vector (units of the vector)
+  statistical_image_max_abs_diff: PLACEHOLDER         # max |a - b| over the pixels of one camera, grey levels (uint8); every camera compared on its own
   snapshot_replay_steps: 10    # control steps replayed after restore(snapshot)
 
 c9_visibility:

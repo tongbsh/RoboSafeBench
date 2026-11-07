@@ -359,15 +359,25 @@ def split_observation(obs: Dict[str, Any]) -> Tuple[Dict[str, np.ndarray], Dict[
 class ObsDiff:
     """Difference of two observations. ``mismatch`` lists keys missing on one side or with different shapes;
     ``vector_max_abs`` / ``image_max_abs`` are the largest absolute element differences and ``image_pixels`` the
-    largest number of differing pixels in one image."""
+    largest number of differing pixels in one image. ``vectors`` / ``images`` hold the largest absolute difference
+    per state-vector key and per camera (grey levels)."""
     mismatch: List[str]
     vector_max_abs: float
     image_max_abs: float
     image_pixels: int
+    vectors: Dict[str, float] = dataclasses.field(default_factory=dict)
+    images: Dict[str, float] = dataclasses.field(default_factory=dict)
 
     @property
     def identical(self) -> bool:
         return not self.mismatch and self.vector_max_abs == 0.0 and self.image_max_abs == 0.0
+
+
+def merge_max(into: Dict[str, float], new: Dict[str, float]) -> Dict[str, float]:
+    """Keep the larger value per key (accumulates ``ObsDiff.vectors`` / ``images`` over the samples of a run)."""
+    for key, value in new.items():
+        into[key] = max(into.get(key, 0.0), value)
+    return into
 
 
 def observation_diff(a: Dict[str, Any], b: Dict[str, Any]) -> ObsDiff:
@@ -376,26 +386,28 @@ def observation_diff(a: Dict[str, Any], b: Dict[str, Any]) -> ObsDiff:
     mismatch = sorted(set(images_a) ^ set(images_b)) + sorted(set(vectors_a) ^ set(vectors_b))
     vector_max = image_max = 0.0
     pixels = 0
+    vectors, images = {}, {}  # type: Dict[str, float], Dict[str, float]
     for key in sorted(set(vectors_a) & set(vectors_b)):
         va, vb = vectors_a[key].astype(np.float64), vectors_b[key].astype(np.float64)
         if va.shape != vb.shape:
             mismatch.append("%s: shape %s vs %s" % (key, va.shape, vb.shape))
             continue
-        if va.size:
-            if not (np.all(np.isfinite(va)) and np.all(np.isfinite(vb))):
-                mismatch.append("%s: non-finite values" % key)
-                continue
-            vector_max = max(vector_max, float(np.max(np.abs(va - vb))))
+        if va.size and not (np.all(np.isfinite(va)) and np.all(np.isfinite(vb))):
+            mismatch.append("%s: non-finite values" % key)
+            continue
+        vectors[key] = float(np.max(np.abs(va - vb))) if va.size else 0.0
+        vector_max = max(vector_max, vectors[key])
     for key in sorted(set(images_a) & set(images_b)):
         ia, ib = images_a[key].astype(np.int64), images_b[key].astype(np.int64)
         if ia.shape != ib.shape:
             mismatch.append("%s: shape %s vs %s" % (key, ia.shape, ib.shape))
             continue
         delta = np.abs(ia - ib)
+        images[key] = float(np.max(delta)) if delta.size else 0.0
+        image_max = max(image_max, images[key])
         if delta.size:
-            image_max = max(image_max, float(np.max(delta)))
             pixels = max(pixels, int(np.count_nonzero(np.any(delta > 0, axis=2))))
-    return ObsDiff(mismatch, vector_max, image_max, pixels)
+    return ObsDiff(mismatch, vector_max, image_max, pixels, vectors, images)
 
 
 # ------------------------------------------------------------------------------------------------ geometry

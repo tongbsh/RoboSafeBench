@@ -1,4 +1,4 @@
-"""configs/hazard/conformance.yaml after T05: every value is set and derived, except the statistical C8 bound."""
+"""configs/hazard/conformance.yaml after T05: every value is set and derived, except the statistical C8 bounds."""
 import math
 import re
 
@@ -20,9 +20,11 @@ def _leaves(obj, path=()):
         yield path, obj
 
 
-def test_the_only_placeholder_left_is_the_statistical_c8_bound(config_dir):
+def test_the_only_placeholders_left_are_the_statistical_c8_bounds(config_dir):
     leaves = dict(_leaves(load_config("conformance", config_dir=config_dir)))
-    assert [p for p, v in leaves.items() if v == "PLACEHOLDER"] == [("c8_determinism", "statistical_max_abs_diff")]
+    assert [p for p, v in leaves.items() if v == "PLACEHOLDER"] == [
+        ("c8_determinism", "statistical_state_vector_max_abs_diff"),
+        ("c8_determinism", "statistical_image_max_abs_diff")]
     assert "unknown" not in leaves.values()
 
 
