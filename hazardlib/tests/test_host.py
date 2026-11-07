@@ -3,9 +3,9 @@ import inspect
 import numpy as np
 import pytest
 
-from hazardlib import (CapabilityError, ContactObs, HazardHandle, HazardHost, HazardState,
-                       OptionalHazardHost, PartnerClass, Pose, RobotState, SpecError, Surface, Tier,
-                       TimeState, missing_methods, require_methods)
+from hazardlib import (DRIVER_METHODS, CapabilityError, ContactObs, EpisodeDriver, HazardHandle,
+                       HazardHost, HazardState, OptionalHazardHost, PartnerClass, Pose, RobotState,
+                       SpecError, Surface, Tier, TimeState, missing_methods, require_methods)
 from hazardlib import host as host_module
 
 # Method name -> parameter names (after self), per 01_integration_rules.md §3.1/§3.2.
@@ -31,6 +31,11 @@ OPTIONAL_SIGNATURES = {
     "restore": ["env", "snap"],
     "support_surfaces": ["env"],
     "render_check": ["h"],
+}
+DRIVER_SIGNATURES = {
+    "reset_episode": ["env", "task_id", "layout_id", "seed"],
+    "step": ["env", "action"],
+    "policy_observation": ["env"],
 }
 
 
@@ -99,6 +104,38 @@ def test_optional_methods_are_not_required_for_a_host():
     assert not isinstance(host, OptionalHazardHost)
     assert missing_methods(host, host_module.OPTIONAL_METHODS) == list(host_module.OPTIONAL_METHODS)
     require_methods(host)  # does not raise: optional capabilities are not required
+
+
+def test_episode_driver_protocol_is_declared_apart_from_the_host():
+    methods = _protocol_methods(EpisodeDriver)
+    assert set(methods) == set(DRIVER_SIGNATURES) == set(DRIVER_METHODS)
+    for name, expected in DRIVER_SIGNATURES.items():
+        assert _params(methods[name]) == expected, name
+    assert not set(DRIVER_METHODS) & set(host_module.REQUIRED_METHODS)
+    assert not set(DRIVER_METHODS) & set(host_module.OPTIONAL_METHODS)
+    assert len(host_module.REQUIRED_METHODS) == 14
+
+
+def _make_driver(skip=()):
+    namespace = {name: (lambda self, *a, **k: None) for name in DRIVER_METHODS if name not in skip}
+    return type("FakeDriver", (), namespace)()
+
+
+def test_driver_methods_are_checked_on_their_own():
+    driver = _make_driver()
+    assert isinstance(driver, EpisodeDriver)
+    require_methods(driver, DRIVER_METHODS)
+    # a host without driver methods is still a complete HazardHost, and vice versa
+    host = _make_host()
+    require_methods(host)
+    assert missing_methods(host, DRIVER_METHODS) == list(DRIVER_METHODS)
+    assert set(missing_methods(driver)) == set(host_module.REQUIRED_METHODS)
+    for name in DRIVER_METHODS:
+        incomplete = _make_driver(skip=(name,))
+        assert not isinstance(incomplete, EpisodeDriver), name
+        assert missing_methods(incomplete, DRIVER_METHODS) == [name]
+        with pytest.raises(CapabilityError, match=name):
+            require_methods(incomplete, DRIVER_METHODS)
 
 
 def test_tier_and_capability_error_basics():

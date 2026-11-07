@@ -330,6 +330,31 @@ class OptionalHazardHost(Protocol):
         ...
 
 
+@runtime_checkable
+class EpisodeDriver(Protocol):
+    """Episode driving an adapter offers to the conformance suite, gates and
+    T_stop calibration (D11 a). Declared apart from ``HazardHost``: it is not
+    part of ``REQUIRED_METHODS``; check it with ``require_methods(x, DRIVER_METHODS)``.
+
+    ``reset_episode`` fires the installed reset hook (``HazardRuntime.begin_episode``),
+    so a hazard instance must be armed on the runtime before it is called.
+    ``step`` advances one control step and fires the per-physics-step hooks.
+    """
+
+    def reset_episode(self, env: int, task_id: str, layout_id: str, seed: int) -> None:
+        ...
+
+    def step(self, env: int, action: Action) -> None:
+        ...
+
+    def policy_observation(self, env: int) -> Dict[str, Any]:
+        """Exactly what the policy would receive (R5: no hazard state in vectors)."""
+        ...
+
+
+DRIVER_METHODS = ("reset_episode", "step", "policy_observation")
+
+
 REQUIRED_METHODS = (
     "describe", "alloc_hazard", "free_hazard", "set_hazard_pose", "set_hazard_visible",
     "release_to_physics", "robot_state", "object_poses", "hazard_contacts", "hazard_state",
@@ -344,8 +369,9 @@ def missing_methods(host: Any, names: Sequence[str] = REQUIRED_METHODS) -> List[
 
 
 def require_methods(host: Any, names: Sequence[str] = REQUIRED_METHODS) -> None:
-    """Fail loudly at start-up if the host lacks required methods (R15)."""
+    """Fail loudly at start-up if the host lacks required methods (R15). ``names``
+    defaults to the HazardHost set; pass ``DRIVER_METHODS`` for the episode driver."""
     missing = missing_methods(host, names)
     if missing:
-        raise CapabilityError("%s is missing required HazardHost method(s): %s"
+        raise CapabilityError("%s is missing required method(s): %s"
                               % (type(host).__name__, ", ".join(missing)))
