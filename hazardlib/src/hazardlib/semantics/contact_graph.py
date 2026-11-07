@@ -6,11 +6,13 @@ official already (the runtime drops kinematic overlaps, R8). Normals point from 
 
 Definitions used here:
 
-* The *robot side* is ``robot_link`` and ``held_object``; ``scene`` contacts are the static partners; contacts
-  with other ``hazard`` bodies are ignored. A step has *robot contact* when it contains a robot-side contact.
-  Contact with the scene alone is not official robot contact.
+* The *robot side* is ``robot_link`` and ``held_object``; every other non-hazard body is ``scene``, movable
+  task objects included (they need not be static); contacts with other ``hazard`` bodies are ignored. A step
+  has *robot contact* when it contains a robot-side contact. Contact with the scene alone is not official
+  robot contact.
 * A step has a *second partner* when a robot-side contact is accompanied by a contact with a different
-  partner name (a scene body or another robot part).
+  non-hazard partner name: a scene body (fixed or movable, e.g. a task object) or another robot part (D10 g).
+  The opposing partner of a ``clamp`` is this second partner; it is not required to be static.
 * A step has the *clamp configuration* when such a pair has roughly opposing normals:
   ``|pi - angle(n_a, n_b)| < opposing_normals_tol_rad``.
 * Runs of steps are merged into one continuous run when the time between the last step of the run and the
