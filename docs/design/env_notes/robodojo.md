@@ -1,8 +1,77 @@
 # RoboDojo 环境笔记（E00-robodojo，2026-11-07）
 
-本机的 RoboDojo 是另一个项目（embodySafeAgent 的 `robodojo-ws`）已经装好的，**不是本任务安装的**。本任务没有运行 `git submodule update`、`init_assets.sh`，没有改那边的代码、配置和包。唯一的写入是烟雾测试时 Kit 自己写的 cache / logs / data（用户批准，清单见下文“烟雾测试”一节）。下面提到的 `robodojo-ws` 指 `/data0/tongbaoshun/workspace/embodySafeAgent/robodojo-ws`。
+**现在用的是自己的克隆和环境**（下一节）：克隆 `/data0/tongbaoshun/benchmarks/robodojo/RoboDojo`，conda 环境 `rsb_robodojo61`，GPU 2。H6 以它为基线。
 
-**仿真器决定（用户，2026-11-07）**：RoboDojo 用 **Isaac Sim 6.1 非官方移植**（`isaac61/RoboDojo` + conda 环境 `robodojo61`）。5.1 官方版本在本机 595 驱动上不用。
+第一轮核对用的是另一个项目（embodySafeAgent 的 `robodojo-ws`）已经装好的克隆和环境，那部分记录保留在“借用环境”各节，作为历史。下面提到的 `robodojo-ws` 指 `/data0/tongbaoshun/workspace/embodySafeAgent/robodojo-ws`，它的克隆和环境只读，不再用于运行。
+
+**仿真器决定（用户，2026-11-07）**：RoboDojo 用 **Isaac Sim 6.1 非官方移植**（[geniesim-robodojo-isaacsim6](https://github.com/wuxiyang1996/geniesim-robodojo-isaacsim6)）。5.1 官方版本在本机 595 驱动上不用。
+
+## 自建克隆与环境（2026-11-07，H6 用这一套）
+
+用户决定：“新建自己的”，GPU 用 2 号卡（上面是用户自己的占卡脚本，会自动让卡）。
+
+### 克隆
+
+| 项 | 值 |
+|---|---|
+| 路径 | `/data0/tongbaoshun/benchmarks/robodojo/RoboDojo`，从 `https://github.com/RoboDojo-Benchmark/RoboDojo.git` 克隆 |
+| RoboDojo | `726e9aa`（与移植仓库钉的提交相同） |
+| 子模块 | IsaacLab `afca7b0`；curobo `895c651`、XPolicyLab `d6332bf`（**上游** XPolicyLab）。后两个按移植仓库 `install.sh` 钉的提交检出，与 RoboDojo 记录的提交（`d17b54c`、`bb9a0b5`）不同，所以 `git status` 显示 `M` |
+| 6.1 补丁 | 移植仓库（`robodojo-ws/geniesim-robodojo-isaacsim6` @ `1036d9d`，只读取）的 `0001-robodojo-isaacsim-6.1.patch`（RoboDojo 5 个文件 + 新文件 `_isaacsim_compat.py`）与 `0002-isaaclab-isaacsim-6.1.patch`（Isaac Lab 14 个文件），用 `git apply` 打上 |
+| 资源 | `Assets` 是指向共享缓存 `robodojo-ws/RoboDojo-eval/.cache/robodojo_assets_hf/Assets` 的软链，只读使用，与借用的克隆相同 |
+
+**没有运行** `scripts/init_assets.sh` 和 `utils/update_embodiment_config_path.py`：后者会改写 `Assets/Robots/**/*_tmp.yml`，而 Assets 是共享缓存。缓存里的 `curobo.yml` 已经带着指向缓存本身的绝对路径，只读使用没有问题。
+
+### conda 环境 `rsb_robodojo61`
+
+1. `conda create -p /data0/tongbaoshun/conda/envs/rsb_robodojo61 --clone robodojo-ws/conda/envs/robodojo61 --copy`，`CONDA_PKGS_DIRS=/data0/tongbaoshun/conda/pkgs`。用时 196 s，31 GB。conda 包是从包缓存重新链接的，为此**联网下载了 75 个 conda 包（154.8 MB）**到我们自己的包缓存；pip 装的部分（site-packages）是本地复制。`/data0/tongbaoshun/conda/envs` 在 `envs_dirs` 第一位，所以直接 `conda activate rsb_robodojo61` 即可，不用设 `CONDA_ENVS_DIRS`。
+2. 让可编辑安装指向自己的克隆（命令同移植仓库 `install.sh` 第 76–80 行，只是加了 `--no-index`，保证不下载、不动其他包），用时 18 s：
+
+   ```bash
+   cd /data0/tongbaoshun/benchmarks/robodojo/RoboDojo
+   PIP="python -m pip install --no-deps --no-build-isolation --no-index"
+   $PIP $(for p in isaaclab isaaclab_assets isaaclab_contrib isaaclab_mimic isaaclab_rl isaaclab_tasks; do printf -- "-e third_party/IsaacLab/source/%s " "$p"; done)
+   $PIP -e XPolicyLab
+   ( cd third_party/curobo && $PIP -e ".[cu13]" )
+   ```
+
+   8 个 `__editable___*_finder.py` 的 `MAPPING` 现在都指向自己的克隆。curobo 的版本号变成 `0.0.post1.dev101`（setuptools_scm 读到了我们克隆的 git 元数据；源环境里是 `0.0.0`），提交仍是 `895c651`。curobo v2 默认用 cuda.core 运行时编译，安装不需要 nvcc。
+3. activate 钩子：删掉 `zz-robodojo-native-cuda.sh`（它把 `robodojo-ws/isaac61/RoboDojo/.cuda-native` 加到 `LD_LIBRARY_PATH` 前面），换成 `zz-rsb-robodojo.sh`，只设 `OMNI_KIT_ACCEPT_EULA=YES`。`.cuda-native` 里只有一个指向系统 `/lib/x86_64-linux-gnu/libcuda.so.1` 的软链，而本机默认搜索路径里本来就是这个库，没有 forward-compat 版 libcuda，所以去掉它不改变加载结果。
+4. 与源环境的差异（`pip freeze` 对比，全文在 `_logs/robodojo_rsb_robodojo61_pip_freeze.txt`）：只有 xpolicylab 从 RoboProbe `9ffacc5` 换成了上游 XPolicyLab `d6332bf`；`packaging` 同为 26.3，只是元数据来自 conda 包而非 pip。环境里仍提到 robodojo-ws 的只有拷过来的历史 Kit 日志、崩溃转储和 `conda-meta/history`。
+5. 借用环境里 `client_server` 导入不了的问题在这里不存在：`import client_server.ws.model_client` 直接来自克隆里的上游 XPolicyLab，`WsModelClient` 可用。
+
+### 启动
+
+```bash
+source /home/tongbaoshun/miniconda3/etc/profile.d/conda.sh
+conda activate rsb_robodojo61 && unset VIRTUAL_ENV
+export OMNI_KIT_ACCEPT_EULA=YES ACCEPT_EULA=Y PRIVACY_CONSENT=Y
+export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json VK_DRIVER_FILES=/usr/share/vulkan/icd.d/nvidia_icd.json
+export LD_PRELOAD=$CONDA_PREFIX/lib/libstdc++.so.6     # Ubuntu 22.04 系统 libstdc++ 太旧
+export CUDA_VISIBLE_DEVICES=2 PYTHONDONTWRITEBYTECODE=1 TMPDIR=<自己的临时目录>
+export ROBODOJO_MAX_BASH_RETRIES=1                      # 走 eval_policy.sh 时：退出段错误（rc 139）会被当成崩溃重启，默认最多 10 次
+```
+
+完整脚本在仓库外：`/data0/tongbaoshun/benchmarks/_logs/run_own_robodojo_{smoke,eval}.sh`，在 `env -i` 的干净环境里启动。
+
+### GPU 2 与占卡脚本
+
+GPU 2 平时被用户自己的占卡脚本 `/data0/tongbaoshun/workspace/vla_eval95.py` 占着（约 92 GB、利用率 10–30%）。它每 0.3 s 用 NVML 查一次计算进程，属主 home 为 `/home/tongbaoshun` 的进程一出现，就让占卡子进程释放显存。实测：
+
+- 烟雾测试：我们的进程以 713 MiB 出现后，占卡进程在 1285 ms 内放掉了 92 GB；测试结束后不到 10 s（它的主循环下一轮）又把 GPU 2 占了回去。
+- 原生评测：同样让卡。之后它把 GPU 2 当成“实验卡”，起了一个垫卡进程：先占 10 GiB，观察 600 s 的显存峰值，然后垫到“总显存 − 峰值 − 8 GiB”；剩余显存低于 3 GiB 时会自己释放。我们的仿真进程约 8.4 GB，两次运行都在 600 s 内结束，没有受到影响。
+- 推断（来自脚本说明，未实测）：H6 的长时间运行超过 600 s 后，若在已见过的峰值之上一次性多申请 8 GiB 以上，可能 OOM。
+
+### 验证（GPU 2）
+
+| 检查 | 结果 |
+|---|---|
+| doctor（`--sim-env rsb_robodojo61 --policy-dir XPolicyLab/policy/demo_policy --policy-env rsb_robodojo61`） | `pass=18 warn=1 fail=0`；WARN 是没传 `--ckpt`（demo 策略没有 checkpoint） |
+| 烟雾测试（`scratch/robodojo_smoke.py`） | 通过，79 s（Kit 启动 14.9 s、`create_eval_env` 36.2 s、`reset` 16.6 s）。`client_server` 真实导入，只把 `WsModelClient` 换成桩。20 个保持动作完全静止；随后双臂关节 0 做镜像斜坡（10 步升到 0.25 rad、保持 5 步、10 步回零）：每步落后命令约 0.003 rad，保持 2 步后到 0.2500，其余关节偏差 ≤ 7e-5 rad，碗位移为 0，全部有限值 |
+| 原生评测（`scripts/robodojo.sh eval --policy-dir XPolicyLab/policy/demo_policy --task stack_bowls --ckpt demo --policy-env rsb_robodojo61 --eval-env rsb_robodojo61 --action-type joint --eval-num 1 --policy-gpu 2 --env-gpu 2`） | rc 0，145 s；policy server 与仿真客户端走 websocket，800 / 800 步跑满；`_result.json` 为 `success_rate 0.0, eval_time 1, score 0.0`（demo 策略只发全零动作，失败是预期的）；3 路相机失败录像共 1.2 MB；Kit 日志 0 条 `[Error]`；无残留进程 |
+| 对 robodojo-ws 的写入 | 两次运行前后用 `find -newer <标记>` 检查，0 个文件。唯一的痕迹在建环境时：`conda create --clone` 开始的那一刻（11:27:07），源环境 `conda-meta` 目录的 mtime 变了，但里面没有新增或修改的文件（最新文件仍是 2026-09-29），推测是 conda 读取时短暂建过锁文件 [未核实] |
+
+**接口事实补充**：`EvalEnv.success[i]` 在 `reset()` 时初始化为 True，意思是“尚未失败”，只有 `end_flag[i]` 为真时才是判定结果。烟雾测试结束时 `success` 为 True、`end_flag` 为 False，这不是任务成功。H6 的 `task_success` 不能只读 `success`。
 
 ## 机器
 
@@ -14,7 +83,9 @@
 | 核对时的显存占用 | GPU 0 约 82.5 GB、GPU 1 约 13.3 GB、GPU 2 约 92.4 GB（其他用户 / 项目的进程） |
 | 磁盘 | `/data0` 剩 4.1 TB；`/` 剩 100 GB（已用 89%） |
 
-## 两套现成安装
+## 借用环境：两套现成安装（第一轮，历史）
+
+第一轮没有运行 `git submodule update`、`init_assets.sh`，没有改那边的代码、配置和包；唯一的写入是烟雾测试时 Kit 自己写的 cache / logs / data（用户批准，清单见下文“烟雾测试”一节）。
 
 | 项 | 官方 Isaac Sim 5.1 | 非官方 Isaac Sim 6.1 移植 |
 |---|---|---|
@@ -31,7 +102,7 @@
 
 两套共用一份资源：两个 `Assets` 都是指向 `RoboDojo-eval/.cache/robodojo_assets_hf/Assets` 的软链，资源缓存目录共 39 GB。
 
-## 激活方式
+## 激活方式（借用环境）
 
 两个环境都不在默认的 conda envs 目录里，需要先把 `robodojo-ws/conda/envs` 加进 `CONDA_ENVS_DIRS`，才能按名字激活：
 
@@ -56,7 +127,7 @@ cd robodojo-ws/isaac61/RoboDojo && bash scripts/robodojo.sh doctor --sim-env rob
 
 两者都是 `pass=14 warn=3 fail=0`，每次约 1.9 s；3 个 WARN 都是没传 `--policy-dir` / `--policy-env` 而跳过的策略检查。全文见 `reports/E00-robodojo.md`，日志在 `/data0/tongbaoshun/benchmarks/_logs/robodojo_doctor_{51,61}.log`。
 
-## 烟雾测试（6.1，2026-11-07，通过）
+## 烟雾测试（借用的 6.1 环境，2026-11-07，通过）
 
 脚本 `scratch/robodojo_smoke.py`（不进 git）。做法与 RoboDojo 自己的 `src/eval_client/main.py` 相同：在内存里拼 `env_cfg`（`arx_x5` → `sim_config` / `default` / `dual_x5` / `camera_config`），`num_envs=1`，调 `create_eval_env`，取布局 0 做 `reset()`，补调 `run_reward()` / `get_score()`，然后用同一个“保持”动作调 20 次 `take_action`，每次之后检查机器人关节、末端位姿、三个碗的位姿和全部观测是否有限。
 
@@ -95,9 +166,9 @@ python -u <RoboSafeBench>/scratch/robodojo_smoke.py --report smoke_report.json
 
 ### 用这套环境时要注意
 
-1. **`client_server` 在 `robodojo61` 里导入不了**：环境里 XPolicyLab 的可编辑安装把 `client_server` 映射到 `isaac61/RoboDojo/XPolicyLab/client_server`，但那边项目后来把 `XPolicyLab` 换成了指向 RoboProbe 版 XPolicyLab 的软链，后者的 `client_server` 在 `utils/` 下。结果是原样 `import src.eval_client.eval_env` 会 `ModuleNotFoundError`。烟雾测试在导入前往 `sys.modules` 塞了一个空的 `client_server.ws.model_client` 桩绕开，没有改那边的文件。只做了导入测试，没有跑 `eval_policy.sh` 去确认整条官方路径也失败。
+1. **`client_server` 在 `robodojo61` 里导入不了**（自建环境里已不存在，见上文）：环境里 XPolicyLab 的可编辑安装把 `client_server` 映射到 `isaac61/RoboDojo/XPolicyLab/client_server`，但那边项目后来把 `XPolicyLab` 换成了指向 RoboProbe 版 XPolicyLab 的软链，后者的 `client_server` 在 `utils/` 下。结果是原样 `import src.eval_client.eval_env` 会 `ModuleNotFoundError`。烟雾测试在导入前往 `sys.modules` 塞了一个空的 `client_server.ws.model_client` 桩绕开，没有改那边的文件。只做了导入测试，没有跑 `eval_policy.sh` 去确认整条官方路径也失败。
 2. **不走 `run_eval()` 时必须自己调 `run_reward()`**：`RewardManager.get_reward()` 在检查列表为空时返回 1.0，而检查列表要等 `run_eval()` 里的 `run_reward()` 才登记。漏掉这一步，第一次 `take_action` 后 `is_episode_end()` 就判成功并置 `end_flag`，后面的动作被静默跳过。第一次运行就是这样（20 步只执行了 1 步），已在脚本里补上。
-3. **保持动作下场景完全静止**：200 个物理步里机器人关节位置、三个碗的位置都逐位不变，关节速度约 8e-8。推测是 PhysX 让静止刚体休眠、夹爪停在关节限位 [未核实]。所以这次只证明了“静止保持不出 NaN”，没有覆盖接触或运动下的数值稳定性。H6 注入危险物体时要确认放置或释放会唤醒相关刚体。
+3. **保持动作下场景完全静止**：200 个物理步里机器人关节位置、三个碗的位置都逐位不变，关节速度约 8e-8。推测是 PhysX 让静止刚体休眠、夹爪停在关节限位 [未核实]。所以这次只证明了“静止保持不出 NaN”，没有覆盖接触或运动下的数值稳定性。H6 注入危险物体时要确认放置或释放会唤醒相关刚体。（自建环境的烟雾测试补了关节运动段；接触仍未覆盖。）
 4. **Kit 写入的位置**：`robodojo61` 环境里的 `site-packages/isaacsim/kit/{cache,logs,data}`、`~/.nvidia-omniverse/{logs,pycache}`、`~/.nv/ComputeCache`（CUDA JIT 缓存）、`/dev/shm/sem.carbonite-sharedmemory`。正常退出要用 `os._exit`：`main.py` 注释说解释器收尾时 Carbonite 会在 `libomni.syntheticdata` 里反复段错误、进程不退出。
 
 ## 已知坑（来自 `robodojo-ws/LOG.md`，那边项目的记录；除第 2 条外本任务**未复现**，标 [未核实]）
@@ -110,11 +181,13 @@ python -u <RoboSafeBench>/scratch/robodojo_smoke.py --report smoke_report.json
 
 ## 版本记录（仓库外）
 
+- `/data0/tongbaoshun/benchmarks/_logs/robodojo_rsb_robodojo61_pip_freeze.txt`（279 行，自建环境）
 - `/data0/tongbaoshun/benchmarks/_logs/robodojo_RoboDojo_pip_freeze.txt`（306 行）
 - `/data0/tongbaoshun/benchmarks/_logs/robodojo_robodojo61_pip_freeze.txt`（279 行）
 
 ## 尚未做
 
-- `git submodule update --init --recursive` 与 `init_assets.sh`：会改动那边项目的克隆；资源已经齐全（doctor 的四项资源检查通过），所以没有运行。
+- `init_assets.sh`：资源用共享缓存的只读软链，doctor 的四项资源检查通过，不需要下载。
 - 5.1 上的烟雾测试：用户已选 6.1，不再做。
-- 自己的克隆与环境（H6 前，见汇报“对设计文档的修订建议”第 2 条）。
+- 接触下的数值稳定性（机械臂碰到碗或危险物体）：留给 H6。
+- 往 `rsb_robodojo61` 里 `pip install -e hazardlib --no-deps`：H6 步骤 1 再做。

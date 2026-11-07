@@ -1,6 +1,6 @@
 # E00-robodojo 汇报
-状态：完成（doctor 核对完成；Isaac Sim 6.1 移植上的无策略烟雾测试通过）
-分支 / 提交：hazard/E00-robodojo（起点 `claude/sweet-newton-2clmpw` @ 147c17a；doctor 部分在 f4df44b）
+状态：完成。第一轮在借用的环境上做 doctor 核对和无策略烟雾测试，通过。第二轮建了自己的克隆和环境，在 GPU 2 上通过 doctor、带关节运动的烟雾测试和 RoboDojo 原生评测路径（见文末“第二轮”）。
+分支 / 提交：hazard/E00-robodojo（起点 `claude/sweet-newton-2clmpw` @ 147c17a；doctor 部分在 f4df44b，第一轮烟雾测试在 07b16b8，第二轮在其后的提交里）
 环境：现成的 `RoboDojo`（Python 3.11.16，isaacsim 5.1.0.0，torch 2.7.0+cu128）与 `robodojo61`（Python 3.12.14，isaacsim 6.1.0.0，torch 2.11.0），均来自 embodySafeAgent 项目的 `robodojo-ws`；3 × RTX PRO 6000 Blackwell，驱动 595.99.02。`pip freeze` 见下文。烟雾测试只用 `robodojo61`。
 
 ## 用户决定（2026-11-07）
@@ -188,11 +188,15 @@ GPU 1 显存峰值（5 s 采样，可能漏掉瞬时峰值）：第一次 18.9 G
 
 ## 未解决与阻塞
 
+第二轮之后：第 1、2 条在自建环境里已不成问题；第 3 条补了关节运动，接触仍未覆盖。
+
 1. 两个现成环境属于另一个项目。H6 要往环境里 `pip install -e hazardlib --no-deps`，直接装进去会改动别人的环境。
 2. **范围外问题（只记录，未修）**：`robodojo61` 里 `client_server` 导入不了。环境中 XPolicyLab 的可编辑安装（`__editable___xpolicylab_0_0_1_finder.py`）把 `client_server` 映射到 `isaac61/RoboDojo/XPolicyLab/client_server`；那边项目后来把 `isaac61/RoboDojo/XPolicyLab` 换成了指向 RoboProbe 版 XPolicyLab 的软链（原目录移到 `.XPolicyLab.upstream-d6332bf`），而 RoboProbe 版的 `client_server` 在 `utils/` 下。按 `eval_policy.sh` 的 `PYTHONPATH` 实测 `import client_server` 报 `ModuleNotFoundError`。推论（未实跑）：这套借用环境里，RoboDojo 原生的 `eval_policy.sh` → `main.py` 评测路径会在导入阶段失败。这是那边项目的布局，不影响本任务的结论，但支持下面第 2 条建议（H6 用自己的克隆，子模块用上游 XPolicyLab）。
 3. 烟雾测试只覆盖了“静止保持”：200 个物理步里机器人关节和三个碗的位置都逐位不变（推测是 PhysX 休眠加夹爪在关节限位 [未核实]），没有覆盖接触和运动下的数值稳定性。
 
 ## 对设计文档的修订建议（只提议，不改文件）
+
+第二轮之后：第 2 条已照做，实际 `conda create --clone` 下载了 154.8 MB 的 conda 包，不是“不下载”；第 3 条改用 GPU 2；第 4 条中与宿主无关的通用钩子语义已由 D12 e 写进 01 §3.3，RoboDojo 特有的几条（`run_reward()`、物理步挂钩、唤醒刚体、物理在 CPU、CCD 默认关）仍留给 H6。
 
 1. `E00_env_bringup.md` 与 `H6_robodojo.md` 默认的是官方 Isaac Sim 5.1。本机驱动下 5.1 无法渲染 [未核实，依据为那边 LOG 和公开报告]，所以 RoboDojo 这一列的“引擎”实际可能是 Isaac Sim 6.1 移植。若采用，`02_benchmark_profiles.md` 的 RoboDojo 档案、BD 的 `engine.version`、论文里的引擎列表都要写明“6.1 非官方移植”，并把流体任务排除在外。
 2. H6 开工前建议：在 `/data0/tongbaoshun/benchmarks/robodojo` 下另建自己的克隆（同一提交 `726e9aa`），资源目录以只读软链复用那份 39 GB 缓存（不重新下载）；环境用 `conda create --clone` 复制一份（本地复制，不下载，约 21–31 GB 磁盘），再装 `hazardlib`。这样不碰那边项目的克隆和环境。
@@ -209,3 +213,68 @@ GPU 1 显存峰值（5 s 采样，可能漏掉瞬时峰值）：第一次 18.9 G
 1. H6 开工前按第 2 条另建自己的克隆与环境（`conda create --clone` 约 31 GB 本地复制，不下载；子模块用上游 XPolicyLab），在自己的环境里重跑这个烟雾测试，作为 H6 的基线。
 2. 和 embodySafeAgent 那边约定 GPU 1 的使用时段，或等 GPU 0 / GPU 2 有空。
 3. 视需要在 H6 里补一个“非静止”烟雾测试：让机械臂走一小段关节轨迹并碰到一只碗，检查接触下无 NaN。
+
+## 第二轮：自建克隆与环境（2026-11-07）
+
+**用户决定**：建自己的克隆和环境，不再用 robodojo-ws 的；GPU 用 2 号卡（上面是用户自己的占卡脚本，会自动让卡）。
+
+### 做了什么
+
+1. 从 GitHub 克隆 RoboDojo 到 `/data0/tongbaoshun/benchmarks/robodojo/RoboDojo`，检出 `726e9aa`。子模块按移植仓库 `install.sh` 钉的提交检出：IsaacLab `afca7b0`、curobo `895c651`、上游 XPolicyLab `d6332bf`。从移植仓库（只读取）`git apply` 两个 6.1 补丁。用时 85 s。
+2. `Assets` 用只读软链指向共享缓存。没有运行 `init_assets.sh` 和 `update_embodiment_config_path.py`，后者会改写共享缓存里的 `*_tmp.yml`。
+3. `conda create --clone --copy` 复制出 `rsb_robodojo61`（31 GB，196 s）。用 `--no-deps --no-build-isolation --no-index` 把 IsaacLab 的 6 个包、XPolicyLab 和 curobo 重装成指向自己克隆的 editable 安装。activate 钩子换成不引用 robodojo-ws 的版本。
+4. 烟雾测试脚本改为真实导入 `client_server.ws.model_client`，只替换 `WsModelClient` 类；在 20 个保持动作之后加了双臂关节 0 的镜像斜坡段，并把“机械臂跟上命令”列入通过条件。
+5. 在 GPU 2 上依次跑 doctor、烟雾测试和原生评测（`robodojo.sh eval` + `demo_policy`）。每次运行前后用 `find -newer <标记>` 检查 robodojo-ws 有没有被写入。
+
+### 验收：真实输出
+
+```
+# doctor（自建克隆，--sim-env/--policy-env rsb_robodojo61，--policy-dir demo_policy）
+[PASS] sim conda env - rsb_robodojo61
+[PASS] policy conda env - rsb_robodojo61
+[PASS] Isaac imports - isaacsim and isaaclab import in rsb_robodojo61
+[verify_install] pass=18 warn=1 fail=0          # WARN: policy checkpoint skipped（demo 策略无 checkpoint）
+
+# 烟雾测试
+client_server_module = <自建克隆>/XPolicyLab/client_server/ws/model_client.py
+real_client_class = WsModelClient   model_client = NullModelClient
+timing_s = {app_launch 14.9, create_eval_env 36.22, reset 16.62, hold_steps 2.21, move_steps 2.87, env_close 1.11, total 74.2}
+hold last: physics_steps 10, take_action_cnt 20, end_flag False, nonfinite [], max_joint_dev_rad 0.0, max_object_disp_m 0.0
+move (joint 0, amp 0.25 rad, 10 ramp + 5 hold + 10 back):
+  step 10 cmd 0.25   meas 0.2467 (both arms)  other joints max 7e-05
+  step 12 cmd 0.25   meas 0.2500
+  step 25 cmd 0.0    meas 0.0033              all finite, object disp 0.0, physics_steps 10 per action
+[smoke] ok=True rc=0
+SMOKE_DONE rc=0 elapsed_s=79
+robodojo-ws files newer than marker: 0
+
+# 原生评测
+[CONNECTED] Policy server ready on localhost:37335
+[CONNECTED] websocket policy server connected: ws://localhost:37335
+env0 step: 800 / 800
+[robodojo eval] wall_clock=145s
+EVAL_DONE rc=0 elapsed_s=145
+{"success_rate": 0.0, "eval_time": 1, "score": 0.0, "details": {"0": {"layout_id": 0, "success": false, "score": 0.0}}}
+robodojo-ws files newer than marker: 0
+```
+
+GPU 2：两次运行时，占卡进程都在我们的进程以计算进程身份出现后让卡（烟雾测试那次 1285 ms 放掉 92 GB）。评测那次它随后在 GPU 2 上起了垫卡进程（先占 10 GiB，观察 600 s）。我们的仿真进程约 8.4 GB。细节见 `env_notes/robodojo.md`“GPU 2 与占卡脚本”。
+
+### 偏离与需要说明的地方
+
+1. **`conda create --clone` 联网下载了 75 个 conda 包（154.8 MB）**，存进我们自己的包缓存 `/data0/tongbaoshun/conda/pkgs`。第一轮修订建议第 2 条写的是“本地复制，不下载”，这一点不准确：conda 包是从包缓存重新链接的，只有 pip 装的部分是本地复制。量远低于需要先问用户的 5 GB。
+2. **源环境 `conda-meta` 目录的 mtime 变了一次**：时间点是 `conda create --clone` 开始时（11:27:07），目录里没有新增或修改的文件（最新文件仍是 2026-09-29）。推测是 conda 读取时短暂建过锁文件 [未核实]。除此之外，两次运行对 robodojo-ws 都是 0 写入。
+3. **activate 钩子去掉了 `.cuda-native`**：它只是指向系统 libcuda 的软链，而本机没有 forward-compat 版 libcuda，所以加载结果不变；两次运行都正常渲染。
+4. **curobo 版本号变成 `0.0.post1.dev101`**（源环境是 `0.0.0`）：setuptools_scm 读到了我们克隆的 git 元数据，代码提交相同。
+
+### 新发现的接口事实
+
+- `EvalEnv.success[i]` 在 `reset()` 时初始化为 True，表示“尚未失败”，只有 `end_flag[i]` 为真时才是判定结果。第一轮和这一轮的烟雾测试结束时都是 `success=True`、`end_flag=False`，这都不是任务成功。H6 的 `task_success` 要结合 `end_flag` 读。
+- `eval_policy.sh` 把 rc 99 / 134 / 139 当成崩溃重启，默认最多 10 次；Kit 退出时正好会段错误（rc 139），所以批量运行时要设 `ROBODOJO_MAX_BASH_RETRIES`，或确认 `main.py` 正常路径的退出码。
+- 关节目标动作每步落后命令约 0.003 rad（0.25 rad / 10 步的斜坡），停止加量后 2 个动作内到位：一次 `take_action` 的 10 个物理步里，前 80% 插值、后 20% 保持。
+
+### 下一步
+
+1. H6 在 `rsb_robodojo61` 里 `pip install -e hazardlib --no-deps`，以本轮烟雾测试作为基线。
+2. 补一个接触段：让机械臂碰到一只碗，检查接触下没有 NaN，以及 PhysX 休眠是否会影响危险物体的释放。
+3. H6 的运行如果超过 600 s，留意占卡脚本垫卡后只剩 8 GiB 余量。
