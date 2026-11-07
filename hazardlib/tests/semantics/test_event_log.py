@@ -6,17 +6,18 @@ from hazardlib.host import PartnerClass
 from hazardlib.semantics import (SCHEMA_VERSION, ConstraintState, HazardEventLog, InvalidClass, SeparationKind,
                                  append_jsonl, read_jsonl, write_jsonl)
 
-SECTION6_FIELDS = ["instance_id", "onset_t_s", "released_t_s", "first_official_contact_t_s", "partner_class",
-                   "v_rel_normal_mps", "hazard_mass_kg", "impulse_analytic_ns", "engine_peak_force_n",
-                   "force_source", "contact_duration_s", "constraint_state", "min_separation_m",
-                   "separation_kind", "ttc_min_s", "exposure_low", "toppled", "kinematic_overlap_count",
-                   "invalid_class"]
+SECTION6_FIELDS = ["instance_id", "onset_t_s", "released_t_s", "first_official_contact_t_s",
+                   "first_scene_contact_t_s",                                                    # D10 a
+                   "partner_class", "v_rel_normal_mps", "hazard_mass_kg", "impulse_analytic_ns",
+                   "engine_peak_force_n", "force_source", "contact_duration_s", "constraint_state",
+                   "min_separation_m", "separation_kind", "ttc_min_s", "exposure_low", "toppled",
+                   "kinematic_overlap_count", "invalid_class"]
 
 
 def full_log(instance_id="inst_0"):
     return HazardEventLog.new(
         instance_id, onset_t_s=0.1 + 0.2, released_t_s=1.0 / 3.0, first_official_contact_t_s=1.25,
-        partner_class="robot_link", v_rel_normal_mps=0.7, hazard_mass_kg=0.2, impulse_analytic_ns=0.14,
+        first_scene_contact_t_s=1.0 + 1.0 / 7.0, partner_class="robot_link", v_rel_normal_mps=0.7, hazard_mass_kg=0.2, impulse_analytic_ns=0.14,
         engine_peak_force_n=3.5, force_source="pybullet_contact_normal_force", contact_duration_s=0.8,
         constraint_state=ConstraintState.CLAMP, min_separation_m=0.0, separation_kind="surrogate",
         ttc_min_s=0.0, exposure_low=False, toppled=True, kinematic_overlap_count=0,
@@ -35,6 +36,7 @@ def test_round_trip_through_a_jsonl_file_is_lossless(tmp_path):
     back = read_jsonl(path)
     assert [b.to_dict() for b in back] == [l.to_dict() for l in logs]
     assert back[0].onset_t_s == 0.1 + 0.2 and back[0].released_t_s == 1.0 / 3.0       # exact floats, not rounded
+    assert back[0].first_scene_contact_t_s == 1.0 + 1.0 / 7.0
     assert back[0].partner_class is PartnerClass.ROBOT_LINK
     assert back[0].constraint_state is ConstraintState.CLAMP
     assert back[0].separation_kind is SeparationKind.SURROGATE
@@ -115,8 +117,21 @@ def test_reader_rejects_unsupported_versions_missing_ids_and_non_objects(tmp_pat
         read_jsonl(path)
 
 
+def test_first_scene_contact_is_optional_and_independent_of_the_official_contact(tmp_path):
+    log = HazardEventLog.new("fall", first_scene_contact_t_s=0.9)            # landed, never touched the robot
+    assert log.first_scene_contact_t_s == 0.9 and log.first_official_contact_t_s is None
+    path = tmp_path / "x.jsonl"
+    write_jsonl(path, [log, HazardEventLog.new("none")])
+    first, second = read_jsonl(path)
+    assert first.first_scene_contact_t_s == 0.9 and second.first_scene_contact_t_s is None
+    assert json.loads(path.read_text().splitlines()[1])["first_scene_contact_t_s"] is None
+    assert SCHEMA_VERSION == "1"
+
+
 @pytest.mark.parametrize("field,value", [
     ("onset_t_s", float("nan")), ("released_t_s", float("inf")), ("onset_t_s", "0.5"), ("onset_t_s", True),
+    ("first_scene_contact_t_s", float("nan")), ("first_scene_contact_t_s", float("-inf")),
+    ("first_scene_contact_t_s", "1.0"), ("first_scene_contact_t_s", False),
     ("v_rel_normal_mps", -0.1), ("impulse_analytic_ns", -1.0), ("engine_peak_force_n", -1.0),
     ("contact_duration_s", -0.01), ("min_separation_m", -0.01), ("ttc_min_s", -0.01),
     ("hazard_mass_kg", 0.0), ("hazard_mass_kg", -0.2),

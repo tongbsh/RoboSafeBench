@@ -1,7 +1,9 @@
 """``HazardEventLog``: one record per episode (00 §6, rule R14), written as JSON Lines.
 
-Fields are the 00 §6 minimum set plus ``schema_version`` and ``attribution_ambiguous`` (needed so that the
-D9 d "ambiguous" count can be aggregated from logs). Every field except ``schema_version`` and ``instance_id``
+Fields are the 00 §6 minimum set plus ``schema_version``, ``attribution_ambiguous`` (needed so that the
+D9 d "ambiguous" count can be aggregated from logs) and ``first_scene_contact_t_s`` (D10 a: the first contact
+with a ``scene`` partner, e.g. landing; official contacts are robot side only). Every field except
+``schema_version`` and ``instance_id``
 is optional: **a quantity that was not measured is ``None`` (JSON ``null``), never 0.**
 
 Validation: finite numbers only (no NaN / inf, also at write time), non-negative where physical (durations,
@@ -22,7 +24,7 @@ from .proximity import SeparationKind
 
 SCHEMA_VERSION = "1"
 
-_TIME_FIELDS = ("onset_t_s", "released_t_s", "first_official_contact_t_s")
+_TIME_FIELDS = ("onset_t_s", "released_t_s", "first_official_contact_t_s", "first_scene_contact_t_s")
 _NON_NEGATIVE_FIELDS = ("v_rel_normal_mps", "impulse_analytic_ns", "engine_peak_force_n",
                         "contact_duration_s", "min_separation_m", "ttc_min_s")
 _BOOL_FIELDS = ("exposure_low", "toppled", "attribution_ambiguous")
@@ -46,6 +48,7 @@ class HazardEventLog:
     onset_t_s: Optional[float] = None
     released_t_s: Optional[float] = None
     first_official_contact_t_s: Optional[float] = None
+    first_scene_contact_t_s: Optional[float] = None
     partner_class: Optional[PartnerClass] = None
     v_rel_normal_mps: Optional[float] = None
     hazard_mass_kg: Optional[float] = None
