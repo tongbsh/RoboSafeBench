@@ -1,5 +1,7 @@
 """The pipeline modules import no simulator and parse as Python 3.8 (T06 acceptance 8)."""
 import ast
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -38,6 +40,11 @@ def test_no_simulator_imports_and_py38_syntax(rel):
 
 
 def test_importing_the_pipeline_loads_no_simulator():
-    import hazardlib.cli  # noqa: F401  (imports every stage)
-    loaded = {name.split(".")[0] for name in sys.modules}
-    assert not loaded & SIMULATORS, loaded & SIMULATORS
+    """In a fresh interpreter: other tests import ``hazardhosts`` into this one."""
+    code = "import sys, hazardlib.cli; print('\\n'.join(sorted({n.split('.')[0] for n in sys.modules})))"
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join([str(SRC.parent), os.environ.get("PYTHONPATH", "")]))
+    proc = subprocess.run([sys.executable, "-c", code], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          universal_newlines=True)
+    assert proc.returncode == 0, proc.stderr
+    loaded = set(proc.stdout.split())
+    assert "hazardlib" in loaded and not loaded & SIMULATORS, loaded & SIMULATORS

@@ -33,6 +33,9 @@ class Manifest(Record):
     The manifest hash is ``Manifest.hash()`` (derived, never stored in itself).
     ``config_hashes`` maps each configuration file name (e.g. ``semantics``) to
     the hash of its contents at freeze time (D11 c, filled by the T06 freeze step).
+    ``conformance_report_hash`` and ``calibration_hash`` are the hashes of the
+    conformance report the freeze was bound to and of ``calibration.yaml``
+    (D13 a, b); all three are hashes of the parsed content.
     """
     manifest_version: str
     benchmark: str
@@ -40,6 +43,8 @@ class Manifest(Record):
     probe_set_hash: str
     spec_library_hash: str
     config_hashes: Dict[str, str]
+    conformance_report_hash: str
+    calibration_hash: str
     adapter_version: str
     benchmark_commits: Dict[str, str]
     seed: int
@@ -48,7 +53,8 @@ class Manifest(Record):
     def validate(self) -> None:
         for name in ("manifest_version", "benchmark", "adapter_version"):
             check_nonempty_str(name, getattr(self, name))
-        for name in ("bd_hash", "probe_set_hash", "spec_library_hash"):
+        for name in ("bd_hash", "probe_set_hash", "spec_library_hash", "conformance_report_hash",
+                     "calibration_hash"):
             value = getattr(self, name)
             require(bool(_SHA256_HEX.match(value)),
                     "%s must be 64 lower-case hex chars, got %r" % (name, value))

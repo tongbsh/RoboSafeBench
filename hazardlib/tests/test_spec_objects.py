@@ -401,3 +401,33 @@ def test_manifest_hash_tracks_every_component():
     d = conftest.manifest_dict()
     d["entries"].reverse()
     assert Manifest.from_dict(d).hash() != h0  # entry order is part of the manifest
+
+
+MANIFEST_BINDING_FIELDS = ("conformance_report_hash", "calibration_hash")  # D13 a, b
+
+
+@pytest.mark.parametrize("field", MANIFEST_BINDING_FIELDS)
+@pytest.mark.parametrize("bad", ["", "abc", "A" * 64, "g" * 64, "a" * 63, None])
+def test_manifest_binding_hashes_must_be_sha256_hex(field, bad):
+    d = conftest.manifest_dict()
+    d[field] = bad
+    with pytest.raises(SpecError, match=field):
+        Manifest.from_dict(d)
+
+
+@pytest.mark.parametrize("field", MANIFEST_BINDING_FIELDS)
+def test_manifest_requires_the_binding_hashes(field):
+    d = conftest.manifest_dict()
+    d.pop(field)
+    with pytest.raises(SpecError, match="missing required key.*%s" % field):
+        Manifest.from_dict(d)
+    assert getattr(Manifest.from_dict(conftest.manifest_dict()), field) == conftest.manifest_dict()[field]
+
+
+@pytest.mark.parametrize("field", MANIFEST_BINDING_FIELDS)
+def test_manifest_hash_tracks_the_binding_hashes(field):
+    h0 = Manifest.from_dict(conftest.manifest_dict()).hash()
+    d = conftest.manifest_dict()
+    d[field] = "f" * 64
+    assert Manifest.from_dict(d).hash() != h0
+    assert Manifest.from_dict(Manifest.from_dict(d).to_dict()).hash() == Manifest.from_dict(d).hash()

@@ -15,17 +15,25 @@ Tasks (one layout ``L0`` each, no task objects):
 Hosts are built by :func:`make_host` (also the ``hazardctl --host`` factory): ``GripperHost`` stops
 instantly on ``hold``; with ``decel_mps2`` the hold brakes at that deceleration (finite T_stop), and
 ``censor`` makes the hold be ignored always or on odd seeds (censored T_stop repetitions).
+
+Freezing needs a real conformance report whose ``bd_hash`` is the pipeline host's (D13 a):
+:func:`conformance_target` runs the suite on the same host class and timebase in the suite's own world.
 """
+import copy
 import dataclasses
 import functools
+import json
 import math
 import shutil
 from pathlib import Path
 
 import numpy as np
+import pytest
 import yaml
 
-from hazardlib.conformance import FakeAction, FakeHost, FakeSphere, FakeTask, FakeWorldConfig
+from hazardlib.calibrate import TStopProtocolSettings, run_t_stop_protocol, write_calibration
+from hazardlib.conformance import (ConformanceConfig, FakeAction, FakeHost, FakeSphere, FakeTask, FakeWorldConfig,
+                                   SuiteSession, make_fake_target, run_suite)
 from hazardlib.driving import EpisodeSession
 from hazardlib.instantiate import InstantiateSettings, instantiate
 from hazardlib.gates import GateSettings
@@ -53,6 +61,7 @@ TABLE_SURFACE = {"name": "table", "min_m": [-1.0, -1.0, 0.0], "max_m": [1.0, 1.0
 STATIC_ENTITIES = {"goal": {"name": "goal_marker", "source": "oracle_config"}}
 PROBE_HORIZON_S = 3.0
 LAYOUT = "L0"
+DECEL_MPS2 = 2.5           # the braking host of the end-to-end chain: T_stop = 0.5 m/s / 2.5 m/s^2 = 0.2 s
 
 
 def tasks():
@@ -240,6 +249,74 @@ def edit_yaml(path, edit):
     data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
     edit(data)
     Path(path).write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+
+def write_json(path, data):
+    Path(path).write_text(json.dumps(data, indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8")
+    return Path(path)
+
+
+# ------------------------------------------------------------------- conformance report, calibration (D13 a, b)
+
+def assemble_conformance_config_dir(target):
+    """One directory for the conformance suite and the pipeline: the resolved fixture configs plus the
+    repository's ``conformance.yaml`` and ``fakehost.yaml``, copied at test time (T05 owns their keys, so they
+    are never stored next to the fixtures)."""
+    target = copy_fixture_configs(target)
+    for name in ("conformance", "fakehost"):
+        shutil.copy(str(REPO_CONFIG_DIR / ("%s.yaml" % name)), str(target))
+    return target
+
+
+def conformance_target(config_dir, decel_mps2=None, ccd=True):
+    """The suite's FakeHost world (``fakehost.yaml``: the suite's scenario needs its tasks and geometry) on this
+    module's host class and timebase, so that its BD, hence ``bd_hash``, equals that of
+    ``make_host(decel_mps2, ccd=ccd)``. The BD records the timebase, gravity, CCD, environments, contact-body
+    rules, EEF contact radius, state access and optional methods, not the tasks or the scene geometry."""
+    cls, kwargs = (GripperHost, {}) if decel_mps2 is None else (BrakingHost, {"decel_mps2": decel_mps2})
+    return make_fake_target(ccd=ccd, world_overrides={"substeps_per_action": SUBSTEPS}, host_cls=cls,
+                            host_kwargs=kwargs, config_dir=config_dir)
+
+
+def conformance_report(config_dir, **target):
+    """A real report: C1-C13 run on :func:`conformance_target` with the settings in ``config_dir``."""
+    return run_suite(SuiteSession(conformance_target(config_dir, **target), ConformanceConfig.load(config_dir)))
+
+
+def write_calibration_file(path, task="pick", decel_mps2=DECEL_MPS2):
+    """``hazardctl calibrate`` on the braking host, as a function."""
+    host = make_host(decel_mps2=decel_mps2)
+    result = run_t_stop_protocol(session(host), PathFollower(host), task_context(task),
+                                 TStopProtocolSettings.load(FIXTURE_CONFIG_DIR), 0, 0)
+    write_calibration(str(path), result)
+    return Path(path)
+
+
+# Session fixtures, imported by the test modules that freeze (a second conftest.py would shadow the
+# ``conftest`` module that tests/test_spec_objects.py imports). Tests get copies and write under their tmp_path.
+
+@pytest.fixture(scope="session")
+def conformance_dir(tmp_path_factory):
+    return assemble_conformance_config_dir(tmp_path_factory.mktemp("conformance") / "configs")
+
+
+@pytest.fixture(scope="session")
+def conformance_reports(conformance_dir):
+    """``get(**target)``: a fresh copy of the report of ``conformance_target(conformance_dir, **target)``."""
+    cache = {}
+
+    def get(**target):
+        key = tuple(sorted(target.items()))
+        if key not in cache:
+            cache[key] = conformance_report(conformance_dir, **target)
+        return copy.deepcopy(cache[key])
+
+    return get
+
+
+@pytest.fixture(scope="session")
+def calibration_file(tmp_path_factory):
+    return write_calibration_file(tmp_path_factory.mktemp("calibration") / "calibration.yaml")
 
 
 # ------------------------------------------------------------------------------------------------ probes
