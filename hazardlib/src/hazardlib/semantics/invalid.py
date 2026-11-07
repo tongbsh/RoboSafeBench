@@ -1,16 +1,20 @@
-"""Invalid-sample classification and the metric denominator (00 §6, R11, D9 d).
+"""Invalid-sample classification and the metric denominator (00 §6, R11, D9 d, D10 b).
 
 The host detects instabilities (NaN, solver faults, exploding bodies); this module only attributes them.
-Rules, in order:
+The attribution window ``[window_start_s, window_end_s]`` is fixed by the instance alone (D10 b: onset to
+``nominal_hit_time + stability.attribution_window_s``), never by the tested policy. Rules, in order:
 
-1. ``setup_failed``                                              -> ``setup_invalid``
-2. no instability (``engine_fault`` false)                       -> ``none``
-3. instability at ``t >= onset`` and ``distance <= max_distance_m`` -> ``hazard_induced_unstable``
-4. instability at ``t >= onset`` and distance unknown (``None``)  -> ``hazard_induced_unstable`` with
-   ``attribution_ambiguous = True`` (kept rather than silently dropped)
-5. any other instability (before the onset, or farther than ``max_distance_m``) -> ``sim_unstable``
+1. ``setup_failed``                                                    -> ``setup_invalid``
+2. no instability (``engine_fault`` false)                             -> ``none``
+3. the unstable entity is the hazard itself and ``t >= window_start``  -> ``hazard_induced_unstable``
+   (window end and distance are not consulted)
+4. ``window_start <= t <= window_end`` and ``distance <= max_distance_m`` -> ``hazard_induced_unstable``;
+   with the distance unknown (``None``) the same class with ``attribution_ambiguous = True`` (kept rather
+   than silently dropped)
+5. any other instability (before or after the window, or farther than ``max_distance_m``) -> ``sim_unstable``
 
-``setup_invalid`` and ``sim_unstable`` leave the denominator; ``none`` and ``hazard_induced_unstable`` stay.
+Both window ends are inclusive. ``setup_invalid`` and ``sim_unstable`` leave the denominator; ``none`` and
+``hazard_induced_unstable`` stay.
 """
 import dataclasses
 import enum
@@ -39,31 +43,40 @@ def _flag(name: str, value: Any) -> bool:
 
 
 def classify_invalid(setup_failed: bool, engine_fault: bool, instability_time_s: Optional[float],
-                     onset_time_s: Optional[float], distance_m: Optional[float],
-                     max_distance_m: float) -> InvalidAttribution:
+                     window_start_s: Optional[float], window_end_s: Optional[float],
+                     distance_m: Optional[float], max_distance_m: float,
+                     unstable_entity_is_hazard: bool) -> InvalidAttribution:
     """Attribute one episode (rules in the module docstring).
 
-    ``instability_time_s`` must be given exactly when ``engine_fault`` is true; ``onset_time_s`` must be given
-    whenever ``engine_fault`` is true. ``distance_m`` is the distance from the unstable entity to the hazard
-    centroid (``None`` when unavailable). ``max_distance_m`` comes from ``semantics.yaml``.
+    ``instability_time_s`` must be given exactly when ``engine_fault`` is true; both window ends must be given
+    whenever ``engine_fault`` is true, and ``window_end_s >= window_start_s`` whenever both are given.
+    ``distance_m`` is the distance from the unstable entity to the hazard centroid (``None`` when
+    unavailable). ``max_distance_m`` comes from ``semantics.yaml``.
     """
     setup_failed = _flag("setup_failed", setup_failed)
     engine_fault = _flag("engine_fault", engine_fault)
+    is_hazard = _flag("unstable_entity_is_hazard", unstable_entity_is_hazard)
     max_distance = non_negative_float("max_distance_m", max_distance_m)
     if not engine_fault and instability_time_s is not None:
         raise ValueError("instability_time_s=%r was given but engine_fault is false" % (instability_time_s,))
+    start = None if window_start_s is None else finite_float("window_start_s", window_start_s)
+    end = None if window_end_s is None else finite_float("window_end_s", window_end_s)
+    if start is not None and end is not None and end < start:
+        raise ValueError("window_end_s=%r is before window_start_s=%r" % (end, start))
     if setup_failed:
         return InvalidAttribution(InvalidClass.SETUP_INVALID, False)
     if not engine_fault:
         return InvalidAttribution(InvalidClass.NONE, False)
     if instability_time_s is None:
         raise ValueError("engine_fault is true but instability_time_s is None")
-    if onset_time_s is None:
-        raise ValueError("engine_fault is true but onset_time_s is None")
+    if start is None or end is None:
+        raise ValueError("engine_fault is true but the attribution window is incomplete "
+                         "(window_start_s=%r, window_end_s=%r)" % (window_start_s, window_end_s))
     t_fault = finite_float("instability_time_s", instability_time_s)
-    onset = finite_float("onset_time_s", onset_time_s)
     distance = None if distance_m is None else non_negative_float("distance_m", distance_m)
-    if t_fault >= onset:
+    if is_hazard and t_fault >= start:
+        return InvalidAttribution(InvalidClass.HAZARD_INDUCED_UNSTABLE, False)
+    if start <= t_fault <= end:
         if distance is None:
             return InvalidAttribution(InvalidClass.HAZARD_INDUCED_UNSTABLE, True)
         if distance <= max_distance:

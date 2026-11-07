@@ -4,30 +4,47 @@ from hazardlib.semantics import (HazardEventLog, InvalidAttribution, InvalidClas
                                  metric_denominator)
 
 MAX_D = 0.5          # test data (m), not a project value
-ONSET = 2.0
+START = 2.0          # window start (the onset), test data
+END = 5.0            # window end (nominal hit + attribution window), test data
 
 
-def classify(setup_failed=False, engine_fault=False, t=None, onset=ONSET, distance=None, max_d=MAX_D):
-    return classify_invalid(setup_failed, engine_fault, t, onset, distance, max_d)
+def classify(setup_failed=False, engine_fault=False, t=None, start=START, end=END, distance=None, max_d=MAX_D,
+             is_hazard=False):
+    return classify_invalid(setup_failed, engine_fault, t, start, end, distance, max_d, is_hazard)
 
 
 @pytest.mark.parametrize("kwargs,expected_class,ambiguous", [
     # setup problems are decided first
     (dict(setup_failed=True), InvalidClass.SETUP_INVALID, False),
     (dict(setup_failed=True, engine_fault=True, t=3.0, distance=0.1), InvalidClass.SETUP_INVALID, False),
+    (dict(setup_failed=True, engine_fault=True, t=3.0, is_hazard=True), InvalidClass.SETUP_INVALID, False),
     # nothing went wrong
     (dict(), InvalidClass.NONE, False),
-    # the attribution table of D9 d
-    (dict(engine_fault=True, t=1.0, distance=0.1), InvalidClass.SIM_UNSTABLE, False),                # before onset
-    (dict(engine_fault=True, t=3.0, distance=0.1), InvalidClass.HAZARD_INDUCED_UNSTABLE, False),      # after, near
-    (dict(engine_fault=True, t=3.0, distance=0.9), InvalidClass.SIM_UNSTABLE, False),                # after, far
+    (dict(is_hazard=True), InvalidClass.NONE, False),
+    # the attribution table of D9 d / D10 b
+    (dict(engine_fault=True, t=1.0, distance=0.1), InvalidClass.SIM_UNSTABLE, False),                # before window
+    (dict(engine_fault=True, t=3.0, distance=0.1), InvalidClass.HAZARD_INDUCED_UNSTABLE, False),      # inside, near
+    (dict(engine_fault=True, t=3.0, distance=0.9), InvalidClass.SIM_UNSTABLE, False),                # inside, far
     (dict(engine_fault=True, t=3.0, distance=None), InvalidClass.HAZARD_INDUCED_UNSTABLE, True),     # unknown: keep
-    # boundaries are inclusive on both conditions
-    (dict(engine_fault=True, t=ONSET, distance=0.1), InvalidClass.HAZARD_INDUCED_UNSTABLE, False),
+    # D10 b: long after the window it is not the hazard's fault, however close the entity is
+    (dict(engine_fault=True, t=60.0, distance=0.0), InvalidClass.SIM_UNSTABLE, False),
+    (dict(engine_fault=True, t=60.0, distance=None), InvalidClass.SIM_UNSTABLE, False),
+    # D10 b: the hazard itself becoming unstable is always hazard induced once the window has opened
+    (dict(engine_fault=True, t=60.0, is_hazard=True), InvalidClass.HAZARD_INDUCED_UNSTABLE, False),
+    (dict(engine_fault=True, t=3.0, distance=0.9, is_hazard=True), InvalidClass.HAZARD_INDUCED_UNSTABLE, False),
+    (dict(engine_fault=True, t=3.0, distance=None, is_hazard=True), InvalidClass.HAZARD_INDUCED_UNSTABLE, False),
+    (dict(engine_fault=True, t=START, is_hazard=True), InvalidClass.HAZARD_INDUCED_UNSTABLE, False),
+    (dict(engine_fault=True, t=1.0, is_hazard=True), InvalidClass.SIM_UNSTABLE, False),             # before onset
+    # both window ends and the distance bound are inclusive
+    (dict(engine_fault=True, t=START, distance=0.1), InvalidClass.HAZARD_INDUCED_UNSTABLE, False),
+    (dict(engine_fault=True, t=END, distance=0.1), InvalidClass.HAZARD_INDUCED_UNSTABLE, False),
+    (dict(engine_fault=True, t=START - 1e-9, distance=0.1), InvalidClass.SIM_UNSTABLE, False),
+    (dict(engine_fault=True, t=END + 1e-9, distance=0.1), InvalidClass.SIM_UNSTABLE, False),
     (dict(engine_fault=True, t=3.0, distance=MAX_D), InvalidClass.HAZARD_INDUCED_UNSTABLE, False),
     (dict(engine_fault=True, t=3.0, distance=MAX_D * 1.0000001), InvalidClass.SIM_UNSTABLE, False),
-    (dict(engine_fault=True, t=ONSET - 1e-9, distance=0.1), InvalidClass.SIM_UNSTABLE, False),
-    # an unknown distance before the onset cannot be hazard induced, and is not "ambiguous"
+    # a zero-length window still holds its single instant
+    (dict(engine_fault=True, t=START, end=START, distance=0.1), InvalidClass.HAZARD_INDUCED_UNSTABLE, False),
+    # an unknown distance outside the window cannot be hazard induced, and is not "ambiguous"
     (dict(engine_fault=True, t=1.0, distance=None), InvalidClass.SIM_UNSTABLE, False),
     (dict(engine_fault=True, t=3.0, distance=0.0), InvalidClass.HAZARD_INDUCED_UNSTABLE, False),
 ])
@@ -42,13 +59,20 @@ def test_attribution_rule_table(kwargs, expected_class, ambiguous):
     (dict(setup_failed=1), "setup_failed"),
     (dict(engine_fault="yes"), "engine_fault"),
     (dict(engine_fault=True, t=None), "instability_time_s is None"),
-    (dict(engine_fault=True, t=3.0, onset=None), "onset_time_s is None"),
+    (dict(engine_fault=True, t=3.0, start=None), "window is incomplete"),
+    (dict(engine_fault=True, t=3.0, end=None), "window is incomplete"),
+    (dict(engine_fault=True, t=3.0, start=5.0, end=2.0), "window_end_s"),
+    (dict(start=5.0, end=2.0), "window_end_s"),                       # checked even without a fault
+    (dict(engine_fault=True, t=3.0, start=float("nan")), "window_start_s"),
+    (dict(engine_fault=True, t=3.0, end=float("inf")), "window_end_s"),
     (dict(engine_fault=False, t=3.0), "engine_fault is false"),
     (dict(engine_fault=True, t=float("nan")), "instability_time_s"),
     (dict(engine_fault=True, t=3.0, distance=-0.1), "distance_m"),
     (dict(engine_fault=True, t=3.0, distance=float("inf")), "distance_m"),
     (dict(max_d=-1.0), "max_distance_m"),
     (dict(max_d=None), "max_distance_m"),
+    (dict(is_hazard=None), "unstable_entity_is_hazard"),
+    (dict(is_hazard=1), "unstable_entity_is_hazard"),
 ])
 def test_invalid_arguments_are_rejected(kwargs, match):
     with pytest.raises(ValueError, match=match):
@@ -98,3 +122,10 @@ def test_hazard_induced_cases_are_never_dropped_even_when_ambiguous():
     only = [classify(engine_fault=True, t=3.0, distance=None)]            # ambiguous attribution
     summary = metric_denominator(only)
     assert summary.n_in_denominator == 1 and summary.n_attribution_ambiguous == 1
+
+
+def test_a_late_instability_leaves_the_denominator_but_an_unstable_hazard_stays():
+    late = classify(engine_fault=True, t=60.0, distance=0.0)
+    hazard = classify(engine_fault=True, t=60.0, is_hazard=True)
+    summary = metric_denominator([late, hazard])
+    assert (summary.n_sim_unstable, summary.n_hazard_induced_unstable, summary.n_in_denominator) == (1, 1, 1)
