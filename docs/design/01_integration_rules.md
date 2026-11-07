@@ -53,7 +53,7 @@ spawn_mode: runtime                # runtime | pooled | preload_xml
 kinematic_pose_set: true
 release_with_velocity: true
 contact_tier: A                    # A: 逐接触 + 可得相对法向速度 | B: 仅布尔 / 伙伴 | C: 无
-distance: geometric                # geometric | surrogate | none
+distance: geometric                # geometric | surrogate | none；none 与 surrogate 一样按质心距离计算并记 separation_kind=surrogate（D12 c）
 robot_contact_bodies: {include: ["prefix:robot0_", "exact:panda_hand", held_object], exclude: ["substr:camera"]}   # 每项必须带匹配方式前缀；held_object 是类别记号（D10 f）
 eef_contact_radius_m: ?            # 机器人有效接触半径，用于把质心命中点换算成首次表面接触（D1）；由 C13 检验
 state_access: {eef: true, gripper: true, base: false, objects: true, fixtures: true, support_surfaces: true}
@@ -107,7 +107,7 @@ policy_interface: {kind: calvin_model_step, notes: "..."}
 | `step(env, action)` | 用基准原生动作推进**一个控制步**；逐物理步的钩子在其内部触发 |
 | `policy_observation(env) -> Dict[str, Any]` | 策略实际看到的观测：图像（名 → `H×W×3 uint8`）与非视觉状态向量（名 → 一维 float 数组）。键名在同一宿主内保持稳定；C2、C7、C9 用它与无危险运行比较 |
 
-回合绑定：调用方先 `runtime.arm(env, instance, task_entities=None, control_id=None)` 登记下一回合的实例（`instance=None` 表示无危险对照回合，此时必须给 `control_id`，用作日志的 `instance_id`），再 `reset_episode`。基准原生评测循环（不经过 `reset_episode`）走的也是“先 `arm`、再由重置钩子触发 `begin_episode`”这条路径。
+回合绑定：调用方先 `runtime.arm(env, instance, task_entities=None, control_id=None, control_onset_s=None)` 登记下一回合的实例（`instance=None` 表示无危险对照回合，此时必须给 `control_id`，用作日志的 `instance_id`；对照回合若给了 `task_entities`，还必须给 `control_onset_s`，即配对实例的名义 onset，作为倾倒的参考时刻，D12 a），再 `reset_episode`。基准原生评测循环（不经过 `reset_episode`）走的也是“先 `arm`、再由重置钩子触发 `begin_episode`”这条路径。
 
 ### 3.2 可选
 
@@ -120,7 +120,25 @@ policy_interface: {kind: calvin_model_step, notes: "..."}
 
 ### 3.3 HazardRuntime（核心，不由适配器实现）
 
-`arm(env, instance, task_entities=None, control_id=None)`、`begin_episode(env)`、`pre_step(env)`、`post_step(env)`、`end_episode(env) -> HazardEventLog`（D11 a）。运行时负责：按秒推进关键帧、R1 复核（D11 d）、碰撞前回滚与释放（R8）、事件记录、不稳定监测。适配器**只**转发钩子。
+`arm(env, instance, task_entities=None, control_id=None, control_onset_s=None)`、`begin_episode(env)`、`pre_step(env)`、`post_step(env)`、`end_episode(env) -> HazardEventLog`（D11 a、D12 a）。运行时负责：按秒推进关键帧、R1 复核（D11 d）、碰撞前回滚与释放（R8）、事件记录、不稳定监测。适配器**只**转发钩子。运行时只实现 Tier A（D12 d）。
+
+**宿主必须满足的钩子语义（D12 e）。** 下列要求决定适配器怎么接钩子，违反时运行时多半不报错、而是记出错误的量，由一致性测试去抓：
+
+1. **钩子粒度与时刻**：`pre_step` / `post_step` 包住**每一个最细物理步**；`time_state().sim_time_s` 在 `pre_step` 里是步首 t0，在 `post_step` 里是步末 t0 + `physics_dt_s`；`physics_dt_s` 必须是真实步长（运行时用它做半步取整与 R1 的步间位移）。
+2. **重置钩子的位置**：`begin_episode` 在场景重置**完成之后**调用；运行时在其中读 `object_poses` 检查 `task_entities`，记回合零点，分配并停放危险体。
+3. **回合零点**：实例里的时间都相对 `begin_episode` 时的 `sim_time_s`；宿主时钟可以跨回合连续，不必在重置时归零。
+4. **接触同钟**：`ContactObs.time_s` 与 `sim_time_s` 是同一个绝对时钟，运行时自己减去回合零点。
+5. **危险体伙伴名**：接触里上报的危险体伙伴名必须等于 `HazardHandle.key`，否则另一个危险体会被当成 `scene` 或机器人。
+6. **`hazard_contacts(h)` 是“取走”语义**：返回自上次调用以来的全部接触；运行时每个 `post_step` 调一次，停放期间也调，停放期间的接触被丢弃（这类宿主缺陷由 C2 检验）。
+7. **运动学重叠同步上报**：`set_hazard_pose` 之后的那个物理步内，引擎要检测与机器人侧的重叠，并在该步的 `hazard_contacts` 里用碰撞体名上报；只有机器人侧的重叠触发回滚，运动学阶段与 `scene` 的穿插不记录。
+8. **释放后速度立即可读**：`release_to_physics` 之后紧接着的 `hazard_state` 必须已经反映释放速度；运行时把读回值记进回合信息，供 C5 与下发值比较。
+9. **碰撞体名一致**：`RobotState.collision_body_names` 与 `ContactObs.partner_name` 用同一套名字，`collision_body_lin_vel_mps` 与之一一对应；否则 `vₙ` 记 `None`（D10 c，不回退到 EEF 速度）。
+10. **多体抓持物给 `held_object_bodies`**：不给时运行时只按 `[held_object]` 匹配，各部件名匹配不上会被归为 `scene`，官方接触因此丢失。
+11. **成功判定的读取时刻**：`task_success(env)` 在 `end_episode` 里、危险体停放**之前**读取，返回 bool（numpy bool 亦可）。
+12. **不稳定由宿主检测**：宿主在回合进行中调用 `report_instability`（`entity_pos` 为世界系），只保留第一次报告；归因由 T03 的规则函数完成（R11）。
+13. **启动条件**：BD 为 Tier A；`robot_contact_bodies`、`hazard_ccd`、`distance` 不得为 `unknown`；`distance: geometric` 必须提供 `min_distance`；运行时在构造时调用一次 `host.install_hooks(runtime)`。
+14. **回合结束由调用方负责**：`EpisodeDriver` 没有“结束”方法，我们的驱动或基准原生评测循环的回合结束处必须调用 `runtime.end_episode(env)`。
+15. **四元数为 wxyz**：`object_poses` 与 `hazard_state` 的姿态均为 wxyz，倾角按此计算。
 
 ---
 
@@ -138,9 +156,9 @@ policy_interface: {kind: calvin_model_step, notes: "..."}
 
 **R6 停放与预置。** 运行时生成不可用或不安全时，在场景构建期预置危险体池并停放：位置在工作区与所有相机视野之外，碰撞过滤保证停放体不与任何物体交互，不受重力影响。
 
-**R7 运动学阶段与释放。** `slide` / `reach` 族的脚本运动全程为运动学。**释放速度 = 实例路径在固定窗口 `release_velocity_window_s`（`runtime.yaml`，所有宿主相同）上的后向差分，结束于回滚时刻；禁止使用引擎钩子步长**（D4：否则同一实例在不同引擎上得到不同释放速度）。**不得**加速度下限（官方严重度使用未取下限速度；运动下限只可用于“让物体继续运动”的非官方用途，且必须在记录里标注）。`fall` 族在 onset 以零速度释放，速度为 0（D2）。危险体的线阻尼与角阻尼**必须为 0**（宿主若无法置 0，须在 BD 声明实际值，并由 C5 检验落地时间）。
+**R7 运动学阶段与释放。** `slide` / `reach` 族的脚本运动全程为运动学。**释放速度 = 实例路径在固定窗口 `release_velocity_window_s`（`runtime.yaml`，所有宿主相同）上的后向差分，结束于回滚时刻；禁止使用引擎钩子步长**（D4：否则同一实例在不同引擎上得到不同释放速度）。**不得**加速度下限（官方严重度使用未取下限速度；运动下限只可用于“让物体继续运动”的非官方用途，且必须在记录里标注）。`fall` 族在 onset 以零速度释放，速度为 0（D2）。没有重叠时的**名义释放**发生在“步末最接近 `release_time_s`”那一物理步的 `pre_step`：危险体从 p(T−dt) 以实例的释放速度出发、步末到达释放位姿，避免把危险体运动学地摆在贴合位姿上而产生假重叠（D12 b）。危险体的线阻尼与角阻尼**必须为 0**（宿主若无法置 0，须在 BD 声明实际值，并由 C5 检验落地时间）。
 
-**R8 官方接触与回滚。** 对 `slide` / `reach` 族：危险体处于运动学状态时的任何与机器人侧碰撞体的重叠，只记 `kinematic_overlap`。运行时检测到首次重叠后：回滚危险体到最后一个无重叠位姿 → 以 R7 的速度释放 → 其后接触才是官方接触。适配器若无法回滚，则声明 Tier B。对 `fall` 族：危险体从 onset 起即为动力学体，**没有运动学重叠阶段，不回滚**，没有运动学阶段、不回滚，onset 起的接触都按动力学事件记录；其中“官方接触”仍特指与机器人侧伙伴的接触，与 `scene`（如桌面）的接触按伙伴类别 `scene` 记事件、不计入官方接触量（D10 a）。
+**R8 官方接触与回滚。** 对 `slide` / `reach` 族：危险体处于运动学状态时的任何与机器人侧碰撞体的重叠，只记 `kinematic_overlap`。运行时检测到首次重叠后：回滚危险体到最后一个无重叠位姿 → 以 R7 的速度释放 → 其后的接触记为 `dynamic` 事件，其中伙伴为机器人侧的才是官方接触（D10 a、D12 f）。没有无重叠位姿（第一次摆放就重叠），或回滚时刻之前容不下差分窗口时，该实例记 `setup_invalid`，危险体重新停放（D12 g）。适配器若无法回滚，则声明 Tier B（运行时目前不支持 Tier B，D12 d）。对 `fall` 族：危险体从 onset 起即为动力学体，**没有运动学重叠阶段，不回滚**，onset 起的接触都按 `dynamic` 事件记录；其中“官方接触”仍特指与机器人侧伙伴的接触，与 `scene`（如桌面）的接触按伙伴类别 `scene` 记事件、不计入官方接触量（D10 a）。
 
 **R9 严重度只用运动学解析量。** `J = m·(1+e)·vₙ`；引擎峰值力 / 冲量只作辅助，**禁止**用于排序或进入主表。
 
@@ -178,7 +196,7 @@ policy_interface: {kind: calvin_model_step, notes: "..."}
 | C10 | 保持动作与 T_stop | 零动作下机器人不漂移；T_stop 在 N 次重复内中位数稳定、四分位距在容差内 |
 | C11 | 无效样本映射 | 强制不可放置 → `setup_invalid` 且被排除；强制 NaN → `sim_unstable` |
 | C12 | 批量独立（仅批量基准） | 环境 i 的危险体不影响环境 j 的任何观测 |
-| C13 | 名义命中时机（D1） | 令机器人沿一条已知名义路径运动（演示回放 / 脚本，且可重复），危险体按 `build_hit_path` 构造并按 `standoff = r_hazard + eef_contact_radius_m` 换算；**首次官方接触时刻与名义 `t_hit` 之差在 `tol_hit_time_s` 内**，并报告残差；残差超标则 `eef_contact_radius_m` 需重新测定，不得放宽容差 |
+| C13 | 名义命中时机（D1） | 令机器人沿一条已知名义路径运动（演示回放 / 脚本，且可重复），危险体按 `build_hit_path` 构造并按 `standoff = r_hazard + eef_contact_radius_m` 换算；**首次官方接触时刻与名义 `t_hit` 之差在 `tol_hit_time_s`（`c13_nominal_hit.hit_time_abs_tol_s`）内**，并报告残差；残差超标则 `eef_contact_radius_m` 需重新测定，不得放宽容差。容差至少覆盖一个物理步：reach 的释放速度是 R7 的窗口差分而不是路径在 `t_hit` 的瞬时速度，名义释放又提前一步（D12 b），命中时刻误差为 O(dt·\|v(t_hit) − v_rel\| / \|v_rel\|) |
 
 ---
 

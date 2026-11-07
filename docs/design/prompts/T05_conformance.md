@@ -15,7 +15,8 @@
 3. 变异体验证 `hazardlib/tests/test_mutants.py`：对 `FakeHost` 的每个变异开关（`tunneling`、`residual_velocity`、`state_leak`、`wrong_dt`、`no_rollback`、`park_interacts`、`oracle_depends_on_hazard`、`bad_standoff`、`hook_dependent_release`、`post_impact_vn`）断言**至少一个**对应的 C 测试失败；同时断言无缺陷的 `FakeHost` 通过全部 C 测试。给出“变异开关 → 抓到它的测试编号”对照表。
    回合由 `EpisodeDriver`（D11 a）驱动：C2、C7、C9 用 `policy_observation` 与无危险对照回合（`arm(env, None, control_id=...)`）逐键比较；C3 在高速穿越时同时检查接触事件与 `r1_violation_count`（D11 d）。
 4. C 测试的跳过规则：C6 在 Tier B 允许跳过；C12 仅批量基准；C8 在 BD 声明为 `statistical` 时改为测差异量级；其余不得跳过。跳过必须在报告里写明原因，且**不能因为适配器没实现而跳过**。
-5. **C13（名义命中时机，D1）**：在 `FakeHost` 上实现完整版本——用 `build_hit_path` 构造含 `standoff` 的实例，令机器人沿已知名义路径运动，断言首次官方接触时刻与名义 `t_hit` 之差 < `tol_hit_time_s`；`bad_standoff` 变异体必须使它失败。真实宿主上若没有可重复的名义回放，C13 报告为 `unverified`（**不是**通过），并在汇报里写明原因。C5 同时要求：先实测 `gravity_mps2` 再比较落地时间，并覆盖“FakeHost 取不同重力”的情形。
+5. **C13（名义命中时机，D1）**：在 `FakeHost` 上实现完整版本——用 `build_hit_path` 构造含 `standoff` 的实例，令机器人沿已知名义路径运动，断言首次官方接触时刻与名义 `t_hit` 之差 < `tol_hit_time_s`；`bad_standoff` 变异体必须使它失败。容差键是 `conformance.yaml` 的 `c13_nominal_hit.hit_time_abs_tol_s`（T04-F 已建，PLACEHOLDER）：名义释放提前一个物理步（D12 b），reach 的命中误差是 O(dt)（FakeHost 上 dt = 0.002 时实测 1.4e-4 s），因此推导出的容差必须至少覆盖一个物理步，同时仍要抓住 `bad_standoff`。真实宿主上若没有可重复的名义回放，C13 报告为 `unverified`（**不是**通过），并在汇报里写明原因。C5 同时要求：先实测 `gravity_mps2` 再比较落地时间，并覆盖“FakeHost 取不同重力”的情形。
+6. **D12 的口径**：“首次官方接触”指伙伴为机器人侧的 `dynamic` 事件（`EventKind.DYNAMIC`），与 `scene` 的 `dynamic` 事件不算（D12 f）。`01_integration_rules.md` §3.3 的 15 条宿主钩子语义（D12 e）是适配器契约；其中能由 C 测试检验的（如停放期间的接触、运动学重叠同步上报、释放后速度立即可读、碰撞体名一致），在对照表里注明由哪个测试覆盖，检验不了的列为“未覆盖”并说明原因。
 
 ## 验收标准（贴输出）
 
