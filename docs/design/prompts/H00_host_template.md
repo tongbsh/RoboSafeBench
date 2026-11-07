@@ -15,6 +15,7 @@
    - R2：**禁止**以任务名为条件的分支；逐任务信息写进 `configs/hazard/annotations/<BENCH>.yaml` 并统计行数；
    - R5/R6：危险体不进状态向量与成功判定；停放不交互；
    - R7/R8：释放速度不加下限，且由运行时按固定窗口给出，适配器**不得**自行用钩子步长计算；运动学重叠由运行时回滚处理，适配器只提供位姿 / 释放 / 接触原语；`fall` 族无运动学阶段；
+   - 钩子语义：逐条满足 `01_integration_rules.md` §3.3 的 15 条宿主要求（D12 e），尤其是钩子包住每个最细物理步、`begin_episode` 在重置完成之后、危险体伙伴名等于 `HazardHandle.key`、`hazard_contacts` 是“取走”语义、运动学重叠在同一步上报、回合结束处调用 `runtime.end_episode`；运行时只支持 Tier A（D12 d），在汇报里逐条写明适配器如何满足；
    - R13：不改上游；需要复制上游代码时固定提交号并断言；补丁存 `patches/<BENCH>/`；
    - R15：缺能力 → `CapabilityError`，不静默降级。
 5. **注册宿主**：`register_host("<BENCH>", factory)`，使 `python -m hazardlib.conformance --host <BENCH>` 可用。

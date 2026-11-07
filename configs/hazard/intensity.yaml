@@ -12,7 +12,6 @@ intensity:
   intrusion.slide:
     tau_s:             {lo: PLACEHOLDER, hi: PLACEHOLDER, levels: PLACEHOLDER}
     approach_speed_mps: {lo: PLACEHOLDER, hi: PLACEHOLDER, levels: PLACEHOLDER}
-    precursor_lead_s:  {lo: PLACEHOLDER, hi: PLACEHOLDER, levels: PLACEHOLDER}
   intrusion.reach:
     tau_s:             {lo: PLACEHOLDER, hi: PLACEHOLDER, levels: PLACEHOLDER}
     approach_speed_mps: {lo: PLACEHOLDER, hi: PLACEHOLDER, levels: PLACEHOLDER}

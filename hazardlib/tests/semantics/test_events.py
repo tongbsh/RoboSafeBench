@@ -107,7 +107,7 @@ def test_classification_rejects_misconfiguration(kwargs, match):
 # --------------------------------------------------------------------- ContactEvent
 
 def event(**overrides):
-    kwargs = dict(kind="official", time_s=0.5, partner_name="finger", partner_class="robot_link",
+    kwargs = dict(kind="dynamic", time_s=0.5, partner_name="finger", partner_class="robot_link",
                   position=[0, 0, 0.1])
     kwargs.update(overrides)
     return ContactEvent(**kwargs)
@@ -115,7 +115,7 @@ def event(**overrides):
 
 def test_contact_event_coerces_and_defaults_to_none():
     ev = event()
-    assert ev.kind is EventKind.OFFICIAL and ev.partner_class is PartnerClass.ROBOT_LINK
+    assert ev.kind is EventKind.DYNAMIC and ev.partner_class is PartnerClass.ROBOT_LINK
     assert ev.normal is None and ev.v_normal_mps is None and ev.impulse_ns is None
     assert ev.position.shape == (3,) and ev.position.dtype == np.float64
     ev = event(normal=[0, 0, 1], v_normal_mps=0.4, impulse_ns=0.0)
@@ -125,14 +125,14 @@ def test_contact_event_coerces_and_defaults_to_none():
 def test_contact_event_from_a_host_observation():
     obs = ContactObs(partner_name="table", partner_class="scene", position=[0, 0, 0],
                      normal=[0, 0, 1], time_s=0.7, impulse_ns=0.05)
-    ev = ContactEvent.from_obs(obs, EventKind.OFFICIAL, 0.3)
+    ev = ContactEvent.from_obs(obs, EventKind.DYNAMIC, 0.3)
     assert (ev.partner_name, ev.partner_class, ev.time_s, ev.impulse_ns, ev.v_normal_mps) == (
         "table", PartnerClass.SCENE, 0.7, 0.05, 0.3)
     np.testing.assert_array_equal(ev.normal, [0, 0, 1])
-    assert ContactEvent.from_obs(obs, EventKind.OFFICIAL, None).v_normal_mps is None
+    assert ContactEvent.from_obs(obs, EventKind.DYNAMIC, None).v_normal_mps is None
 
 
-def test_official_events_may_be_with_scene_but_overlaps_are_robot_side_only():
+def test_dynamic_events_may_be_with_scene_but_overlaps_are_robot_side_only():
     assert event(partner_class="scene").partner_class is PartnerClass.SCENE      # R8: scene contacts of a fall
     for ok in ("robot_link", "held_object"):
         assert event(kind="kinematic_overlap", partner_class=ok).kind is EventKind.KINEMATIC_OVERLAP
@@ -143,6 +143,7 @@ def test_official_events_may_be_with_scene_but_overlaps_are_robot_side_only():
 
 @pytest.mark.parametrize("overrides,match", [
     (dict(kind="maybe"), "kind"),
+    (dict(kind="official"), "kind"),       # renamed to "dynamic" (D12 f): official means robot side only
     (dict(partner_class="ghost"), "partner_class"),
     (dict(time_s=float("nan")), "time_s"),
     (dict(partner_name=""), "partner_name"),

@@ -14,6 +14,7 @@
 | **T03** | 安全语义 | T01 | 否 | 事件与接触图、严重度、倾倒、无效样本、`HazardEventLog` 读写 | 小到中 |
 | **T03-F** | T03 收尾：落实 D10（归因窗口、BD 匹配前缀、`first_scene_contact_t_s`、YAML 键、卫生测试白名单，见 `prompts/T03_followup.md`） | T03 | 否 | 同一分支上的小提交 | 小 |
 | **T04** | `HazardRuntime` + `FakeHost` | T01–T03 | 否 | 控制反转运行时、回滚释放、事件记录、纯 Python 假世界 | 中 |
+| **T04-F** | T04 收尾：落实 D12（`EventKind` 改名 `dynamic`、`conformance.yaml` 补 C13 块；宿主钩子语义写进 01 §3.3） | T04 | 否 | 同一分支上的小提交 | 小 |
 | **T05** | 一致性测试套件 C1–C13 | T04 | 否 | pytest 套件 + 变异体验证（每个测试都能抓到对应缺陷） | 中 |
 | **T06** | 流水线：探针 / 实例化 / 门控 / 校准 / 冻结 | T04 | 否 | `hazardctl` 子命令，FakeHost 上端到端 | 中到大 |
 | **E00** | 基准环境搭建（按基准参数化） | 无 | 是 | `docs/design/env_notes/<bench>.md`，基准自带最小评测跑通 | 视基准 |

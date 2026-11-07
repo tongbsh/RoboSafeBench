@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from .._records import Record, check_nonempty_str, check_finite, check_vec, require
 from .certificate import Certificate
+from .hazard_spec import AgentSpec
 from .pose_sequence import PoseSequence
 
 
@@ -28,8 +29,15 @@ class HazardInstance(Record):
     hazard). ``onset_time_s <= nominal_hit_time_s`` because
     tau = t_hit - t_onset is a non-negative reaction time (paradigm §5.1).
     ``certificate`` is None until the gates have run.
+
+    ``spec_id`` / ``family`` / ``agent`` are copied from the HazardSpec (D11 b):
+    the runtime dispatches rollback on ``family`` (never inferred from the
+    timing) and allocates the body from ``agent``.
     """
     instance_id: str
+    spec_id: str
+    family: str
+    agent: AgentSpec
     keyframes: PoseSequence
     nominal_hit_point: List[float]
     nominal_hit_time_s: float
@@ -41,6 +49,8 @@ class HazardInstance(Record):
 
     def validate(self) -> None:
         check_nonempty_str("instance_id", self.instance_id)
+        check_nonempty_str("spec_id", self.spec_id)
+        check_nonempty_str("family", self.family)
         check_vec("nominal_hit_point", self.nominal_hit_point, 3)
         check_finite("nominal_hit_time_s", self.nominal_hit_time_s)
         check_finite("onset_time_s", self.onset_time_s)

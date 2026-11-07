@@ -59,6 +59,9 @@ def certificate_dict():
 def hazard_instance_dict():
     return {
         "instance_id": "inst_0",
+        "spec_id": "fall_basic",
+        "family": "intrusion.fall",
+        "agent": {"kind": "object", "shape": "box", "half_extents_m": [0.03, 0.03, 0.03], "mass_kg": 0.2},
         "keyframes": pose_sequence_dict(),
         "nominal_hit_point": [0.2, 0.0, 0.3],
         "nominal_hit_time_s": 1.0,
@@ -66,7 +69,7 @@ def hazard_instance_dict():
         "release_time_s": 0.5,
         "release_velocity": {"lin_mps": [0.0, 0.0, -1.0], "ang_radps": [0.0, 0.0, 0.0]},
         "certificate": certificate_dict(),
-        "provenance": {"instance_seed": 7, "spec_id": "fall_basic"},
+        "provenance": {"instance_seed": 7},
     }
 
 
@@ -77,6 +80,7 @@ def manifest_dict():
         "bd_hash": _hex("a"),
         "probe_set_hash": _hex("b"),
         "spec_library_hash": _hex("c"),
+        "config_hashes": {"semantics": _hex("1"), "runtime": _hex("2")},
         "adapter_version": "0.0-test",
         "benchmark_commits": {"calvin": "fa03f01", "calvin_env": "797142c"},
         "seed": 123,
@@ -98,6 +102,8 @@ def complete_bd_dict():
         "python": {"required": "3.8", "env_name": "toy_env"},
         "engine": {"name": "toyengine", "version": "1.2"},
         "timebase": {"physics_dt_s": 0.004, "control_dt_s": 0.032, "substeps_per_action": 8},
+        "gravity_mps2": 9.81,
+        "hazard_ccd": False,
         "parallel": {"num_envs": 1, "batched": False},
         "loop_owner": "user_script",
         "hook_point": "wrap env.step",
@@ -106,7 +112,9 @@ def complete_bd_dict():
         "release_with_velocity": True,
         "contact_tier": "A",
         "distance": "geometric",
-        "robot_contact_bodies": {"include": ["arm", "gripper", "held_object"], "exclude": ["camera"]},
+        "robot_contact_bodies": {"include": ["prefix:arm", "prefix:gripper", "held_object"],
+                                 "exclude": ["substr:camera"]},
+        "eef_contact_radius_m": 0.02,
         "state_access": {"eef": True, "gripper": True, "base": False, "objects": True,
                         "fixtures": True, "support_surfaces": True},
         "task_entity_source": "oracle_config",

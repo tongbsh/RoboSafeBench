@@ -3,9 +3,9 @@ import inspect
 import numpy as np
 import pytest
 
-from hazardlib import (CapabilityError, ContactObs, HazardHandle, HazardHost, OptionalHazardHost,
-                       PartnerClass, Pose, RobotState, SpecError, Surface, Tier, TimeState,
-                       missing_methods, require_methods)
+from hazardlib import (DRIVER_METHODS, CapabilityError, ContactObs, EpisodeDriver, HazardHandle,
+                       HazardHost, HazardState, OptionalHazardHost, PartnerClass, Pose, RobotState,
+                       SpecError, Surface, Tier, TimeState, missing_methods, require_methods)
 from hazardlib import host as host_module
 
 # Method name -> parameter names (after self), per 01_integration_rules.md §3.1/§3.2.
@@ -19,6 +19,7 @@ REQUIRED_SIGNATURES = {
     "robot_state": ["env"],
     "object_poses": ["env"],
     "hazard_contacts": ["h"],
+    "hazard_state": ["h"],
     "time_state": ["env"],
     "task_success": ["env"],
     "hold_action": ["env"],
@@ -30,6 +31,11 @@ OPTIONAL_SIGNATURES = {
     "restore": ["env", "snap"],
     "support_surfaces": ["env"],
     "render_check": ["h"],
+}
+DRIVER_SIGNATURES = {
+    "reset_episode": ["env", "task_id", "layout_id", "seed"],
+    "step": ["env", "action"],
+    "policy_observation": ["env"],
 }
 
 
@@ -48,6 +54,14 @@ def test_required_protocol_matches_the_integration_rules_exactly():
     for name, expected in REQUIRED_SIGNATURES.items():
         assert _params(methods[name]) == expected, name
     assert set(host_module.REQUIRED_METHODS) == set(REQUIRED_SIGNATURES)
+    assert len(host_module.REQUIRED_METHODS) == len(set(host_module.REQUIRED_METHODS)) == 14
+
+
+def test_a_host_without_hazard_state_is_rejected_at_start_up():
+    host = _make_host(skip=("hazard_state",))
+    assert missing_methods(host) == ["hazard_state"]
+    with pytest.raises(CapabilityError, match="hazard_state"):
+        require_methods(host)
 
 
 def test_optional_protocol_matches_the_integration_rules_exactly():
@@ -92,6 +106,38 @@ def test_optional_methods_are_not_required_for_a_host():
     require_methods(host)  # does not raise: optional capabilities are not required
 
 
+def test_episode_driver_protocol_is_declared_apart_from_the_host():
+    methods = _protocol_methods(EpisodeDriver)
+    assert set(methods) == set(DRIVER_SIGNATURES) == set(DRIVER_METHODS)
+    for name, expected in DRIVER_SIGNATURES.items():
+        assert _params(methods[name]) == expected, name
+    assert not set(DRIVER_METHODS) & set(host_module.REQUIRED_METHODS)
+    assert not set(DRIVER_METHODS) & set(host_module.OPTIONAL_METHODS)
+    assert len(host_module.REQUIRED_METHODS) == 14
+
+
+def _make_driver(skip=()):
+    namespace = {name: (lambda self, *a, **k: None) for name in DRIVER_METHODS if name not in skip}
+    return type("FakeDriver", (), namespace)()
+
+
+def test_driver_methods_are_checked_on_their_own():
+    driver = _make_driver()
+    assert isinstance(driver, EpisodeDriver)
+    require_methods(driver, DRIVER_METHODS)
+    # a host without driver methods is still a complete HazardHost, and vice versa
+    host = _make_host()
+    require_methods(host)
+    assert missing_methods(host, DRIVER_METHODS) == list(DRIVER_METHODS)
+    assert set(missing_methods(driver)) == set(host_module.REQUIRED_METHODS)
+    for name in DRIVER_METHODS:
+        incomplete = _make_driver(skip=(name,))
+        assert not isinstance(incomplete, EpisodeDriver), name
+        assert missing_methods(incomplete, DRIVER_METHODS) == [name]
+        with pytest.raises(CapabilityError, match=name):
+            require_methods(incomplete, DRIVER_METHODS)
+
+
 def test_tier_and_capability_error_basics():
     assert [t.value for t in Tier] == ["A", "B", "C"]
     assert Tier("A") is Tier.A
@@ -109,6 +155,19 @@ def test_pose_coerces_to_float_arrays_and_checks_shape():
                               ([0, 0, float("nan")], [1, 0, 0, 0]), (["a", 0, 0], [1, 0, 0, 0])):
         with pytest.raises(SpecError):
             Pose(bad_pos, bad_quat)
+
+
+def test_hazard_state_coerces_to_float_arrays_and_checks_shape_and_finiteness():
+    state = HazardState(pos=[0, 0, 1], quat=(1, 0, 0, 0), lin_vel_mps=[0, 0, -2], ang_vel_radps=[0, 0, 0])
+    for field, length in (("pos", 3), ("quat", 4), ("lin_vel_mps", 3), ("ang_vel_radps", 3)):
+        value = getattr(state, field)
+        assert value.dtype == np.float64 and value.shape == (length,), field
+    good = dict(pos=[0, 0, 1], quat=[1, 0, 0, 0], lin_vel_mps=[0, 0, 0], ang_vel_radps=[0, 0, 0])
+    for field, bad in (("pos", [0, 0]), ("quat", [1, 0, 0]), ("lin_vel_mps", [0, 0, 0, 0]),
+                       ("ang_vel_radps", [0, float("inf"), 0]), ("lin_vel_mps", [float("nan"), 0, 0]),
+                       ("pos", ["a", 0, 0])):
+        with pytest.raises(SpecError, match="HazardState.%s" % field):
+            HazardState(**dict(good, **{field: bad}))
 
 
 def test_hazard_handle_identity_ignores_the_native_payload():
@@ -143,6 +202,15 @@ def test_robot_state_defaults_and_validation():
                 {"collision_body_lin_vel_mps": [[0, 0, 0]]}):
         with pytest.raises(SpecError):
             _robot_state(**bad)
+
+
+def test_robot_state_held_object_bodies_is_optional_and_validated():
+    assert _robot_state().held_object_bodies is None
+    state = _robot_state(held_object="tray", held_object_bodies=("tray_base", "tray_rim"))
+    assert state.held_object_bodies == ["tray_base", "tray_rim"]
+    for bad in ("tray_base", ["tray_base", ""], [None]):
+        with pytest.raises(SpecError, match="held_object_bodies"):
+            _robot_state(held_object_bodies=bad)
 
 
 def test_contact_obs_coerces_partner_class_and_validates():

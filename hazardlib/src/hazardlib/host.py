@@ -83,6 +83,25 @@ class Pose:
         self.quat = _vec("Pose.quat", self.quat, 4)
 
 
+@dataclasses.dataclass(eq=False)
+class HazardState:
+    """World-frame state of a hazard body's centre of mass (D10 e).
+
+    During the kinematic phase it is the pose just set with zero velocities;
+    after ``release_to_physics`` it is what the engine reports. Shapes and
+    finiteness are enforced like ``Pose``; unit norm is NOT."""
+    pos: Any
+    quat: Any
+    lin_vel_mps: Any
+    ang_vel_radps: Any
+
+    def __post_init__(self) -> None:
+        self.pos = _vec("HazardState.pos", self.pos, 3)
+        self.quat = _vec("HazardState.quat", self.quat, 4)
+        self.lin_vel_mps = _vec("HazardState.lin_vel_mps", self.lin_vel_mps, 3)
+        self.ang_vel_radps = _vec("HazardState.ang_vel_radps", self.ang_vel_radps, 3)
+
+
 @dataclasses.dataclass(frozen=True)
 class HazardHandle:
     """Opaque reference to one hazard body. ``native`` carries whatever the
@@ -102,6 +121,9 @@ class RobotState:
     extensions (not in 01 §3.1): names parallel to the positions and the
     (N, 3) linear velocities of those bodies, which the core needs to complete
     the relative normal velocity (see report T01, interface decisions).
+    ``held_object_bodies`` (optional, D10 e) lists every collision body name of
+    the held object when it has more than one; contacts with them classify as
+    ``held_object``. When absent the runtime uses ``[held_object]``.
     """
     eef_pose: Pose
     eef_lin_vel_mps: Any
@@ -111,6 +133,7 @@ class RobotState:
     held_object: Optional[str] = None
     collision_body_names: Optional[List[str]] = None
     collision_body_lin_vel_mps: Any = None
+    held_object_bodies: Optional[List[str]] = None
 
     def __post_init__(self) -> None:
         self.eef_lin_vel_mps = _vec("RobotState.eef_lin_vel_mps", self.eef_lin_vel_mps, 3)
@@ -131,6 +154,13 @@ class RobotState:
                 raise SpecError("RobotState.collision_body_lin_vel_mps: expected finite shape %s, got %s"
                                 % (pos.shape, vel.shape))
             self.collision_body_lin_vel_mps = vel
+        if self.held_object_bodies is not None:
+            require(isinstance(self.held_object_bodies, (list, tuple)),
+                    "RobotState.held_object_bodies: expected a list of names, got %r"
+                    % (self.held_object_bodies,))
+            self.held_object_bodies = list(self.held_object_bodies)
+            for i, name in enumerate(self.held_object_bodies):
+                check_nonempty_str("RobotState.held_object_bodies[%d]" % i, name)
 
 
 @dataclasses.dataclass(eq=False)
@@ -256,6 +286,10 @@ class HazardHost(Protocol):
         """Contacts since the previous call."""
         ...
 
+    def hazard_state(self, h: HazardHandle) -> HazardState:
+        """World-frame pose and velocities of the hazard's centre of mass (D10 e)."""
+        ...
+
     def time_state(self, env: int) -> TimeState:
         ...
 
@@ -296,10 +330,35 @@ class OptionalHazardHost(Protocol):
         ...
 
 
+@runtime_checkable
+class EpisodeDriver(Protocol):
+    """Episode driving an adapter offers to the conformance suite, gates and
+    T_stop calibration (D11 a). Declared apart from ``HazardHost``: it is not
+    part of ``REQUIRED_METHODS``; check it with ``require_methods(x, DRIVER_METHODS)``.
+
+    ``reset_episode`` fires the installed reset hook (``HazardRuntime.begin_episode``),
+    so a hazard instance must be armed on the runtime before it is called.
+    ``step`` advances one control step and fires the per-physics-step hooks.
+    """
+
+    def reset_episode(self, env: int, task_id: str, layout_id: str, seed: int) -> None:
+        ...
+
+    def step(self, env: int, action: Action) -> None:
+        ...
+
+    def policy_observation(self, env: int) -> Dict[str, Any]:
+        """Exactly what the policy would receive (R5: no hazard state in vectors)."""
+        ...
+
+
+DRIVER_METHODS = ("reset_episode", "step", "policy_observation")
+
+
 REQUIRED_METHODS = (
     "describe", "alloc_hazard", "free_hazard", "set_hazard_pose", "set_hazard_visible",
-    "release_to_physics", "robot_state", "object_poses", "hazard_contacts", "time_state",
-    "task_success", "hold_action", "install_hooks",
+    "release_to_physics", "robot_state", "object_poses", "hazard_contacts", "hazard_state",
+    "time_state", "task_success", "hold_action", "install_hooks",
 )
 OPTIONAL_METHODS = ("min_distance", "snapshot", "restore", "support_surfaces", "render_check")
 
@@ -310,8 +369,9 @@ def missing_methods(host: Any, names: Sequence[str] = REQUIRED_METHODS) -> List[
 
 
 def require_methods(host: Any, names: Sequence[str] = REQUIRED_METHODS) -> None:
-    """Fail loudly at start-up if the host lacks required methods (R15)."""
+    """Fail loudly at start-up if the host lacks required methods (R15). ``names``
+    defaults to the HazardHost set; pass ``DRIVER_METHODS`` for the episode driver."""
     missing = missing_methods(host, names)
     if missing:
-        raise CapabilityError("%s is missing required HazardHost method(s): %s"
+        raise CapabilityError("%s is missing required method(s): %s"
                               % (type(host).__name__, ", ".join(missing)))

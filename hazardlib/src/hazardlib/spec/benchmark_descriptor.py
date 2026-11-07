@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from .._records import (UNKNOWN, Record, SpecError, check_nonempty_str, choice,
                         find_markers, is_unknown, require)
 from ..host import CapabilityError, Tier
+from ..semantics.events import HELD_OBJECT_TOKEN, MATCH_KINDS
 from .task_context import ENTITY_SOURCES
 
 LOOP_OWNERS = ("user_script", "policy_side", "env_internal")
@@ -78,8 +79,30 @@ class ParallelInfo(_BDRecord):
 
 @dataclasses.dataclass
 class RobotContactBodies(_BDRecord):
+    """Body-name patterns of the robot side (D10 f). Each entry is ``exact:<name>``,
+    ``prefix:<start>`` or ``substr:<fragment>`` (case-sensitive, matched by
+    ``semantics.classify_partner``); ``include`` may also hold the category token
+    ``held_object``. ``include`` needs at least one pattern entry."""
     include: List[str]
     exclude: List[str]
+
+    def validate(self) -> None:
+        kinds = ", ".join(kind + ":<name>" for kind in MATCH_KINDS)
+        for field in ("include", "exclude"):
+            entries = getattr(self, field)
+            if is_unknown(entries):
+                continue
+            allowed = kinds + (" or the token %r" % HELD_OBJECT_TOKEN if field == "include" else "")
+            for i, entry in enumerate(entries):
+                if field == "include" and entry == HELD_OBJECT_TOKEN:
+                    continue
+                kind, sep, text = entry.partition(":")
+                require(sep != "" and kind in MATCH_KINDS and text != "",
+                        "%s[%d] = %r must be one of %s" % (field, i, entry, allowed))
+        if not is_unknown(self.include):
+            require(any(entry != HELD_OBJECT_TOKEN for entry in self.include),
+                    "include needs at least one exact:/prefix:/substr: entry besides %r, got %r"
+                    % (HELD_OBJECT_TOKEN, self.include))
 
 
 @dataclasses.dataclass
@@ -139,6 +162,8 @@ class BenchmarkDescriptor(_BDRecord):
     python: PythonInfo
     engine: EngineInfo
     timebase: Timebase
+    gravity_mps2: float
+    hazard_ccd: bool
     parallel: ParallelInfo
     loop_owner: str = choice(LOOP_OWNERS)  # type: ignore[assignment]
     hook_point: str
@@ -148,6 +173,7 @@ class BenchmarkDescriptor(_BDRecord):
     contact_tier: str = choice(CONTACT_TIERS)  # type: ignore[assignment]
     distance: str = choice(DISTANCE_KINDS)  # type: ignore[assignment]
     robot_contact_bodies: RobotContactBodies
+    eef_contact_radius_m: float
     state_access: StateAccess
     task_entity_source: str = choice(ENTITY_SOURCES)  # type: ignore[assignment]
     success_oracle: SuccessOracle
@@ -161,6 +187,12 @@ class BenchmarkDescriptor(_BDRecord):
     def validate(self) -> None:
         check_nonempty_str("name", self.name)
         check_nonempty_str("bd_version", self.bd_version)
+        # gravity_mps2 is the magnitude of the measured free-fall acceleration (D2); the kinematics
+        # solver takes it as a positive g along world -z.
+        require(is_unknown(self.gravity_mps2) or self.gravity_mps2 > 0,
+                "gravity_mps2 must be > 0 (magnitude, world -z), got %r" % (self.gravity_mps2,))
+        require(is_unknown(self.eef_contact_radius_m) or self.eef_contact_radius_m >= 0,
+                "eef_contact_radius_m must be >= 0, got %r" % (self.eef_contact_radius_m,))
 
     @classmethod
     def from_dict(cls, data: Any, path: Optional[str] = None, strict: bool = False) -> "BenchmarkDescriptor":

@@ -31,12 +31,15 @@ class Manifest(Record):
     """Everything needed to say *which* instance set a result was measured on.
 
     The manifest hash is ``Manifest.hash()`` (derived, never stored in itself).
+    ``config_hashes`` maps each configuration file name (e.g. ``semantics``) to
+    the hash of its contents at freeze time (D11 c, filled by the T06 freeze step).
     """
     manifest_version: str
     benchmark: str
     bd_hash: str
     probe_set_hash: str
     spec_library_hash: str
+    config_hashes: Dict[str, str]
     adapter_version: str
     benchmark_commits: Dict[str, str]
     seed: int
@@ -49,5 +52,10 @@ class Manifest(Record):
             value = getattr(self, name)
             require(bool(_SHA256_HEX.match(value)),
                     "%s must be 64 lower-case hex chars, got %r" % (name, value))
+        require(len(self.config_hashes) > 0, "config_hashes must not be empty")
+        for name, value in self.config_hashes.items():
+            check_nonempty_str("config_hashes key", name)
+            require(bool(_SHA256_HEX.match(value)),
+                    "config_hashes[%r] must be 64 lower-case hex chars, got %r" % (name, value))
         ids = [e.instance_id for e in self.entries]
         require(len(set(ids)) == len(ids), "duplicate instance_id in entries")

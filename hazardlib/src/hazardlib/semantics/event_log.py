@@ -2,8 +2,10 @@
 
 Fields are the 00 §6 minimum set plus ``schema_version``, ``attribution_ambiguous`` (needed so that the
 D9 d "ambiguous" count can be aggregated from logs) and ``first_scene_contact_t_s`` (D10 a: the first contact
-with a ``scene`` partner, e.g. landing; official contacts are robot side only). Every field except
-``schema_version`` and ``instance_id``
+with a ``scene`` partner, e.g. landing; official contacts are robot side only). D11 c appends the episode
+outcome (``task_success``, ``max_tilt_deg``, ``r1_violation_count``) and the provenance of the run
+(``bd_hash``, ``adapter_version``, ``manifest_hash``, ``benchmark_commits``; ``None`` during development when
+there is no manifest). Every field except ``schema_version`` and ``instance_id``
 is optional: **a quantity that was not measured is ``None`` (JSON ``null``), never 0.**
 
 Validation: finite numbers only (no NaN / inf, also at write time), non-negative where physical (durations,
@@ -26,8 +28,10 @@ SCHEMA_VERSION = "1"
 
 _TIME_FIELDS = ("onset_t_s", "released_t_s", "first_official_contact_t_s", "first_scene_contact_t_s")
 _NON_NEGATIVE_FIELDS = ("v_rel_normal_mps", "impulse_analytic_ns", "engine_peak_force_n",
-                        "contact_duration_s", "min_separation_m", "ttc_min_s")
-_BOOL_FIELDS = ("exposure_low", "toppled", "attribution_ambiguous")
+                        "contact_duration_s", "min_separation_m", "ttc_min_s", "max_tilt_deg")
+_BOOL_FIELDS = ("exposure_low", "toppled", "attribution_ambiguous", "task_success")
+_COUNT_FIELDS = ("kinematic_overlap_count", "r1_violation_count")
+_TEXT_FIELDS = ("force_source", "bd_hash", "adapter_version", "manifest_hash")
 _ENUM_FIELDS = {"partner_class": PartnerClass, "constraint_state": ConstraintState,
                 "separation_kind": SeparationKind, "invalid_class": InvalidClass}
 
@@ -65,6 +69,13 @@ class HazardEventLog:
     kinematic_overlap_count: Optional[int] = None
     invalid_class: Optional[InvalidClass] = None
     attribution_ambiguous: Optional[bool] = None
+    task_success: Optional[bool] = None
+    max_tilt_deg: Optional[float] = None
+    r1_violation_count: Optional[int] = None
+    bd_hash: Optional[str] = None
+    adapter_version: Optional[str] = None
+    manifest_hash: Optional[str] = None
+    benchmark_commits: Optional[Dict[str, str]] = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.schema_version, str) or not self.schema_version:
@@ -88,13 +99,25 @@ class HazardEventLog:
                 except ValueError:
                     raise ValueError("%s=%r is not one of %s"
                                      % (name, value, [m.value for m in enum_type])) from None
-        if self.force_source is not None and (not isinstance(self.force_source, str) or not self.force_source):
-            raise ValueError("force_source must be a non-empty string or None, got %r" % (self.force_source,))
-        count = self.kinematic_overlap_count
-        if count is not None:
-            if isinstance(count, bool) or not isinstance(count, numbers.Integral) or count < 0:
-                raise ValueError("kinematic_overlap_count must be an int >= 0 or None, got %r" % (count,))
-            self.kinematic_overlap_count = int(count)
+        for name in _TEXT_FIELDS:
+            value = getattr(self, name)
+            if value is not None and (not isinstance(value, str) or not value):
+                raise ValueError("%s must be a non-empty string or None, got %r" % (name, value))
+        for name in _COUNT_FIELDS:
+            count = getattr(self, name)
+            if count is not None:
+                if isinstance(count, bool) or not isinstance(count, numbers.Integral) or count < 0:
+                    raise ValueError("%s must be an int >= 0 or None, got %r" % (name, count))
+                setattr(self, name, int(count))
+        commits = self.benchmark_commits
+        if commits is not None:
+            if not isinstance(commits, dict):
+                raise ValueError("benchmark_commits must be a mapping or None, got %r" % (commits,))
+            for key, value in commits.items():
+                if not isinstance(key, str) or not key or not isinstance(value, str) or not value:
+                    raise ValueError("benchmark_commits entries must map non-empty strings to non-empty "
+                                     "strings, got %r: %r" % (key, value))
+            self.benchmark_commits = dict(commits)
 
     def _set_number(self, name: str, minimum: Optional[float], strictly: bool) -> None:
         value = getattr(self, name)
@@ -114,6 +137,8 @@ class HazardEventLog:
         out = {}  # type: Dict[str, Any]
         for field in dataclasses.fields(self):
             value = getattr(self, field.name)
+            if isinstance(value, dict):
+                value = dict(value)
             out[field.name] = value.value if hasattr(value, "value") and field.name in _ENUM_FIELDS else value
         return out
 
