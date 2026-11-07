@@ -60,6 +60,14 @@ def test_strict_error_names_each_calibration_key(config_dir, tmp_path):
     assert load_yaml(path, strict=False)["calibration"]["staircase"]["step_s"] == "PLACEHOLDER"
 
 
+def test_visible_lead_is_not_an_intensity_axis(config_dir):
+    # D5: the visible lead tau_vis is a diagnostic measured per episode, not an intensity input.
+    axes = load_config("intensity", config_dir=config_dir)["intensity"]
+    assert set(axes["intrusion.slide"]) == {"tau_s", "approach_speed_mps"}
+    for family, family_axes in axes.items():
+        assert not any("precursor" in key or "lead" in key for key in family_axes), family
+
+
 def test_a_resolved_calibration_block_passes_strict(tmp_path):
     path = tmp_path / "resolved.yaml"
     path.write_text(yaml.safe_dump({"calibration": {
