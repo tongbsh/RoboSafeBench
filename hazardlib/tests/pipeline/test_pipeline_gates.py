@@ -1,11 +1,12 @@
 """Gates G1 / G2, the decision table and episode diagnostics on FakeHost (T06 item 3; acceptance 4, 5, 6, 9, 15)."""
+import numpy as np
 import pytest
 
 import pipeline_world as W
 from hazardlib.calibrate import TStopProtocolSettings, run_t_stop_protocol
 from hazardlib.gates import (MAIN_SCORE_LABELS, annotate_exposure, decide_label, exposure_low, filter_main_score,
                              gate_instances, in_main_score, load_low_exposure_radius_m, make_certificate,
-                             run_g2, run_nominal_hit)
+                             run_g1, run_g2, run_nominal_hit)
 from hazardlib.semantics import exposure as t03_exposure
 from hazardlib.spec import CERT_LABELS
 
@@ -145,6 +146,63 @@ def test_g2_without_an_implementation_is_not_evaluated():
     with pytest.raises(TypeError, match="filter_action"):
         run_g2(W.session(host), W.build(W.fall_spec(), "pick"), W.PathFollower(host), object(),
                W.task_context("pick"), W.gate_settings(), 0, 0)
+
+
+# ------------------------------------------------------------------ privileged hazard state (D13 d)
+
+class TruthHost(W.GripperHost):
+    """Remembers the allocated handles: the test's own view of the host truth, independent of the runtime."""
+
+    def __init__(self, config, **kwargs):
+        super().__init__(config, **kwargs)
+        self.allocated = {}
+
+    def alloc_hazard(self, env, agent):
+        handle = super().alloc_hazard(env, agent)
+        self.allocated[env] = handle
+        return handle
+
+    def truth(self, env):
+        return self.hazard_state(self.allocated[env])
+
+
+class TruthCheckingAvoider:
+    def __init__(self, host):
+        self.host, self.seen = host, []
+
+    def filter_action(self, action, robot_state, hazard_state):
+        if hazard_state is not None:
+            self.seen.append((hazard_state, self.host.truth(0)))
+        return action
+
+
+def _same_state(a, b):
+    return all(np.array_equal(getattr(a, name), getattr(b, name))
+               for name in ("pos", "quat", "lin_vel_mps", "ang_vel_radps"))
+
+
+def test_oracle_and_g2_read_the_runtime_accessor_and_get_the_host_truth(monkeypatch):
+    host = TruthHost(W.world_config())
+    sess = W.session(host)
+    assert sess.runtime.host is host  # no proxy between the runtime and the host any more
+    accessor, reads = sess.runtime.hazard_state, []
+
+    def recording(env):
+        state = accessor(env)
+        reads.append((state, host.truth(env)))
+        return state
+
+    monkeypatch.setattr(sess.runtime, "hazard_state", recording)
+    inst = W.build(W.fall_spec(), "pick", host=host)
+    g1 = run_g1(sess, inst, W.PathFollower(host), W.task_context("pick"), W.gate_settings(), 0, 0)
+    assert g1.passed is True and g1.episodes[0]["controller"]["pauses"] >= 1
+    assert reads and all(_same_state(state, truth) for state, truth in reads)
+    oracle_reads = len(reads)
+    avoider = TruthCheckingAvoider(host)
+    run_g2(sess, inst, W.PathFollower(host), avoider, W.task_context("pick"), W.gate_settings(), 0, 0)
+    assert avoider.seen and all(_same_state(state, truth) for state, truth in avoider.seen)
+    assert len(reads) - oracle_reads == len(avoider.seen)  # G2 got its state through the accessor as well
+    assert accessor(0) is None  # episode over: the hazard is freed
 
 
 # ------------------------------------------------------------------------------------------ baseline

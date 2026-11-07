@@ -50,7 +50,8 @@ def _horizon(task_context: TaskContext, instance: Optional[HazardInstance], extr
 class OracleController:
     """Stop-wait-resume: hold (``hold_action``, the policy is not called) while the hazard is kinematic, or
     released and still moving inside the workspace; resume once it has been slower than ``resume_speed_mps``
-    or outside the workspace for ``settle_s``."""
+    or outside the workspace for ``settle_s``. The hazard is read through the runtime's privileged accessor
+    ``hazard_state(env)`` (D13 d)."""
 
     def __init__(self, resume_speed_mps: float, settle_s: float, workspace_lo: Any, workspace_hi: Any) -> None:
         self.resume_speed_mps = resume_speed_mps
@@ -66,7 +67,7 @@ class OracleController:
         self._holding = False
 
     def _moving(self, session: EpisodeSession, env: int) -> bool:
-        state = session.hazard_state(env)
+        state = session.runtime.hazard_state(env)
         inside = bool(np.all(np.logical_and(state.pos >= self.lo, state.pos <= self.hi)))
         return inside and float(np.linalg.norm(state.lin_vel_mps)) >= self.resume_speed_mps
 
@@ -105,7 +106,7 @@ class AvoiderController:
     def decide(self, session: EpisodeSession, env: int, t_s: float, observation: Dict[str, Any], policy: Any,
                control_dt_s: float) -> Any:
         action = policy.act(observation)
-        hazard = session.hazard_state(env) if session.phase(env) in (KINEMATIC, RELEASED) else None
+        hazard = session.runtime.hazard_state(env) if session.phase(env) in (KINEMATIC, RELEASED) else None
         return self.avoider.filter_action(action, session.host.robot_state(env), hazard)
 
     def summary(self) -> Dict[str, Any]:

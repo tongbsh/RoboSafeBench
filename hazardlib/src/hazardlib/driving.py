@@ -1,13 +1,13 @@
 """Episode driving shared by probe recording, the gates and the T_stop protocol (D11 a).
 
 One :class:`EpisodeSession` per host: it builds the ``HazardRuntime`` (which installs the hooks on the host;
-a session created later on the same host takes them over, so use one session per host at a time) and drives
-episodes through the ``EpisodeDriver`` methods only: ``arm`` -> ``reset_episode`` -> ``step`` ...
--> ``end_episode``. The reference policy reads ``policy_observation`` and nothing else (R5).
+a session created later on the same host takes them over and the earlier one is void, 01 §3.3 item 16, so use
+one session per host at a time) and drives episodes through the ``EpisodeDriver`` methods only: ``arm`` ->
+``reset_episode`` -> ``step`` ... -> ``end_episode``. The reference policy reads ``policy_observation`` and
+nothing else (R5).
 
-The session hands the runtime a thin proxy of the host that remembers the handle returned by
-``alloc_hazard``, so that privileged controllers (the G1 Oracle, a G2 avoider) can read ``hazard_state``
-without the runtime exposing its internals. The policy never sees the handle.
+Privileged controllers (the G1 Oracle, a G2 avoider) read the hazard through the runtime's accessor
+``session.runtime.hazard_state(env)`` (D13 d); the policy never sees it.
 
 ``ReferencePolicy`` is the abstraction of the probe sources and of the G1/G2 reference: ``kind`` is one of
 :data:`REFERENCE_KINDS`, ``name`` identifies it, ``under_test`` must be True for a policy under test (R4:
@@ -55,27 +55,6 @@ def describe_policy(policy: Any) -> Dict[str, Any]:
     if not isinstance(policy.under_test, bool):
         raise ValueError("policy under_test must be a bool, got %r" % (policy.under_test,))
     return {"kind": policy.kind, "name": policy.name, "under_test": policy.under_test}
-
-
-class _HostTap:
-    """Forwards everything to the host; remembers the hazard handle of each environment."""
-
-    def __init__(self, host: Any) -> None:
-        self._host = host
-        self.handles = {}  # type: Dict[int, Any]
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._host, name)
-
-    def alloc_hazard(self, env: int, agent: Any) -> Any:
-        handle = self._host.alloc_hazard(env, agent)
-        self.handles[env] = handle
-        return handle
-
-    def free_hazard(self, h: Any) -> None:
-        self._host.free_hazard(h)
-        if self.handles.get(h.env) == h:
-            del self.handles[h.env]
 
 
 class PlainController:
@@ -126,22 +105,14 @@ class EpisodeSession:
         require_methods(host)
         require_methods(host, DRIVER_METHODS)
         self.host = host
-        self._tap = _HostTap(host)
-        self.runtime = HazardRuntime(self._tap, runtime_cfg, provenance)
+        self.runtime = HazardRuntime(host, runtime_cfg, provenance)
         self.bd = self.runtime.bd
 
     # ------------------------------------------------------------------------------------------- queries
 
-    def hazard_handle(self, env: int) -> Any:
-        return self._tap.handles.get(env)
-
     def phase(self, env: int) -> Optional[str]:
         info = self.runtime.episode_info(env)
         return None if info is None else info["phase"]
-
-    def hazard_state(self, env: int) -> Any:
-        handle = self.hazard_handle(env)
-        return None if handle is None else self.host.hazard_state(handle)
 
     def _robot_side_bodies(self, robot: Any) -> Optional[Dict[str, List[float]]]:
         if robot.collision_body_names is None:
@@ -220,7 +191,7 @@ class EpisodeSession:
             fresh, seen = events[seen:], len(events)
             t = sample(bool(_official(fresh)))
             if measure_visibility and render_ok and first_visible is None:
-                handle = self.hazard_handle(env)
+                handle = self.runtime.hazard_handle(env)
                 if handle is not None and self.phase(env) in ACTIVE_PHASES and render(handle):
                     first_visible = t
             if success_t is None and self.host.task_success(env):
