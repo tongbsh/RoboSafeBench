@@ -7,11 +7,12 @@ import yaml
 import pipeline_world as W
 from pipeline_world import calibration_file, conformance_dir, conformance_reports  # noqa: F401 (fixtures)
 from hazardlib.config import ConfigError
-from hazardlib.conformance import read_report
+from hazardlib.conformance import ReportError, read_report
 from hazardlib.gates import make_certificate
 from hazardlib.hashing import sha256_hex
 from hazardlib.manifest import (CALIBRATION_FILE, CONFORMANCE_REPORT_FILE, MANIFEST_VERSION, USED_CONFIGS,
-                                ManifestError, config_hashes, freeze, verify_manifest, write_frozen)
+                                ConformanceReportRejected, ManifestError, config_hashes, freeze, verify_manifest,
+                                write_frozen)
 from hazardlib.probe import build_task_context
 from hazardlib.spec import BenchmarkDescriptor, HazardInstance
 
@@ -132,6 +133,49 @@ def test_verify_detects_a_missing_report_and_calibration(tmp_path, bind):
     message = str(info.value)
     assert "2 problem(s)" in message
     assert "%s is missing" % CONFORMANCE_REPORT_FILE in message and "%s is missing" % CALIBRATION_FILE in message
+
+
+def _failing(report):
+    """The report with its first check turned into a failure, consistently (read_report accepts it)."""
+    report["checks"][0].update(status="fail", reason="tampered for the test")
+    report["summary"]["pass"] -= 1
+    report["summary"]["fail"] += 1
+    report["verdict"] = "fail"
+    return report
+
+
+def test_freeze_refuses_a_bad_report_listing_every_problem(tmp_path, bind):
+    binding = bind()
+    report = _failing(read_report(binding["conformance_report"]))
+    report["runtime_config"]["restitution_e"]["source"] = "conformance.yaml:probe_runtime.restitution_e"
+    bad = W.write_json(tmp_path / "bad.json", report)
+    assert read_report(bad)["verdict"] == "fail"
+    with pytest.raises(ConformanceReportRejected) as info:
+        do_freeze(dict(binding, conformance_report=bad, adapter_version="fakehost-test"))
+    message = str(info.value)
+    assert message.startswith("cannot freeze with the conformance report %s: 3 problem(s):" % bad)
+    for fragment in ("verdict is 'fail'", "adapter_version %r is not the freeze's 'fakehost-test'"
+                     % report["adapter_version"], "runtime_config.restitution_e"):
+        assert fragment in message, message
+    with pytest.raises(ConformanceReportRejected, match="bd_hash"):
+        do_freeze(binding, host=W.make_host(ccd=False))  # the report is of the ccd=True BD
+
+
+def test_freeze_refuses_a_report_made_on_the_repository_configuration(tmp_path, bind):
+    report = W.conformance_report(W.REPO_CONFIG_DIR)
+    path = W.write_json(tmp_path / "repo_report.json", report)
+    with pytest.raises(ConformanceReportRejected) as info:
+        do_freeze(dict(bind(), conformance_report=path))
+    message = str(info.value)
+    for name in ("runtime", "semantics", "intensity"):
+        assert "config %r hash" % name in message
+    assert "conformance.yaml:probe_runtime." in message and "conformance.yaml:probe_calibration." in message
+
+
+def test_freeze_refuses_a_file_that_is_not_a_report(tmp_path, bind):
+    path = W.write_json(tmp_path / "not_a_report.json", {"schema": "something else"})
+    with pytest.raises(ReportError, match="not a conformance report"):
+        do_freeze(dict(bind(), conformance_report=path))
 
 
 def test_freeze_refuses_a_malformed_calibration(tmp_path, bind):
