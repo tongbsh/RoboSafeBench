@@ -67,13 +67,15 @@ def test_verify_lists_every_tampering(tmp_path):
     lines = (out / "instances.jsonl").read_text().splitlines()
     first = json.loads(lines[0])
     first["onset_time_s"] += 0.01
-    (out / "instances.jsonl").write_text(json.dumps(first) + "\n")              # one modified, one missing
+    extra = dict(first, instance_id="extra.pick.L0.s9")
+    (out / "instances.jsonl").write_text(json.dumps(first) + "\n" + json.dumps(extra) + "\n")  # modified, missing, extra
     (out / "manifest.sha256").write_text("0" * 64 + "\n")
     with pytest.raises(ManifestError) as info:
         verify_manifest(out)
     message = str(info.value)
-    assert "3 problem(s)" in message
+    assert "4 problem(s)" in message
     assert "was modified" in message and "listed but missing" in message and "manifest.sha256" in message
+    assert "'extra.pick.L0.s9' is not listed in the manifest" in message
 
 
 def test_verify_detects_config_and_bd_drift(tmp_path):
