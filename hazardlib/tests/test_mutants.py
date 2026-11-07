@@ -14,6 +14,7 @@ import functools
 import importlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -686,12 +687,44 @@ def test_report_is_stable_across_runs():
     (lambda r: r["checks"][0].update(status="maybe"), "status"),
     (lambda r: r["checks"][0].update(status="fail", reason=None), "reason"),
     (lambda r: r.pop("bd_hash"), "bd_hash"),
+    (lambda r: r.update(config_source="/srv/checkout/configs/hazard"), "config_source"),
+    (lambda r: r.update(config_source="~/RoboSafeBench/configs/hazard"), "config_source"),
+    (lambda r: r.update(config_source="C:\\RoboSafeBench\\configs\\hazard"), "config_source"),
+    (lambda r: r.update(config_source="../elsewhere/configs"), "config_source"),
+    (lambda r: r.update(config_source="external:/tmp/configs"), "config_source"),
+    (lambda r: r.update(config_source="external:"), "config_source"),
 ])
 def test_report_validation_rejects_inconsistent_reports(tamper, message):
     report = json.loads(json.dumps(_report("clean")))
     tamper(report)
     with pytest.raises(ReportError, match=message):
         validate_report(report)
+
+
+def _machine_paths():
+    repo = Path(__file__).parents[2]
+    return {os.path.expanduser("~"), str(repo.absolute()), str(repo.resolve())}
+
+
+def test_report_json_contains_no_machine_path(tmp_path):
+    out = tmp_path / "report.json"
+    assert _cli()(["--host", "fake", "--out", str(out)]) == 0
+    text = out.read_text(encoding="utf-8")
+    assert [p for p in _machine_paths() if p in text] == []
+    assert read_report(out)["config_source"] == "configs/hazard"
+
+
+def test_an_external_config_dir_is_named_not_located(tmp_path):
+    config_dir = tmp_path / "frozen_configs"
+    config_dir.mkdir()
+    for name in ("conformance", "runtime", "semantics", "intensity", "fakehost"):
+        shutil.copy(str(SRC.parents[1] / "configs" / "hazard" / (name + ".yaml")), str(config_dir))
+    session = SuiteSession(make_fake_target(config_dir=config_dir), ConformanceConfig.load(config_dir))
+    out = tmp_path / "report.json"
+    write_report(run_suite(session, ["C1"]), out)
+    text = out.read_text(encoding="utf-8")
+    assert read_report(out)["config_source"] == "external:frozen_configs"
+    assert [p for p in _machine_paths() | {str(tmp_path)} if p in text] == []
 
 
 # ---------------------------------------------------------------------------------------------------- CLI

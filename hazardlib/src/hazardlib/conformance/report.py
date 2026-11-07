@@ -6,7 +6,7 @@ Layout (``schema`` / ``schema_version`` identify it; a reader must reject other 
       "schema": "hazardlib.conformance.report", "schema_version": "1",
       "hazardlib_version": "...", "host": "<registry name>", "adapter_version": "...",
       "bd_name": "...", "bd_hash": "<sha256 of the BD record>", "tier": "A" | "B" | "C" | "undetermined",
-      "config_source": "<config dir>", "config_hashes": {"conformance": "...", ...},
+      "config_source": "configs/hazard" | "external:<directory name>", "config_hashes": {"conformance": "...", ...},
       "runtime_config": {"<field>": {"value": ..., "source": "<file>:<key>"}},
       "verdict": "pass" | "fail" | "unverified",
       "summary": {"pass": n, "fail": n, "error": n, "skip": n, "unverified": n},
@@ -17,8 +17,12 @@ Layout (``schema`` / ``schema_version`` identify it; a reader must reject other 
 ``verdict`` is ``fail`` if any check failed or errored, else ``unverified`` if any check could not be verified on
 this host, else ``pass``. A ``skip`` always carries the reason the rules allow it (01 §5: C6 on Tier B, C12 on a
 single-environment host).
+
+``config_source`` never holds a machine path: it is the config directory relative to the repository root when the
+directory is inside the repository, else ``external:<directory name>``; ``config_hashes`` pins the content.
 """
 import json
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Union
 
@@ -39,10 +43,25 @@ VERDICT_UNVERIFIED = "unverified"
 TOP_LEVEL_KEYS = ("schema", "schema_version", "hazardlib_version", "host", "adapter_version", "bd_name", "bd_hash",
                   "tier", "config_source", "config_hashes", "runtime_config", "verdict", "summary", "checks")
 CHECK_KEYS = ("id", "title", "claim", "status", "reason", "measured", "tolerances", "duration_s")
+EXTERNAL_CONFIG_PREFIX = "external:"
 
 
 class ReportError(ValueError):
     """A report that does not follow schema version 1."""
+
+
+def _validate_config_source(value: Any) -> None:
+    if not isinstance(value, str) or not value:
+        raise ReportError("config_source must be a non-empty string, got %r" % (value,))
+    if value.startswith(EXTERNAL_CONFIG_PREFIX):
+        name = value[len(EXTERNAL_CONFIG_PREFIX):]
+        if not name or "/" in name or "\\" in name:
+            raise ReportError("config_source %r: %s<directory name> carries a name, not a path"
+                              % (value, EXTERNAL_CONFIG_PREFIX))
+        return
+    if value.startswith(("/", "~")) or "\\" in value or re.match(r"^[A-Za-z]:", value) or ".." in value.split("/"):
+        raise ReportError("config_source %r must be relative to the repository root or %s<directory name>, not a "
+                          "machine path" % (value, EXTERNAL_CONFIG_PREFIX))
 
 
 def verdict_of(statuses: List[str]) -> str:
@@ -54,8 +73,8 @@ def verdict_of(statuses: List[str]) -> str:
 
 
 def validate_report(data: Any) -> Dict[str, Any]:
-    """Check the layout above (keys, statuses, reasons on non-passing checks, consistent summary and verdict)
-    and return ``data``."""
+    """Check the layout above (keys, a ``config_source`` without a machine path, statuses, reasons on non-passing
+    checks, consistent summary and verdict) and return ``data``."""
     if not isinstance(data, dict):
         raise ReportError("a conformance report must be a JSON object")
     if data.get("schema") != REPORT_SCHEMA:
@@ -66,6 +85,7 @@ def validate_report(data: Any) -> Dict[str, Any]:
     missing = [k for k in TOP_LEVEL_KEYS if k not in data]
     if missing:
         raise ReportError("conformance report lacks %s" % missing)
+    _validate_config_source(data["config_source"])
     checks = data["checks"]
     if not isinstance(checks, list):
         raise ReportError("checks must be a list")
