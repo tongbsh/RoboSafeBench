@@ -1,5 +1,5 @@
 # E00-robocasa 汇报
-状态：完成（有四件事要协调者定，见下）
+状态：完成。四件事里前三件用户已定（固定 `921c9a5`、纹理与生成纹理换官方版、不下 `aigen_objs`），第 4 件留给 H2，见末尾“后续”
 分支 / 提交：hazard/E00-robocasa（起点 `claude/sweet-newton-2clmpw` @ 147c17a）
 环境：新建的 `dynisafety-robocasa`（Python 3.11.18，mujoco 3.3.1，numpy 2.2.5，robosuite 1.5.2 `5ce6643`，robocasa 1.0.1 `921c9a5`，torch 2.7.1+cu126）；3 × RTX PRO 6000 Blackwell，驱动 595.99.02；渲染固定 GPU 2。
 
@@ -119,3 +119,39 @@ ValueError: Probabilities contain NaN
 - 原子任务默认从 objaverse + lightwheel 采样物体；如果以后要只用 lightwheel，建环境时传 `obj_registries=("lightwheel",)`，但物体类别会少到 58 个。
 - `import dynisafety` 在本环境里解析到主 worktree 的 `src/dynisafety`（H2 第 6 条要复用 `mujoco_contact`）。H2 自己的 worktree 里改 `hazardlib` 不受影响（`PYTHONPATH`）。
 - `tests/test_backends_robocasa.py` 的基线：`40 passed, 1 skipped`（缺 SMPL 模型）。
+- 纹理已换成官方版。上面原子任务输出里的图像均值 89.65 是换之前的数，换之后是 97.43（见“后续”）。
+
+## 后续（2026-11-07，用户定了前三件事之后）
+
+用户的决定：robocasa 沿用 `921c9a5`，H2 prompt 由协调者改；纹理与生成纹理换成官方版；`aigen_objs` 不下。
+
+替换纹理的过程：
+1. 从官方 `robocasa/robocasa-assets@1b92c3d` 下载 `textures.zip`（543 MB）与 `generative_textures.zip`（1185 MB），用时 1 m 38 s。sha256 与 LFS oid 一致（`download_official_textures.log`：两行 `OK`）。
+2. 解压前逐文件比对镜像与官方：
+   - 镜像是官方的子集，同名文件逐字节相同；
+   - 镜像缺 `textures/window_bkgs/` 的 5 张图（代码未引用），以及生成纹理里全部 450 个 `tex*.png`。官方的 `tex*.png` 都是同目录 UUID 文件的副本。
+3. 旧目录移到 `_downloads/mirror_backup/`，解压官方版本：`textures` 225 个文件，`generative_textures` 900 个文件。
+
+发现一个问题：替换前，生成纹理目录里有 400 个 `tex*.png` 软链，其中 399 个指错了文件。
+- 软链是仓库导航后端的 `ensure_generative_texture_tex_aliases` 建的（`src/dynisafety/backends/robocasa/env.py:1187-1209`）。第一次导航评测时它把排序后的 UUID 文件依次链成 `tex001.png`…，每类 100 个（`eval_out` 记 `gentex_tex_aliases` 每类 100）。
+- fixture 注册表在默认模式下也引用这些名字，所以替换前地板、墙、柜体、台面的纹理都不对，原子任务的图像也因此不同。
+- 物理不受影响：导航评测的终点逐位相同。
+- 用镜像资产的机器都会这样。代码在 `src/dynisafety`，按约束没改，记给仓库维护。
+
+替换后重跑（GPU 2）：
+
+| 测试 | 结果 |
+|---|---|
+| `doctor --backend robocasa` | 与之前相同：14 OK / 3 WARN / 2 FAIL（`patches`、`mibot`，与 RoboCasa 无关） |
+| 导航评测 1 回合 | exit 0，45 s；`base_xy_end`、底盘关节终值与之前逐位相同；新建软链 0 个 |
+| 原子任务（默认） | exit 0；layout 12 / style 32、物体、漂移与之前相同；图像均值 / 标准差 89.65 / 65.55 → 97.43 / 70.05 |
+| 原子任务 `--generative-textures 100p` | exit 0；116.80 / 49.44 |
+
+对照实验确认图像的变化来自生成纹理：
+- 两个纹理目录都换回镜像，复现出 89.65 / 65.55；
+- 只把 `textures` 换回镜像，仍是 97.43 / 70.05；
+- 官方版连跑两次都是 97.43 / 70.05。
+
+对照实验后已恢复为官方版（`textures` 225 个文件，`generative_textures` 900 个，软链 0 个），镜像备份已删除。新增日志：`download_official_textures.log`、`doctor_official_tex.log`、`eval_nav_official_tex.log`、`eval_out_official_tex/`、`smoke_atomic_official_tex.log`、`smoke_atomic_gen100p.log`、`ab_official_{1,2}.log`、`ab_mirror.log`、`ab_mirror_both.log`。
+
+磁盘：资产约 11 GB；下载缓存 3.8 GB（3 个 zip，可删）。
