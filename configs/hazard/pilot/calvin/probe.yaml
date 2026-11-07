@@ -1,0 +1,11 @@
+# PILOT (D14) probe.yaml for CALVIN, task H1. Not for freezing or formal results ("试点").
+# Measured on the 59 successful hazard-free demo replays of the pilot (H1 report, "演示回放").
+min_source_kinds: 1                       # DEVIATION from the decided 2 (R4): the debug dataset has one source kind (recorded play data) and no second reference policy; the TaskContexts are pilot-only
+gripper_closed_below: 0.65                # normalised opening: holding a block 0.47-0.575, closed on nothing 0.00, open 1.00; no sample in 0.60-0.70
+gripper_open_above: 0.9                   # 0.70-0.95 are the few opening / closing transition samples (42 of 3089)
+min_consistent_runs: 1                    # pilot: 7 of the 23 tasks have a single successful window in the debug dataset
+path_samples_per_phase: 50                # T06 fixture value; a CALVIN phase lasts 10-60 control steps
+moved_object_min_displacement_m: 0.003    # an untouched object moves at most 1.1 mm per run (settling), the smallest task motion is 4.5 mm (a drawer nudge); buttons move 6-26 mm
+entity_min_run_fraction: 0.5              # T06 fixture value: an entity counts when grasped / moved in at least half the runs
+moving_speed_min_mps: 0.0172              # = calibration.t_stop_speed_threshold_mps (pilot intensity.yaml): the EEF counts as moving where it would not count as stopped
+surface_below_object_m: 0.02              # unused on CALVIN (the host reports its support surfaces); T06 fixture value

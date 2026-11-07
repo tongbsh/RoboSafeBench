@@ -1,0 +1,6 @@
+# PILOT (D14) runtime.yaml for CALVIN, task H1. Not for freezing or formal results; numbers obtained with it are
+# "试点". Assembled with the repository's other config files into a temporary --config-dir.
+max_step_ratio: 0.5                       # decided (R1 / D3), copied from configs/hazard/runtime.yaml
+release_velocity_window_s: 0.05           # conformance.yaml probe_runtime (the value the CALVIN conformance run used): 12 physics steps of 1/240 s, 1.5 control steps
+keyframe_dt_s: 0.01                       # conformance.yaml probe.keyframe_dt_s: 2.4 CALVIN physics steps; the runtime interpolates at every physics-step hook
+keyframe_interp_tol_m: 0.001              # 1 mm: well below eef_contact_radius_m (13.4 mm, bd/calvin.yaml) and the R1 step limit (10 mm for a 0.02 m sphere)
