@@ -4,12 +4,12 @@ import pytest
 from hazardlib.host import ContactObs, PartnerClass
 from hazardlib.semantics import ContactEvent, EventKind, classify_partner
 
-INCLUDE = ["robot0_", "gripper0_", "mobilebase0_", "panda0_"]     # RoboCasa-style prefixes (02 §3)
-EXCLUDE = ["camera"]
+INCLUDE = ["prefix:robot0_", "prefix:gripper0_", "prefix:mobilebase0_", "prefix:panda0_"]   # RoboCasa (02 §3)
+EXCLUDE = ["substr:camera"]
 
 
-def classify(name, include=INCLUDE, exclude=EXCLUDE, held="mug_main", hazards=("hazard_0",)):
-    return classify_partner(name, include, exclude, held, list(hazards))
+def classify(name, include=INCLUDE, exclude=EXCLUDE, held=("mug_main",), hazards=("hazard_0",)):
+    return classify_partner(name, include, exclude, list(held), list(hazards))
 
 
 @pytest.mark.parametrize("name,expected", [
@@ -30,36 +30,74 @@ def test_partner_classification(name, expected):
 def test_rule_precedence():
     # hazard beats everything, held object beats exclude, exclude beats include
     assert classify("robot0_ghost", hazards=("robot0_ghost",)) is PartnerClass.HAZARD
-    assert classify("mug_camera", held="mug_camera") is PartnerClass.HELD_OBJECT
+    assert classify("mug_camera", held=("mug_camera",)) is PartnerClass.HELD_OBJECT
     assert classify("robot0_camera") is PartnerClass.SCENE
-    assert classify("mug_main", held=None) is PartnerClass.SCENE       # no grasp: just a scene object
+    assert classify("mug_main", held=()) is PartnerClass.SCENE         # no grasp: just a scene object
 
 
-def test_matching_is_by_case_sensitive_substring():
-    assert classify("left_gripper0_pad") is PartnerClass.ROBOT_LINK    # not only prefixes
-    assert classify("ROBOT0_link") is PartnerClass.SCENE
+def test_every_held_object_name_matches_exactly():
+    held = ("lid", "pot")                                            # e.g. RobotState.held_object_bodies
+    assert classify("lid", held=held) is PartnerClass.HELD_OBJECT
+    assert classify("pot", held=held) is PartnerClass.HELD_OBJECT
+    assert classify("pot_handle", held=held) is PartnerClass.SCENE    # exact, not a prefix
+
+
+@pytest.mark.parametrize("entry,name,matches", [
+    ("exact:gripper", "gripper", True),
+    ("exact:gripper", "gripper_pad", False),
+    ("exact:gripper", "left_gripper", False),
+    ("prefix:robot0_", "robot0_link3", True),
+    ("prefix:robot0_", "left_robot0_link", False),
+    ("substr:finger", "left_finger_pad", True),
+    ("substr:finger", "Finger", False),                             # case-sensitive
+    ("prefix:a:b", "a:b_link", True),                               # only the first colon separates the kind
+])
+def test_match_kinds(entry, name, matches):
+    expected = PartnerClass.ROBOT_LINK if matches else PartnerClass.SCENE
+    assert classify_partner(name, [entry], [], [], []) is expected
+
+
+def test_bare_fragments_no_longer_claim_unrelated_bodies():
+    # D10 f regression: with the old substring rule a bare "arm" made these robot links
+    include = ["prefix:robot0_", "exact:gripper"]
+    for name in ("armchair", "alarm_clock", "farm_table"):
+        assert classify_partner(name, include, ["substr:camera"], [], []) is PartnerClass.SCENE
+    assert classify_partner("robot0_arm_link2", include, ["substr:camera"], [], []) is PartnerClass.ROBOT_LINK
+    assert classify_partner("robot0_eye_camera", include, ["substr:camera"], [], []) is PartnerClass.SCENE
+    with pytest.raises(ValueError, match=r"'arm' has no match-kind prefix"):
+        classify_partner("armchair", ["arm", "gripper"], ["substr:camera"], [], [])
 
 
 def test_held_object_token_is_a_category_not_a_pattern():
-    include = ["arm", "gripper", "held_object"]                      # the 01 §2 example
-    assert classify_partner("arm_link2", include, ["camera"], None, []) is PartnerClass.ROBOT_LINK
-    assert classify_partner("held_object_thing", include, ["camera"], None, []) is PartnerClass.SCENE
-    assert classify_partner("pen", include, ["camera"], "pen", []) is PartnerClass.HELD_OBJECT
-    with pytest.raises(ValueError, match="no body-name pattern"):
-        classify_partner("arm_link2", ["held_object"], [], None, [])
+    include = ["prefix:arm_", "exact:gripper", "held_object"]       # the 01 §2 example, with match kinds
+    assert classify_partner("arm_link2", include, ["substr:camera"], [], []) is PartnerClass.ROBOT_LINK
+    assert classify_partner("held_object_thing", include, ["substr:camera"], [], []) is PartnerClass.SCENE
+    assert classify_partner("pen", include, ["substr:camera"], ["pen"], []) is PartnerClass.HELD_OBJECT
+    with pytest.raises(ValueError, match="no body-name entry"):
+        classify_partner("arm_link2", ["held_object"], [], [], [])
+    with pytest.raises(ValueError, match="'held_object' has no match-kind prefix"):
+        classify_partner("x", include, ["held_object"], [], [])        # the token is include-only
 
 
 @pytest.mark.parametrize("kwargs,match", [
     (dict(partner_name=""), "partner_name"),
     (dict(partner_name=3), "partner_name"),
-    (dict(robot_include=[]), "no body-name pattern"),
-    (dict(robot_include=["robot0_", ""]), "invalid pattern"),
-    (dict(robot_include="robot0_"), "not a single string"),
-    (dict(robot_exclude=[None]), "invalid pattern"),
-    (dict(hazard_names=["ok", 5]), "invalid pattern"),
+    (dict(robot_include=[]), "no body-name entry"),
+    (dict(robot_include=["prefix:robot0_", ""]), "invalid entry"),
+    (dict(robot_include="prefix:robot0_"), "not a single string"),
+    (dict(robot_include=["robot0_"]), "'robot0_' has no match-kind prefix"),
+    (dict(robot_include=["regex:robot.*"]), "'regex:robot.\\*' has no match-kind prefix"),
+    (dict(robot_include=["Prefix:robot0_"]), "has no match-kind prefix"),      # kinds are case-sensitive
+    (dict(robot_include=["prefix:"]), "empty pattern"),
+    (dict(robot_exclude=[None]), "invalid entry"),
+    (dict(robot_exclude=["camera"]), "'camera' has no match-kind prefix"),
+    (dict(hazard_names=["ok", 5]), "invalid entry"),
+    (dict(held_object_names="mug"), "not a single string"),
+    (dict(held_object_names=[""]), "invalid entry"),
+    (dict(held_object_names=[None]), "invalid entry"),
 ])
 def test_classification_rejects_misconfiguration(kwargs, match):
-    args = dict(partner_name="x", robot_include=INCLUDE, robot_exclude=EXCLUDE, held_object_name=None,
+    args = dict(partner_name="x", robot_include=INCLUDE, robot_exclude=EXCLUDE, held_object_names=[],
                 hazard_names=[])
     args.update(kwargs)
     with pytest.raises(ValueError, match=match):

@@ -6,7 +6,7 @@ toward the hazard**, i.e. the direction in which the partner pushes the hazard.
 """
 import dataclasses
 import enum
-from typing import Any, Optional, Sequence
+from typing import Any, Callable, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -14,8 +14,17 @@ from .._numeric import finite_float, non_negative_float, vec3
 from ..host import ContactObs, PartnerClass
 
 #: ``robot_contact_bodies.include`` may carry this category token (01 §2 example). It is not a body-name
-#: pattern: the grasped object is identified by name through ``held_object_name`` instead.
+#: pattern: the grasped objects are identified by name through ``held_object_names`` instead.
 HELD_OBJECT_TOKEN = "held_object"
+
+#: Match kinds of a ``robot_contact_bodies`` entry (D10 f), written ``<kind>:<text>``.
+MATCH_KINDS = ("exact", "prefix", "substr")
+
+_MATCHERS = {
+    "exact": lambda name, text: name == text,
+    "prefix": lambda name, text: name.startswith(text),
+    "substr": lambda name, text: text in name,
+}
 
 
 class EventKind(str, enum.Enum):
@@ -79,48 +88,63 @@ class ContactEvent:
 
 
 def classify_partner(partner_name: str, robot_include: Sequence[str], robot_exclude: Sequence[str],
-                     held_object_name: Optional[str], hazard_names: Sequence[str]) -> PartnerClass:
+                     held_object_names: Sequence[str], hazard_names: Sequence[str]) -> PartnerClass:
     """Class of a contact partner (00 §6 "robot side").
 
     Order of the rules:
 
     1. ``partner_name`` is one of ``hazard_names`` (exact) -> ``hazard``;
-    2. it equals ``held_object_name`` (exact) -> ``held_object`` (a grasped object counts as robot side);
-    3. it contains an ``robot_exclude`` entry (cameras, sensors) -> ``scene`` (not robot side);
-    4. it contains an ``robot_include`` entry -> ``robot_link``;
+    2. it is one of ``held_object_names`` (exact) -> ``held_object`` (a grasped object counts as robot side);
+    3. it matches a ``robot_exclude`` entry (cameras, sensors) -> ``scene`` (not robot side);
+    4. it matches a ``robot_include`` entry -> ``robot_link``;
     5. otherwise ``scene``.
 
-    Patterns match as **substrings**, case-sensitively (the profiles use both prefixes such as
-    ``robot0_`` and fragments such as ``camera``). The token ``held_object`` in ``robot_include`` is a
-    category, not a pattern, and is skipped. There must be at least one real include pattern and no empty
-    pattern, so a misconfigured BD cannot silently classify every body as scene (or as robot).
+    Every include / exclude entry names its match kind (D10 f): ``exact:<name>``, ``prefix:<start>`` or
+    ``substr:<fragment>``, all case-sensitive; an entry without one is rejected, so a bare fragment such as
+    ``arm`` cannot silently claim ``armchair``. The token ``held_object`` in ``robot_include`` is a category,
+    not a pattern, and is skipped. There must be at least one real include entry, so a misconfigured BD
+    cannot silently classify every body as scene. ``held_object_names`` may be empty (nothing grasped).
     """
     if not isinstance(partner_name, str) or not partner_name:
         raise ValueError("partner_name must be a non-empty string, got %r" % (partner_name,))
-    includes = _patterns("robot_include", robot_include, skip_token=True)
-    excludes = _patterns("robot_exclude", robot_exclude, skip_token=False)
+    includes = _match_entries("robot_include", robot_include, skip_token=True)
+    excludes = _match_entries("robot_exclude", robot_exclude, skip_token=False)
     if not includes:
-        raise ValueError("robot_include has no body-name pattern (only the %r token or nothing)"
+        raise ValueError("robot_include has no body-name entry (only the %r token or nothing)"
                          % (HELD_OBJECT_TOKEN,))
-    if partner_name in set(_patterns("hazard_names", hazard_names, skip_token=False)):
+    if partner_name in set(_names("hazard_names", hazard_names)):
         return PartnerClass.HAZARD
-    if held_object_name is not None and partner_name == held_object_name:
+    if partner_name in set(_names("held_object_names", held_object_names)):
         return PartnerClass.HELD_OBJECT
-    if any(pattern in partner_name for pattern in excludes):
+    if any(match(partner_name, text) for match, text in excludes):
         return PartnerClass.SCENE
-    if any(pattern in partner_name for pattern in includes):
+    if any(match(partner_name, text) for match, text in includes):
         return PartnerClass.ROBOT_LINK
     return PartnerClass.SCENE
 
 
-def _patterns(name: str, values: Sequence[str], skip_token: bool) -> list:
+def _names(name: str, values: Sequence[str]) -> List[str]:
     if isinstance(values, str):
         raise ValueError("%s must be a sequence of strings, not a single string %r" % (name, values))
     out = []
     for value in values:
         if not isinstance(value, str) or not value:
-            raise ValueError("%s contains an invalid pattern %r (need non-empty strings)" % (name, value))
+            raise ValueError("%s contains an invalid entry %r (need non-empty strings)" % (name, value))
+        out.append(value)
+    return out
+
+
+def _match_entries(name: str, values: Sequence[str],
+                   skip_token: bool) -> List[Tuple[Callable[[str, str], bool], str]]:
+    out = []
+    for value in _names(name, values):
         if skip_token and value == HELD_OBJECT_TOKEN:
             continue
-        out.append(value)
+        kind, sep, text = value.partition(":")
+        if not sep or kind not in _MATCHERS:
+            raise ValueError("%s entry %r has no match-kind prefix (need one of %s)"
+                             % (name, value, ", ".join(k + ":" for k in MATCH_KINDS)))
+        if not text:
+            raise ValueError("%s entry %r has an empty pattern after %r" % (name, value, kind + ":"))
+        out.append((_MATCHERS[kind], text))
     return out
