@@ -91,6 +91,22 @@ def test_keyframe_replay_matches_the_analytic_path(make_spec, task):
     assert inst.nominal_hit_time_s in list(times)
 
 
+@pytest.mark.parametrize("family", ["fall", "slide", "reach"])
+def test_keyframes_have_no_round_off_intervals(family):
+    make, task = {"fall": (W.fall_spec, "pick"), "slide": (W.slide_spec, "low"), "reach": (W.reach_spec, "pick")}[family]
+    dt = W.instantiate_settings().keyframe_dt_s
+    for frac in (0.05, 0.06, 0.07, 0.5, 0.75):      # reach at 0.06: t_hit lands one ulp off a grid point
+        for tau in (0.1, 0.15, 0.2, 0.25, 0.3):
+            try:
+                inst = W.build(make(tau=tau, frac=frac), task)
+            except InstanceRejected:
+                continue
+            times = np.array(inst.keyframes.time_s)
+            assert np.diff(times).min() > 1e-6 * dt, (frac, tau)
+            for instant in (inst.nominal_hit_time_s, inst.release_time_s):
+                assert instant in list(times) or not times[0] < instant < times[-1]
+
+
 @pytest.mark.parametrize("make_spec,task", CASES[1:], ids=["slide", "reach"])
 def test_keyframe_release_velocity_equals_the_fixed_window_difference(make_spec, task):
     settings = W.instantiate_settings()

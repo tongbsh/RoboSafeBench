@@ -31,6 +31,21 @@ def hook_times(t_start_s: float, t_end_s: float, hook_dt_s: float) -> np.ndarray
     return times
 
 
+def insert_instants(grid_s: Any, instants_s: Any, hook_dt_s: float) -> np.ndarray:
+    """``grid_s`` (strictly increasing) plus the ``instants_s`` that fall inside it. Times within
+    ``1e-9 * hook_dt_s`` of each other are one instant: the grid ends win over an instant, an instant wins
+    over an interior grid point, so the result stays strictly increasing and keeps every instant exact."""
+    tol = 1e-9 * positive_float("hook_dt_s", hook_dt_s)
+    grid = np.asarray(grid_s, dtype=np.float64)
+    inner = np.unique(np.asarray(instants_s, dtype=np.float64))
+    inner = inner[np.logical_and(inner > grid[0] + tol, inner < grid[-1] - tol)]
+    if inner.size == 0:
+        return grid.copy()
+    inner = inner[np.concatenate([[True], np.diff(inner) > tol])]
+    far = np.all(np.abs(grid[:, None] - inner[None, :]) > tol, axis=1)
+    return np.sort(np.concatenate([grid[far], inner]))
+
+
 def step_displacements(path: Path, times_s: Any) -> np.ndarray:
     """Distance travelled between consecutive entries of ``times_s`` (length ``len(times_s) - 1``)."""
     times = np.asarray(times_s, dtype=np.float64)

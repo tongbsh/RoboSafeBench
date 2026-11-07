@@ -3,6 +3,7 @@ import pytest
 
 from hazardlib.kinematics import (arc_path, free_fall_path, hook_times, needs_substeps, reach_path,
                                   step_displacements, straight_path, subdivide)
+from hazardlib.kinematics.subdivide import insert_instants
 
 PHYSICS_DT = 1.0 / 240.0
 
@@ -52,6 +53,25 @@ def test_hook_times_is_strictly_increasing_on_the_suite_grid():
                 continue
             for hook_dt in (0.01, 1.0 / 30.0, PHYSICS_DT):
                 check_hook_grid(hook_times(t_hit - tau, t_hit, hook_dt), t_hit - tau, t_hit, hook_dt)
+
+
+def test_insert_instants_gives_way_to_an_instant_one_ulp_off_the_grid():
+    onset, release = 0.5250000000000001, 0.8250000000000001
+    grid = hook_times(onset, 0.9932511799963635, 0.01)
+    assert grid[30] == 0.8250000000000002                         # one ulp past the release instant
+    times = insert_instants(grid, [release, release], 0.01)
+    check_hook_grid(times, grid[0], grid[-1], 0.01)
+    assert release in times.tolist() and 0.8250000000000002 not in times.tolist()
+    assert len(times) == len(grid)
+
+
+def test_insert_instants_keeps_distinct_instants_and_the_grid_ends():
+    grid = hook_times(0.0, 1.0, 0.25)
+    times = insert_instants(grid, [0.1, 0.5, 0.6, 1e-12, 1.0 - 1e-12, -1.0, 2.0], 0.25)
+    assert times.tolist() == [0.0, 0.1, 0.25, 0.5, 0.6, 0.75, 1.0]
+    np.testing.assert_array_equal(insert_instants(grid, [], 0.25), grid)
+    with pytest.raises(ValueError):
+        insert_instants(grid, [0.5], 0.0)
 
 
 def test_subdivide_stays_strictly_increasing_at_a_round_off_end():
