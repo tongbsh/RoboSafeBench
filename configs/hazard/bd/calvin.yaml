@@ -41,6 +41,7 @@ contact_tier: unknown            # getContactPoints is used in the repo [已核�
 distance: unknown                # getClosestPoints [待探针] (02 §2 min_distance)
 
 robot_contact_bodies:            # 02 §9 open question 4: not yet answerable declaratively
+  # entries are exact:<name> / prefix:<start> / substr:<fragment> (D10 f); include may add the token held_object
   include: unknown
   exclude: unknown
 

@@ -286,6 +286,72 @@ def test_eef_contact_radius_may_be_zero(make_bd_dict):
     assert BenchmarkDescriptor.from_dict(make_bd_dict(eef_contact_radius_m=0.0)).eef_contact_radius_m == 0.0
 
 
+# --------------------------------------------- robot_contact_bodies match kinds (D10 f)
+
+def _with_bodies(bd_d, include=None, exclude=None):
+    d = copy.deepcopy(bd_d)
+    if include is not None:
+        d["robot_contact_bodies"]["include"] = include
+    if exclude is not None:
+        d["robot_contact_bodies"]["exclude"] = exclude
+    return d
+
+
+def test_every_match_kind_and_the_held_object_token_load(bd_d):
+    bd = BenchmarkDescriptor.from_dict(_with_bodies(
+        bd_d, include=["exact:panda_hand", "prefix:panda_link", "substr:finger", "held_object"],
+        exclude=["exact:wrist_cam", "prefix:cam_", "substr:sensor"]))
+    assert bd.robot_contact_bodies.include[-1] == "held_object"
+    assert BenchmarkDescriptor.from_dict(_with_bodies(bd_d, exclude=[])).robot_contact_bodies.exclude == []
+
+
+@pytest.mark.parametrize("field,entries,bad_index", [
+    ("include", ["arm"], 0),
+    ("include", ["prefix:arm", "gripper"], 1),
+    ("include", ["regex:arm.*"], 0),
+    ("include", ["prefix:"], 0),
+    ("include", ["Prefix:arm"], 0),
+    ("include", [":arm"], 0),
+    ("include", ["prefix:arm", "unknown"], 1),
+    ("exclude", ["camera"], 0),
+    ("exclude", ["substr:camera", "held_object"], 1),  # the category token is include-only
+])
+def test_an_entry_without_a_valid_match_kind_is_rejected_and_named(bd_d, field, entries, bad_index):
+    with pytest.raises(SpecError) as err:
+        BenchmarkDescriptor.from_dict(_with_bodies(bd_d, **{field: entries}))
+    message = str(err.value)
+    assert "robot_contact_bodies" in message
+    assert "%s[%d] = %r" % (field, bad_index, entries[bad_index]) in message
+
+
+@pytest.mark.parametrize("include", [[], ["held_object"]])
+def test_include_needs_a_pattern_entry(bd_d, include):
+    with pytest.raises(SpecError, match="include needs at least one"):
+        BenchmarkDescriptor.from_dict(_with_bodies(bd_d, include=include))
+
+
+def test_unknown_contact_body_lists_keep_their_strict_behaviour(bd_d):
+    d = _with_bodies(bd_d, include="unknown", exclude="unknown")
+    bd = BenchmarkDescriptor.from_dict(d)
+    assert bd.unknown_fields() == ["robot_contact_bodies.include", "robot_contact_bodies.exclude"]
+    with pytest.raises(SpecError, match="2 unknown"):
+        BenchmarkDescriptor.from_dict(d, strict=True)
+    complete = BenchmarkDescriptor.from_dict(bd_d, strict=True)
+    assert complete.robot_contact_bodies.include == ["prefix:arm", "prefix:gripper", "held_object"]
+
+
+@pytest.mark.parametrize("change", [
+    {"include": ["exact:arm", "prefix:gripper", "held_object"]},
+    {"include": ["prefix:arm", "prefix:gripper"]},
+    {"exclude": ["prefix:camera"]},
+    {"exclude": []},
+])
+def test_bd_hash_follows_the_contact_body_entries(bd_d, change):
+    base = BenchmarkDescriptor.from_dict(bd_d)
+    changed = BenchmarkDescriptor.from_dict(_with_bodies(bd_d, **change))
+    assert changed.hash() != base.hash()
+
+
 def test_unexpected_keys_are_rejected_at_every_level(bd_d):
     d = copy.deepcopy(bd_d)
     d["extra"] = 1
