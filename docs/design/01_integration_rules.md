@@ -219,7 +219,7 @@ policy_interface: {kind: calvin_model_step, notes: "..."}
 2. **BD 草稿**：填写 `configs/hazard/bd/<bench>.yaml`，`unknown` 项列成探针清单。
 3. **实现适配器**：`hazardhosts/<bench>/`。
 4. **一致性测试**：C1–C13 全部通过（Tier B 允许 C6 跳过并说明）；汇报给出本宿主各项的正常误差与建议容差，不改 `conformance.yaml`（D13 i）。
-5. **特权运行**：零动作 / 保持动作、演示回放或脚本专家、Oracle-SWR；记录 T_stop、探针轨迹、参考策略 L0 成功率。
+5. **特权运行**：零动作 / 保持动作、演示回放或脚本专家、Oracle-SWR；记录 T_stop、探针轨迹、参考策略 L0 成功率。正式配置预注册之前，用试点目录 `configs/hazard/pilot/<bench>/` 的试点值运行，结果标“试点”，不得冻结（D14）。
 6. **产出**：BD（所有 `unknown` 消除）、适配成本账本、汇报。
 
 适配成本账本（H3 证据，**必须**如实填写）：适配器代码行数、注解行数、上游补丁数、首次运行一致性测试通过数 / 总数、会话时长、遇到的阻塞。

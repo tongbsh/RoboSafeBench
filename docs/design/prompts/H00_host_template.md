@@ -8,7 +8,7 @@
 
 ## 步骤
 
-1. **环境**：激活 `BENCH` 的环境（`docs/design/env_notes/<BENCH>.md`），`pip install -e hazardlib --no-deps`。确认 `python -c "import hazardlib"` 成功，Python 版本满足 BD。
+1. **环境**：激活 `BENCH` 的环境（`docs/design/env_notes/<BENCH>.md`）。在 worktree 里工作时**不要**把 `hazardlib` 装进基准环境（editable 安装会把环境绑死在某个检出上），改为每次 `export PYTHONPATH=<worktree>/hazardlib/src`，并用 `python -c "import hazardlib; print(hazardlib.__file__)"` 确认指向本 worktree；CLI 用 `python -m hazardlib.cli`。Python 版本须满足 BD。
 2. **BD 草稿**：编辑 `configs/hazard/bd/<BENCH>.yaml`。已核实项照 `02_benchmark_profiles.md` 填；所有 `unknown` 列成“探针清单”写进汇报。`robot_contact_bodies` 的每一项必须带匹配方式前缀（`exact:` / `prefix:` / `substr:`，D10 f），先列出该基准全部碰撞体名再写模式，并检查没有场景物体被误匹配；`HazardHost` 有 14 个必需方法，含 `hazard_state`（质心位姿与线 / 角速度，D10 e），`robot_state` 要尽量给出 `collision_body_names`、`collision_body_lin_vel_mps` 与 `held_object_bodies`；另须实现 `EpisodeDriver` 的 `reset_episode` / `step` / `policy_observation`（D11 a），`policy_observation` 返回的必须是策略实际看到的观测；`partner_name` 按 body / link 粒度上报，同一连杆的多个几何体报同一个名字（否则会被当成“第二伙伴”，误判 `constrained` / `clamp`）。`hazard_ccd` 只有在确认引擎对危险体启用了连续碰撞检测时才写 `true`（D11 d）。
 3. **探针清单消除**：对每个 `unknown`，写一个最小脚本（放 `hazardlib/src/hazardhosts/<BENCH>/probes/`）实测，输出贴进汇报；结论回填 BD。**不得**用背景知识代替实测。同时实测并回填：`gravity_mps2`（自由落体拟合，D2）、危险体线 / 角阻尼能否置 0（R7；不能置 0 则不满足 Tier A，D13 h）、`eef_contact_radius_m`（用 C13 检验）、工作区上界与桌面高度（01 §3.4，D13 k）。
 4. **实现适配器**：`hazardlib/src/hazardhosts/<BENCH>/`。遵守 R0–R16：
@@ -22,7 +22,7 @@
    - R15：缺能力 → `CapabilityError`，不静默降级。
 5. **注册宿主**：`register_host("<BENCH>", factory)`，使 `python -m hazardlib.conformance --host <BENCH>` 可用。`ConformanceTarget` 要提供场景几何、可重复的名义回放（最好附名义 EEF 路径）、`build_hit_instance`（本宿主的实例构造器，C13 一并检查它）与 `inject_engine_fault(env, hazard)`（用本宿主的方式强制引擎故障；不提供则 C11 判 `fail`，D13 h）。
 6. **一致性测试**：C1–C13 全部通过（规则允许的跳过除外；C13 若无可重复名义回放，报告为 `unverified`，**不算通过**，须在汇报中说明）。失败项先查适配器，其次才怀疑套件；若确认套件有误，在汇报里提出，**不得**自行改容差，也**不改** `conformance.yaml`（D13 i）：汇报里给出每项的正常误差 e_ok 与建议容差（表格：检查、键、现值、本宿主 e_ok、建议值、理由），由协调者统一收紧。`runtime.yaml` / `semantics.yaml` / `intensity.yaml` 冻结前得到的报告只作开发参考，冻结要用冻结版配置重跑（D13 a）。
-7. **特权运行**（不依赖学习策略，除非任务文件另有规定）：
+7. **特权运行**（不依赖学习策略，除非任务文件另有规定）。仓库正式配置还是 PLACEHOLDER，流水线会拒绝，所以按 **D14** 在试点目录 `configs/hazard/pilot/<BENCH>/` 里赋试点值：只放赋了值的文件，每个值注释写明来源与理由；运行时把它们与仓库其余配置拼到临时目录再 `--config-dir`；试点配置不得用于冻结，得到的数字在汇报里一律标“试点”；汇报末尾给出预注册建议值表（键、试点值、依据、对结果的敏感性）。
    - 零 / 保持动作运行：确认机器人不漂移，测 **T_stop**（`hazardctl calibrate`，至少 3 个名义速度、每个 N 次）；
    - 演示回放或脚本专家：在 20 个无危险回合上记录成功率与 trace（作为探针素材）；
    - Oracle 停等：在 ≥10 个“名义必碰”实例上运行并汇总证书标签分布。
