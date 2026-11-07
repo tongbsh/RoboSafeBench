@@ -1,41 +1,143 @@
-# Conformance-suite tolerances — SKELETON (T01).
+# Conformance-suite settings (T05): tolerances of checks C1-C13 of
+# docs/design/01_integration_rules.md §5 and the magnitudes of the probes that
+# measure them. Read by hazardlib.conformance (settings.py); every value used
+# is copied into the JSON report ("tolerances" of each check).
 #
-# Structure only; every leaf is PLACEHOLDER (no invented numbers). One block per
-# check C1-C13 of docs/design/01_integration_rules.md §5; owner is T05. These
-# values must never be loosened just to make a test pass; any change has to be
-# justified in the task report.
+# How the tolerances were derived (details per key, summary in report T05):
+#   e_ok  = the quantity measured on the clean FakeHost (configs/hazard/fakehost.yaml),
+#   E     = the smallest effect, on the same quantity, of the FakeHost mutations
+#           that break what the check claims (fakehost.MUTATIONS, plus the
+#           test-local mutants of hazardlib/tests/test_mutants.py),
+#   tol   = E / 2: the widest value that still separates the mutant from the
+#           correct host with a margin of E / 2 on both sides (e_ok << tol).
+# Where 01 §5 requires identity ("完全一致"), or the compared values are the
+# same state read twice, tol = 0. Where no mutant moves the quantity, tol comes
+# from the contract instead: half a physics step is the time resolution of the
+# runtime (half-step rounding of instance times, D12 b). Some values are coupled
+# to C13 and say so. Tolerances are never widened to make a host pass (T00);
+# report T05 lists which of them are too loose or too strict for real hosts.
+#
+# Unlike the T01 skeleton, C4 has a block (contact clock and normal checks); C11
+# is still pass/fail without numbers. c8_determinism.statistical_max_abs_diff
+# stays PLACEHOLDER: FakeHost is exact, so there is nothing to derive it from;
+# C8 reports a statistical host as unverified, with the magnitude, until an
+# adapter task sets it.
+
+# ---------------------------------------------------------------------------
+# Probe magnitudes (shared by several checks). Not tolerances: they decide what
+# the probes do, within the scenario geometry each target declares.
+probe:
+  onset_s: 0.1                 # 10 control steps after the reset: C11's pre-onset fault (0.5 x onset) still has 5 control steps before it
+  exposure_s: 0.2              # kinematic phase of the probes; longer than release_velocity_window_s (0.05) so the R7 window fits (C3 rollback)
+  tail_s: 0.1                  # time recorded after the probe event (contacts, readbacks)
+  speed_mps: 0.5               # kinematic path speed; also E of residual_velocity on C3 / C5 (see there)
+  release_speed_mps: 1.0       # C5 commanded release speed, opposite to the kinematic motion, so a velocity derived from the poses is off by 1.5 m/s
+  strike_speed_mps: 1.0        # C4 / C6 / C12 strikes: 2 mm per FakeHost physics step, far below the R1 limit (10 mm), so the strikes are legal
+  strike_gap_physics_steps: 4.5  # flight from release to contact in physics steps; non-integer so the contact falls mid-step, not on a step boundary
+  free_travel_m: 0.1           # C3 / C5 free paths: inside the free region around scenario.free_point_m
+  rotation_rad: 1.0            # C3 rotation of the free path (about z); large against orientation_error_rad_tol so an axis/order error is visible
+  keyframe_dt_s: 0.01          # keyframe spacing of all probe instances (one FakeHost control step); runtime.yaml keyframe_dt_s is not set yet
+
+# RuntimeConfig fields for the probe runs, used only while runtime.yaml /
+# semantics.yaml have them as PLACEHOLDER (the report records the source of
+# each field). They fix which events the probes produce, not pass/fail bounds:
+probe_runtime:
+  release_velocity_window_s: 0.05   # R7 window (C3 rollback, C13 slide / reach release); 25 FakeHost physics steps, shorter than probe.exposure_s
+  restitution_e: 0.5                # enters both sides of C6's impulse comparison (m (1 + e) v), equals the FakeHost restitution
+  gap_tolerance_s: 0.02             # contact-gap merging; the probes have a single contact episode, the value does not change their outcome
+  t_q_s: 0.1                        # quasi-static window; no probe is quasi-static
+  opposing_normals_tol_rad: 0.3     # pinch detection; no probe pinches
+  tilt_threshold_deg: 30.0          # topple detection; no probe tilts an object
+  hazard_induced_max_distance_m: 0.3  # C11: the hazard fault is injected at the hazard (distance 0) and must classify as hazard-induced
+  attribution_window_s: 0.5         # C11: longer than exposure + tail, so the injected hazard fault is attributable
+
+# T_stop settings for C10, used only while intensity.yaml: calibration is PLACEHOLDER.
+probe_calibration:
+  t_stop_speed_threshold_mps: 0.0172      # = c10 drift_m_tol / hold_duration_s: slower than that the hold could not exceed the drift bound
+  t_stop_min_consecutive_control_steps: 1 # k = 1 control step (x substeps hook samples); FakeHost stops within one physics step
+
+# ---------------------------------------------------------------------------
 c1_timebase:
-  physics_dt_rel_tol: PLACEHOLDER
-  control_dt_rel_tol: PLACEHOLDER
-  substeps_abs_tol: PLACEHOLDER
+  # wrong_dt declares physics_dt 0.004 and control_dt 0.02 for a world with
+  # 0.002 / 0.01. Error = |declared - measured| / measured: e_ok 9e-16, E 1.0.
+  physics_dt_rel_tol: 0.5      # E/2 (E = 1.0, wrong_dt). Far too loose for real hosts: a 40 % error passes (report T05)
+  control_dt_rel_tol: 0.5      # E/2 (E = 1.0, wrong_dt)
+  substeps_abs_tol: 0          # a count: identity (no mutation changes it)
+  # Hook clock (01 §3.3 items 1 and 3). Unit: physics steps of the host.
+  hook_time_tol_physics_steps: 0.5  # runtime time resolution (half-step rounding); test-local mutant ClockOffset is 1 step off (E/2 = 0.5)
+  begin_scene_abs_tol_m: 0.0   # begin_episode and the probe read the same post-reset state: identity (BeginBeforeReset E = 0.4 m)
+  control_steps: 5             # length of the still episode that measures control_dt (5 x 5 hook pairs on FakeHost)
+
 c2_parking:
-  state_vector_abs_tol: PLACEHOLDER
-  image_abs_tol: PLACEHOLDER
+  # 01 §5 C2: state vectors, task_success and images "完全一致" with the control run.
+  state_vector_abs_tol: 0.0    # identity; state_leak E = 0.5
+  image_abs_tol: 0             # identity; park_interacts E = 220 grey levels (parked hazard inside the camera footprint)
+  parked_pose_abs_tol_m: 0.0   # a parked kinematic hazard is never moved: identity (no mutation moves it)
+  duration_s: 0.3              # probe length; the hazard stays parked (onset after the end)
+
 c3_pose_fidelity:
-  pose_error_m_tol: PLACEHOLDER
-# C4 (contact partner classification) and C11 (invalid-sample mapping) are
-# pass/fail checks without numeric tolerances, so they have no block here.
+  pose_error_m_tol: 5.0e-4     # E/2: no_rollback leaves the hazard 1e-3 m from the commanded rollback pose; e_ok 0
+  orientation_error_rad_tol: 0.025  # = pose_error_m_tol / probe radius (0.02 m): moves the probe surface by at most the position tol; e_ok 0, XyzwQuat E = pi
+  kinematic_velocity_abs_tol_mps: 0.25  # E/2: residual_velocity reads back the path speed 0.5 m/s on every kinematic pose (462 m/s on the first); e_ok 0
+  rollback_clearance_abs_tol_m: 2.5e-4  # E/2: post_impact_vn reports the overlap one step late, the rollback pose penetrates 5e-4 m; e_ok +5e-4 (clear)
+  ccd_crossing_physics_steps: 0.5  # probe: the overlap window is crossed in half a step, centred mid-step, so a discrete host sees no overlap at either step end (tunneling E: no contact)
+  r1_speed_fraction: 0.5       # probe for hosts without CCD: cross at half the R1 limit speed, which the host must resolve
+
+c4_partner_class:
+  # A contact returned in the post_step of [t0, t1] must be stamped inside it.
+  contact_time_slack_physics_steps: 0.25  # E/2: post_impact_vn stamps contacts 0.499 steps before t0; RelativeClock E = whole episodes; e_ok 0
+  normal_angle_tol_rad: 1.5707963  # E/2 = pi/2: FlippedNormal (hazard -> partner) is pi off; e_ok 0.0088 rad (contact point off the centre line). A sign check only
+
 c5_release_gravity:
-  release_velocity_abs_tol_mps: PLACEHOLDER
-  free_fall_time_rel_tol: PLACEHOLDER
+  release_velocity_abs_tol_mps: 0.25  # E/2: residual_velocity keeps 0.5 m/s of kinematic velocity, hook_dependent_release 1.5 m/s; e_ok 0
+  # Landing time: half a physics step relative to the FakeHost drop (h 0.18 m,
+  # t_land 0.1916 s): 0.5 x 0.002 / 0.1916 = 0.0052, rounded down. e_ok 1.7e-15;
+  # a linear damping of 0.5 /s (test-local) gives 0.0083.
+  free_fall_time_rel_tol: 0.005
+  gravity_rel_tol: 0.01        # = 2 x free_fall_time_rel_tol: t ~ g^-1/2, a g error this size moves the landing by half a step; e_ok 1.6e-15, GravityMismatch (2 %) E 0.02
+
 c6_relative_velocity:
-  normal_speed_rel_tol: PLACEHOLDER
-  impulse_rel_tol: PLACEHOLDER
+  # Relative errors of v_n (D10 c) and of m (1 + e) v_n; e_ok 6.6e-4 (contact
+  # mid-step). E: residual_velocity 0.5, hook_dependent_release 0.506,
+  # post_impact_vn 1.0 (v_n taken after the impact).
+  normal_speed_rel_tol: 0.25   # E/2
+  impulse_rel_tol: 0.25        # E/2 (the impulse is proportional to v_n)
+
 c7_isolation:
-  state_vector_abs_tol: PLACEHOLDER
+  state_vector_abs_tol: 0.0    # 01 §5 C7 "一致": identity; state_leak E = 0.5, oracle_depends_on_hazard flips task_success
+  duration_s: 0.4              # probe length (hazard out at the free point from onset to onset + exposure)
+
 c8_determinism:
-  exact_max_abs_diff: PLACEHOLDER
-  statistical_max_abs_diff: PLACEHOLDER
+  exact_max_abs_diff: 0.0      # BD "exact" means bit-identical repeats; NoisyReset (test-local) E = 1.4e-4
+  statistical_max_abs_diff: PLACEHOLDER  # no statistical FakeHost to derive it from; set by the adapter task from its measurements
+  snapshot_replay_steps: 10    # control steps replayed after restore(snapshot)
+
 c9_visibility:
-  min_pixel_diff: PLACEHOLDER
-  parked_pixel_diff_max: PLACEHOLDER
+  min_pixel_diff: 1            # a visible hazard changes at least one pixel; e_ok 3 px (r 0.02 m at 64 px over 1.2 m), Invisible E = 0
+  parked_pixel_diff_max: 0     # identity (as C2); park_interacts E = 4 px
+  duration_s: 0.3
+
 c10_hold_t_stop:
-  drift_m_tol: PLACEHOLDER
-  repeats: PLACEHOLDER
-  t_stop_iqr_s_tol: PLACEHOLDER
+  drift_m_tol: 0.0086          # = c13 hit_time_abs_tol_s x c13 slide_speed_mps: a drift that shifts a hit by at most the C13 tolerance; e_ok 0
+  hold_duration_s: 0.5
+  repeats: 5                   # N of 01 §5 C10
+  t_stop_iqr_s_tol: 0.0086     # = c13 hit_time_abs_tol_s (same time resolution); e_ok 0, JitteryStop (test-local) E = 0.02
+  t_stop_record_s: 0.3         # recorded after the hold; longer than any T_stop seen (0.002 s)
+
 c12_batch_independence:
-  observation_abs_tol: PLACEHOLDER
-# tol_hit_time_s of C13. Must cover at least one physics step: the nominal
-# release fires one step early (D12 b), so a reach's first contact is off by O(dt).
+  observation_abs_tol: 0.0     # 01 §5 C12 "不影响任何观测": identity; SharedRender (test-local) E = 220 grey levels
+  duration_s: 0.4
+
 c13_nominal_hit:
-  hit_time_abs_tol_s: PLACEHOLDER
+  # E/2 of bad_standoff (standoff 0 instead of r_hazard + eef_contact_radius):
+  # residuals slide -0.0431 s, reach -0.0307 s, fall -0.0172 s -> E = 0.0172,
+  # E/2 = 0.0086. Covers one physics step (0.002 s, 01 §5); e_ok 1.4e-4 (reach).
+  hit_time_abs_tol_s: 0.0086
+  replay_repeat_abs_tol_m: 0.0043  # = 0.5 x hit_time_abs_tol_s x slide_speed_mps: replay noise moves a hit by at most half the tolerance
+  tau_s: 0.3                   # onset lead of the probe hazards
+  tail_s: 0.1
+  families: [intrusion.slide, intrusion.reach, intrusion.fall]
+  slide_speed_mps: 1.0
+  reach_distance_m: 0.3
+  reach_overshoot_m: 0.1
+  reach_speed_profile: min_jerk

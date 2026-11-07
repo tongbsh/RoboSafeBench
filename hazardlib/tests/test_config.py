@@ -9,6 +9,8 @@ from hazardlib import (ConfigError, SpecError, default_config_dir, load_bd, load
 from hazardlib.config import CONFIG_DIR_ENV
 
 SKELETON_CONFIGS = ["families", "intensity", "gates", "semantics", "conformance"]
+# Skeletons since filled in by their owner task (constraints in test_conformance_config.py).
+FILLED_CONFIGS = ["conformance"]
 
 
 def test_default_config_dir_finds_the_repo_configs(monkeypatch, config_dir):
@@ -53,7 +55,7 @@ def _leaves(obj):
         yield obj
 
 
-@pytest.mark.parametrize("name", SKELETON_CONFIGS)
+@pytest.mark.parametrize("name", [n for n in SKELETON_CONFIGS if n not in FILLED_CONFIGS])
 def test_skeleton_contains_no_invented_values(name, config_dir):
     """T01 must not invent numbers: every leaf is the PLACEHOLDER marker."""
     leaves = list(_leaves(load_config(name, config_dir=config_dir)))
