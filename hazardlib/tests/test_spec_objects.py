@@ -292,6 +292,53 @@ def test_onset_equal_to_hit_is_allowed():
     HazardInstance.from_dict(d)
 
 
+# D11 b: spec_id / family / agent travel with the instance
+
+@pytest.mark.parametrize("key", ["spec_id", "family", "agent"])
+def test_instance_requires_spec_id_family_and_agent(key):
+    d = conftest.hazard_instance_dict()
+    d.pop(key)
+    with pytest.raises(SpecError, match="missing required key.*%s" % key):
+        HazardInstance.from_dict(d)
+
+
+@pytest.mark.parametrize("mutate,match", [
+    (lambda d: d.update(spec_id=""), "spec_id"),
+    (lambda d: d.update(spec_id="  "), "spec_id"),
+    (lambda d: d.update(family=""), "family"),
+    (lambda d: d.update(family=3), "family"),
+    (lambda d: d["agent"].update(mass_kg=0.0), "agent: mass_kg"),
+    (lambda d: d["agent"].update(half_extents_m=[]), "agent"),
+    (lambda d: d.update(agent="box"), "agent"),
+])
+def test_instance_spec_fields_are_validated(mutate, match):
+    d = conftest.hazard_instance_dict()
+    mutate(d)
+    with pytest.raises(SpecError, match=match):
+        HazardInstance.from_dict(d)
+
+
+def test_instance_agent_is_an_agent_spec_and_fields_are_in_order():
+    inst = HazardInstance.from_dict(conftest.hazard_instance_dict())
+    assert isinstance(inst.agent, AgentSpec)
+    assert inst.agent.to_dict() == conftest.hazard_spec_dict()["agent"]
+    names = [f.name for f in dataclasses.fields(HazardInstance)]
+    assert names[:4] == ["instance_id", "spec_id", "family", "agent"]
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda d: d.update(spec_id="fall_other"),
+    lambda d: d.update(family="intrusion.slide"),
+    lambda d: d["agent"].update(mass_kg=0.3),
+    lambda d: d["agent"].update(shape="sphere"),
+])
+def test_instance_hash_follows_spec_id_family_and_agent(mutate):
+    base = HazardInstance.from_dict(conftest.hazard_instance_dict()).hash()
+    d = conftest.hazard_instance_dict()
+    mutate(d)
+    assert HazardInstance.from_dict(d).hash() != base
+
+
 # ------------------------------------------------------------------- Manifest
 
 @pytest.mark.parametrize("field", ["bd_hash", "probe_set_hash", "spec_library_hash"])

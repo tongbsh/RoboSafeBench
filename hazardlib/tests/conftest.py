@@ -59,6 +59,9 @@ def certificate_dict():
 def hazard_instance_dict():
     return {
         "instance_id": "inst_0",
+        "spec_id": "fall_basic",
+        "family": "intrusion.fall",
+        "agent": {"kind": "object", "shape": "box", "half_extents_m": [0.03, 0.03, 0.03], "mass_kg": 0.2},
         "keyframes": pose_sequence_dict(),
         "nominal_hit_point": [0.2, 0.0, 0.3],
         "nominal_hit_time_s": 1.0,
@@ -66,7 +69,7 @@ def hazard_instance_dict():
         "release_time_s": 0.5,
         "release_velocity": {"lin_mps": [0.0, 0.0, -1.0], "ang_radps": [0.0, 0.0, 0.0]},
         "certificate": certificate_dict(),
-        "provenance": {"instance_seed": 7, "spec_id": "fall_basic"},
+        "provenance": {"instance_seed": 7},
     }
 
 
