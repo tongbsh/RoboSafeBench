@@ -5,6 +5,7 @@
 g0:   # geometric validity
   max_penetration_m: PLACEHOLDER
   workspace_margin_m: PLACEHOLDER
+  early_contact_tol_m: PLACEHOLDER   # [onset, t_hit) min distance to the nominal robot must be >= standoff - this (T06)
 g1:   # stop-wait-resume solvable
   max_official_contacts: PLACEHOLDER
   require_task_success: PLACEHOLDER
