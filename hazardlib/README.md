@@ -71,3 +71,19 @@ the working directory; set `HAZARDLIB_CONFIG_DIR` to point elsewhere.
   with a dot (`1.0e-3`); duplicate keys are rejected by our loader.
 * **Hashing:** `Record.hash()` = sha256 of canonical JSON of `to_dict()`; key order is irrelevant, floats are
   compared at 12 significant digits. A pinned golden digest in `tests/test_hashing.py` guards the format.
+
+## Conformance suite (C1–C13, T05)
+
+Checks C1–C13 of `01_integration_rules.md` §5 live in `src/hazardlib/conformance/tests/test_cNN_*.py`
+(one check per file) and run against any host registered under a name:
+
+```bash
+python -m hazardlib.conformance --host fake --out report.json      # exit 0 pass, 1 fail, 2 unverified
+pytest hazardlib/src/hazardlib/conformance/tests --host=fake        # same checks through pytest
+```
+
+A host module calls `register_host(name, factory)`; the factory returns a `ConformanceTarget` (the host, its
+scenario geometry, a scripted motion, optionally its instance builder and a fault injector). `--host <name>`
+imports `hazardhosts.<name>` unless `--host-module` names the module. Tolerances and their derivations are in
+`configs/hazard/conformance.yaml`; the built-in host `fake` is FakeHost in the world of
+`configs/hazard/fakehost.yaml`. `tests/test_mutants.py` proves that each FakeHost mutation is caught.
