@@ -35,7 +35,7 @@
 | **HazardInstance** | 具体实例：世界系下带时间的关键帧、释放时刻与速度、名义命中点与命中时刻、证书 | 实例化器自动产生 |
 | **Certificate** | 可解性证书：G0 几何有效、G1 停等可解、G2 特权反应可解、标签 | 门控自动产生 |
 | **HazardEventLog** | 每回合事件记录（见 §6） | 运行时记录 |
-| **Manifest** | 冻结实例清单，带哈希（BD 哈希、探针集哈希、HS 哈希、配置文件哈希（D11 c）、适配器版本、基准提交号、种子） | 发布时生成 |
+| **Manifest** | 冻结实例清单，带哈希（BD 哈希、探针集哈希、HS 哈希、配置文件哈希（D11 c）、一致性测试报告哈希与校准哈希（D13 a、b）、适配器版本、基准提交号、种子） | 发布时生成 |
 
 ---
 
@@ -95,6 +95,8 @@
 
 意义：每个实例天然是「必须反应才能避免」的，可解性证书的含义因此明确（见 §8）。被测策略若根本没去 `p*` 附近，记为 `exposure_low`，在报告里单独汇报，不计入主分母。
 
+暴露判定用的 `p*` 是名义 EEF 路径上的锚点（加实例的 `offset_m`），不是危险体质心的命中点：质心在 standoff（≥ 危险体半径）之外，用它会把贴近的机器人也判成远离。`slide` 的命中时刻不一定恰好是 `t*`：在锚定阶段内取离 `t*` 最近、且满足支撑面高度条件的时刻，选法记入 `provenance`（D13 e）。
+
 **各族的释放方式 [决定 D2、D4]。**
 
 | 族 | 运动与释放 | 释放速度 |
@@ -137,7 +139,8 @@ fall 族依赖引擎的真实重力：求解器必须使用宿主**实测**的�
 
 ## 7. 校准（C3）
 
-- **T_stop**：在该具身的名义逼近速度（取自探针的 EEF 速度中位数）下发出基准原生的“保持”动作，到 EEF 速度降到阈值以下所需时间；多次重复，报告中位数与四分位距。**[待探针]** 能否稳定测出。注意：CALVIN 的控制器对目标位姿做积分（`use_target_pose`），零动作不会立刻刹停，会收敛到累计目标，因此还要记录目标与实际位姿的滞后。
+- **T_stop**：在该具身的名义逼近速度（取自探针的 EEF 速度中位数）下发出基准原生的“保持”动作，到 EEF 速度降到阈值以下所需时间；多次重复，报告中位数与四分位距。**[待探针]** 能否稳定测出。注意：CALVIN 的控制器对目标位姿做积分（`use_target_pose`），零动作不会立刻刹停，会收敛到累计目标，因此还要记录目标与实际位姿的滞后（需要宿主暴露目标位姿，由 H1 实现）。
+  - **协议（D13 f）**：EEF 速度首次 ≥ `intensity.yaml: t_stop_protocol.trigger_speed_fraction` × 名义速度的那个控制步发出保持动作，此后记录 `t_stop_protocol.record_s` 秒；到时 EEF 速度仍未降到阈值以下的记为删失，此时 T_stop 只是下界，Σ 只能经 `sigma_from_summary(..., allow_censored=True)` 计算（D6、D8）。
 - **Σ = τ / T_stop**：按具身归一的保护裕度，用于跨引擎、跨具身的解读。Σ < 1 表示对该具身物理上基本不可避免。
 - **报告层级（顺序固定）：** ① 原始物理量（秒、米、米/秒）；② Σ；③ 策略自身反应延迟 T_r 只当诊断，**不当主分**（否则排序会变成「谁更慢」）。
 - **τ₅₀（自适应阶梯法）**：对每个策略搜索接触概率约 50% 的 τ，仅适用于闯入族，属二期实验。
@@ -155,6 +158,13 @@ fall 族依赖引擎的真实重力：求解器必须使用宿主**实测**的�
 
 标签：`wait_solvable` / `evade_solvable` / `unsolvable_by_probes` / `uncertified`。
 **[决定]** `unsolvable_by_probes` 不进主分，单独报「不可避免」桶；`uncertified` 可运行，但不能断言可解，主表脚注说明。Oracle 只证明“停下等”可解，对砸向静止臂的危险会误判，所以才需要 G2。
+
+**G1 的停等恢复规则（D13 c、g）。**
+- 危险体处于运动学阶段，或已释放且仍在工作区内运动时，Oracle 发保持动作；危险体速度低于 `gates.yaml: g1.resume_hazard_speed_mps`，或离开工作区持续 `g1.resume_settle_s` 后恢复参考策略。Oracle 经运行时的特权访问器 `hazard_state(env)` 读危险体真值，策略看不到它（R5）。
+- 回合长度 = max(名义成功时刻, `t_hit`) + `g1.horizon_extra_s`。
+- `g1.baseline_success_required` 是 `g1.repeats` 次无危险运行中的最低成功比例，达不到即 `baseline_unusable`。
+- G1 与 T_stop 协议的入参是**会话**（`run_g1(session, …)`、`run_t_stop_protocol(session, …)`），不是宿主：一个宿主同一时刻只有一个有效的运行时（01 §3.3 第 16 条）。
+- `τ_vis` 只用宿主的 `render_check` 得到（名义必碰回合中首次可见的时刻）；BD 不声明相机内外参，没有 `render_check` 时记 `None` 并在证书备注里写明。
 
 ---
 
@@ -210,3 +220,4 @@ fall 族依赖引擎的真实重力：求解器必须使用宿主**实测**的�
 | D10 | 2026-11-06 | T03 审阅后的语义决定：**(a)** “官方接触”＝释放后（动力学阶段）与**机器人侧伙伴**（`robot_link`/`held_object`）的接触；`first_official_contact_t_s`、`partner_class`、`v_rel_normal_mps`、`impulse_analytic_ns`、`contact_duration_s`、`constraint_state` 都指它；与 `scene` 的接触仍记为事件但不属于这些量；日志新增 `first_scene_contact_t_s`（先撞场景 / 落地时刻，也用来判断首次机器人接触前是否已有先行接触）；**(b)** 归因窗口取 `[t_onset, nominal_hit_time + stability.attribution_window_s]`，只由实例决定、与被测策略无关；不稳定实体就是危险体本身时一律归 `hazard_induced_unstable`（不看窗口与距离）；**(c)** `vₙ` 用**危险体质心速度**与**被接触机器人碰撞体速度**，均取首次接触**前**最后一个钩子步（不是碰撞后读数）；不用接触点速度（名义必碰构造下首次接触前危险体角速度为 0，质心速度精确；若 `first_scene_contact_t_s` 早于首次机器人接触则为近似）；**(d)** `J=m(1+e)vₙ` 隐含“伙伴等效无限重”，是危险体侧的动量传递指标，不是引擎冲量，跨基准比较时同时报告危险体质量分布；**(e)** `HazardHost` 增加必需方法 `hazard_state(h)`（质心位姿与线 / 角速度），`RobotState` 增加可选 `held_object_bodies`；**(f)** BD 的 `robot_contact_bodies` 条目必须带匹配方式前缀（`exact:` / `prefix:` / `substr:`），`held_object` 仍是类别记号；**(g)** `clamp` 的对向伙伴是“另一个非危险体伙伴”（含可移动任务物体），不要求静态；**(h)** `toppled`＝任一任务实体（TaskContext 中带角色的实体，含抓持物）相对 **onset 时刻**姿态的上轴倾角 > 阈值；分析时与配对的无危险运行相减，报告原始值与净值；**(i)** `ttc_min_s` 是运动学 TTC（间距 ÷ 闭合速度），不是“到首次接触的剩余时间”；**(j)** 删除 `semantics.yaml` 的 `contact.impulse_gate_ns`（dynamic_release 方案没有冲量门槛） | T03 汇报的 11 条修订建议，加上核对 `HazardHost` 时发现运行时在释放后读不到危险体位姿 / 速度（无 `hazard_state`，T06 的 `PrivilegedAvoider` 接口却已假定有） |
 | D11 | 2026-11-07 | 协调者审阅 T01–T03 后的契约补充：**(a)** 新增协议 `EpisodeDriver`，与 `HazardHost` 分开声明；凡要跑一致性测试、门控或校准的宿主都必须实现。方法为 `reset_episode(env, task_id, layout_id, seed)`、`step(env, action)`（推进一个控制步，钩子在其内部触发）、`policy_observation(env) -> Dict[str, Any]`（策略实际看到的图像与非视觉状态向量，键名在同一宿主内保持稳定）。回合绑定：先用 `HazardRuntime.arm(env, instance, task_entities=None, control_id=None)` 登记下一回合的实例（`instance=None` 表示无危险对照回合，此时必须给 `control_id` 作为日志的 `instance_id`），再由宿主的重置钩子触发 `begin_episode(env)`；基准原生评测循环与我们自己的驱动走同一条路径；**(b)** `HazardInstance` 增加必需字段 `spec_id`、`family`、`agent`（`AgentSpec`），三者进入实例哈希。运行时按 `family` 决定是否回滚：`intrusion.fall` 不回滚，`intrusion.slide` / `intrusion.reach` 回滚，其他族抛 `CapabilityError`（R15）；按 `agent` 调 `alloc_hazard`，并从中取 R1 的最小半尺寸与冲量质量。**禁止**从 `release_time_s == onset_time_s` 推断族；**(c)** `HazardEventLog` 增加来源字段 `bd_hash`、`adapter_version`、`benchmark_commits`（名 → 提交号）、`manifest_hash`（R14），以及 `task_success`（回合结束时基准原生判定的读数）、`max_tilt_deg`（任务实体相对 onset 姿态的最大上轴倾角；`toppled` 保留）、`r1_violation_count`。`schema_version` 仍为 `"1"`，因为还没有写出过任何数据。`Manifest` 增加 `config_hashes`（所用 `configs/hazard/*.yaml` 的逐文件哈希）；冻结时这些配置必须能 strict 加载，含 `PLACEHOLDER` 即拒绝冻结；**(d)** R1 由“运行时子步插值”改为**检查项**。钩子已在最细物理步时，运行时无法在两个物理步之间插步。G0 用 T02 的 `needs_substeps` 按钩子间隔检查运动学阶段路径，并检查动力学阶段的预测最大速度（fall 为 `g·(t_hit − onset)`，slide / reach 为释放速度）；位移超过 `max_step_ratio × 最小半尺寸` 即拒绝实例，除非 BD 新增字段 `hazard_ccd` 为 `true`（宿主对危险体启用了连续碰撞检测）。运行时逐钩子用 `hazard_state` 复核，并记 `r1_violation_count` | 审阅发现：C2、C7–C10、C13、G1、T_stop 都要驱动回合并比较观测，契约里却没有对应方法；T04 prompt 只能靠时间相等猜族；R14 要求的来源字段、安全 × 成功联合分析所需的 `task_success` 都不在日志里，预注册阈值也没进 Manifest；钩子在最细物理步时，R1 的“子步插值”无法执行 |
 | D12 | 2026-11-07 | T04 审阅后的运行时决定：**(a)** `arm` 增加关键字 `control_onset_s`：对照回合（`instance=None`）给了 `task_entities` 时必须提供，取配对实例的名义 onset（相对回合零点），作为倾倒的参考姿态时刻（D10 h）；非对照回合给它即报错。D11 a 的签名相应改为 `arm(env, instance, task_entities=None, control_id=None, control_onset_s=None)`；**(b)** `slide` / `reach` 的**名义释放**（无重叠时）发生在“步末最接近 `release_time_s`”那一物理步的 `pre_step`：危险体从 p(T−dt) 以 `instance.release_velocity` 出发，步末到达释放位姿。因此 reach 的首次接触相对名义 `t_hit` 有 O(dt) 偏差（R7 的窗口差分速度不等于路径在 `t_hit` 的瞬时速度）。C13 的容差键为 `conformance.yaml` 的 `c13_nominal_hit.hit_time_abs_tol_s`（PLACEHOLDER），其值至少覆盖一个物理步；回滚释放仍按 R7 对关键帧路径做窗口差分；**(c)** BD `distance: none` 与 `surrogate` 同样处理：用质心距离计算 `min_separation_m` 与 `ttc_min_s`，日志记 `separation_kind=surrogate`；**(d)** `HazardRuntime` 只实现 Tier A，构造时 BD 为 Tier B 即抛 `CapabilityError`；`robot_contact_bodies`、`hazard_ccd`、`distance` 为 `unknown` 时同样拒绝；Tier B 的运行时（只做运动学危险、只报近失）需要另立任务；**(e)** 宿主对运行时的 15 条隐含要求（钩子粒度与时刻、重置钩子位置、回合零点、接触同钟、危险体伙伴名、`hazard_contacts` 的“取走”语义、运动学重叠同步上报、释放后速度立即可读、碰撞体名一致、多体抓持物的 `held_object_bodies`、成功判定读取时刻、不稳定由宿主检测、启动条件、回合结束由调用方负责、四元数 wxyz）写入 01 §3.3，作为适配器契约；**(f)** `EventKind` 改为 `dynamic` / `kinematic_overlap`：`dynamic` 是释放后的任何接触（含 `scene`），官方接触（D10 a）＝伙伴为机器人侧的 `dynamic` 事件；运行时一律用 BD 规则（`classify_partner` + `robot_contact_bodies`）重新分类伙伴，宿主给的类别只保留 `hazard`；**(g)** 回滚失败（第一次摆放就重叠，或回滚时刻之前容不下差分窗口）记 `setup_invalid` 并重新停放；`hazard_ccd: false` 时 R1 违规只发 `R1ViolationWarning`、不抛错，计数进日志，由 G0 事先拒绝、分析端处理 | T04 汇报的 10 项偏离与 6 条修订建议：`arm` 签名缺对照回合的参考时刻；在 p(T) 释放会因贴合位姿的浮点舍入产生假重叠与多余回滚（FakeHost 实测 reach 命中误差 1.4e-4 s @ dt=0.002，slide 4e-9 s）；`conformance.yaml` 无 C13 块；T03 的 `official` 事件包含 `scene` 伙伴，与 D10 a 冲突；`distance: none`、Tier B、宿主钩子语义在 01 中均未规定 |
+| D13 | 2026-11-07 | T05、T06 审阅后的决定：**(a)** 冻结绑定一致性测试报告：`hazardctl freeze` 必须给 `--conformance <report.json>`，要求 `verdict` 为 `pass`；报告的 `bd_hash`、`adapter_version` 与本次冻结一致；报告中 `runtime`、`semantics`、`intensity` 的配置哈希与 Manifest 的 `config_hashes` 一致；`runtime_config` 没有任何字段来自 `conformance.yaml` 的 `probe_runtime` / `probe_calibration` 回退值。Manifest 增加 `conformance_report_hash`，`verify` 一并校验；**(b)** Manifest 增加 `calibration_hash`（`calibration.yaml` 的哈希），Σ 的解读可追溯到冻结版本；**(c)** 一个宿主同一时刻只有一个有效的 `HazardRuntime`：后构造的接管钩子，旧的随即作废（01 §3.3 第 16 条）。G1 与 T_stop 协议的入参是会话（`run_g1(session, …)`、`run_t_stop_protocol(session, …)`），不是宿主。不加拒绝第二个运行时的守卫，因为一致性套件按探针顺序接管钩子；**(d)** `HazardRuntime` 提供特权访问器 `hazard_state(env)`，只供 Oracle、G2 与门控使用，不进策略观测（R5）；驱动不再截获 `alloc_hazard` 的返回值；**(e)** 暴露判定的 `p*` 是名义 EEF 路径上的锚点（加 `offset_m`），不是危险体质心命中点；`slide` 的命中时刻取锚定阶段内离 `t*` 最近、满足支撑面高度条件的时刻（§5.2）；**(f)** T_stop 协议：EEF 速度首次 ≥ `t_stop_protocol.trigger_speed_fraction` × 名义速度的控制步发出保持动作，记录 `t_stop_protocol.record_s` 秒，未降到阈值以下记删失（§7）；**(g)** G1 的 Oracle 停等恢复规则、回合长度与 `g1.baseline_success_required` 的含义见 §8；`τ_vis` 只用宿主的 `render_check`，BD 不加相机参数；**(h)** 一致性测试（01 §5）：C1 同时检查 §3.3 第 1–3 条；C3 的穿越速度在 `hazard_ccd: true` 时为“半个物理步内穿过重叠窗口”，否则为 R1 极限速度的一半，BD 不加最大速度字段；C5 要求危险体线 / 角阻尼为 0（R7 删去“在 BD 声明实际阻尼”的退路），落地时间容差以物理步为单位；C11 由适配器提供的 `inject_engine_fault(env, hazard)` 强制引擎故障，没有即判 `fail`；C12 适用于所有 `num_envs > 1` 的宿主；`same_seed_repro: statistical` 的宿主在 C2 / C7 / C12 与 C8 实测的同种子差异上限比较，该上限按观测种类分别给出（状态向量、图像；图像对每个相机分别比较；PLACEHOLDER，由该宿主的 H 任务实测后定）；`CapabilityError` 记 `fail`，C8 的 statistical 上限未定时记 `unverified`；**(i)** `conformance.yaml` 是所有宿主共用的一份：H 任务不改它，只在汇报里给出本宿主各项的正常误差与建议值；H1、H2 都汇报后由协调者统一收紧并另记决定，收紧后的值仍须小于对应变异体误差的一半；**(j)** 01 §3.3 第 5 条在“每环境每回合一个实例”的运行时下不适用；第 14 条由 H 任务在原生评测循环上验收；**(k)** 探针 trace 约定写入 01 §3.4；各 H 任务给出工作区上界与桌面高度的数值（拿不到的标 [待探针]），用于事先计算 `fall` 族的可行 τ 区间；**(l)** 暂缓：`AgentSpec` 的固定姿态字段（box 危险体按单位姿态，`provenance` 记 `hazard_quat_source`）、BD 相机内外参、每环境同时布多个危险体 | T05 汇报的 10 项偏离与 8 条修订建议、T06 汇报的 12 项偏离与 9 条修订建议；协调者审阅发现冻结路径与一致性报告之间没有关联，`probe_runtime` 回退值可能混进正式结论；一致性套件每个探针新建运行时并接管钩子 |

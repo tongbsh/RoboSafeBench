@@ -17,18 +17,20 @@
 | **T04-F** | T04 收尾：落实 D12（`EventKind` 改名 `dynamic`、`conformance.yaml` 补 C13 块；宿主钩子语义写进 01 §3.3） | T04 | 否 | 同一分支上的小提交 | 小 |
 | **T05** | 一致性测试套件 C1–C13 | T04 | 否 | pytest 套件 + 变异体验证（每个测试都能抓到对应缺陷） | 中 |
 | **T06** | 流水线：探针 / 实例化 / 门控 / 校准 / 冻结 | T04 | 否 | `hazardctl` 子命令，FakeHost 上端到端 | 中到大 |
+| **T05-F** | T05 收尾：落实 D13 h（C5 落地时间容差按物理步、statistical 宿主的 C2 / C7 / C12 判据与按观测键的 C8 上限、报告路径不含本机绝对路径，见 `prompts/T05_followup.md`） | T05、T06 | 否 | 小提交 | 小 |
+| **T06-F** | T06 收尾：落实 D13 a–d（冻结绑定一致性报告、Manifest 增 `conformance_report_hash` / `calibration_hash`、运行时特权访问器 `hazard_state`，见 `prompts/T06_followup.md`） | T05、T06 | 否 | 小提交 | 小到中 |
 | **E00** | 基准环境搭建（按基准参数化） | 无 | 是 | `docs/design/env_notes/<bench>.md`，基准自带最小评测跑通 | 视基准 |
-| **H1** | CALVIN 适配器 | T01–T05、E00(calvin) | 是 | 适配器、BD、一致性测试通过、特权运行、成本账本 | 中 |
-| **H2** | RoboCasa365 适配器 | T01–T05、E00(robocasa) | 是 | 同上 | 中 |
-| **H3** | LIBERO（SafeLIBERO）适配器 | T01–T05、E00(libero) | 是 | 同上 | 中 |
-| **H4** | SimplerEnv 适配器 | T01–T05、E00(simplerenv) | 是 | 同上 | 中 |
-| **H5** | RoboTwin 适配器 | T01–T05、E00(robotwin) | 是 | 同上 | 中到大 |
-| **H6** | RoboDojo 适配器（含 E1–E8 引擎探针） | T01–T05、E00(robodojo) | 是 | 探针报告 + 适配器 | 大 |
+| **H1** | CALVIN 适配器 | T01–T06（含 T05-F、T06-F）、E00(calvin) | 是 | 适配器、BD、一致性测试通过、特权运行、成本账本 | 中 |
+| **H2** | RoboCasa365 适配器 | T01–T06（含 T05-F、T06-F）、E00(robocasa) | 是 | 同上 | 中 |
+| **H3** | LIBERO（SafeLIBERO）适配器 | T01–T06（含 T05-F、T06-F）、E00(libero) | 是 | 同上 | 中 |
+| **H4** | SimplerEnv 适配器 | T01–T06（含 T05-F、T06-F）、E00(simplerenv) | 是 | 同上 | 中 |
+| **H5** | RoboTwin 适配器 | T01–T06（含 T05-F、T06-F）、E00(robotwin) | 是 | 同上 | 中到大 |
+| **H6** | RoboDojo 适配器（含 E1–E8 引擎探针） | T01–T06（含 T05-F、T06-F）、E00(robodojo) | 是 | 探针报告 + 适配器 | 大 |
 | **X1** | 策略矩阵与服务 | E00 | 是 | `policy_matrix.md`、每基准至多两个策略的服务脚本 | 中 |
 
 **阶段与并行。**
-- 阶段 A（无需仿真器，可立刻开始）：T01 先做（约一两个小时的量）；T01 合并后 T02、T03 并行（T02 后跟一个小收尾 T02-F；**T04 在 T02-F 与 T03（含 T03-F）都合并后才放行**）；T04 之后 T05、T06 并行。
-- 阶段 B（需要环境）：E00 对各基准可与阶段 A **同时**进行；H1–H6 在 T01–T05 合并并且对应 E00 完成后开始。
+- 阶段 A（无需仿真器，可立刻开始）：T01 先做（约一两个小时的量）；T01 合并后 T02、T03 并行（T02 后跟一个小收尾 T02-F；**T04 在 T02-F 与 T03（含 T03-F）都合并后才放行**）；T04 之后 T05、T06 并行；两者合并后 T05-F、T06-F 并行（D13）。
+- 阶段 B（需要环境）：E00 对各基准可与阶段 A **同时**进行；H1–H6 在 T01–T06（含 T05-F、T06-F）合并并且对应 E00 完成后开始。
 - 阶段 C（实验 H0–H4）：在 H1–H3 至少完成、P0 修订落地后再写 prompt；本批**不提供**，因为它们取决于阶段 B 的结果（特别是 T_stop 与跨引擎探针是否可行）。
 
 **建议的启动顺序（一台服务器、串行时）：** T01 → T02 ∥ T03 → T04 → T05 ∥ T06；E00(calvin) → H1；然后 E00(robocasa) → H2；E00(robodojo) 由用户安装环境，`doctor` 通过后再启动 H6。
@@ -40,7 +42,7 @@
 - 集成分支：`hazard/integration`（由协调者从 `claude/sweet-newton-2clmpw` 创建）。
 - 每个任务会话建分支 `hazard/<ID>`：T01 与 E00 从 `claude/sweet-newton-2clmpw` 起；依赖 T01 及之后的任务从 `hazard/integration` 起（协调者在 T01 通过后合并进去）。
 - 任务会话**只提交并推送自己的分支**，**不合并、不开 PR、不改 `docs/design/00–03`**；对设计文档的修订意见写进自己的汇报。
-- 协调者合并顺序：T01 → T02、T03 → T04 → T05、T06 → H*。
+- 协调者合并顺序：T01 → T02、T03 → T04 → T05、T06 → T05-F、T06-F → H*。
 
 ---
 
@@ -63,7 +65,7 @@
 | SimplerEnv | 既有 SimplerEnv 环境 | 以 `docs/user/install.md` 为准 | `sapien==2.2.2` |
 | RoboTwin | 既有 RoboTwin 环境 | 同上 | `sapien==3.0.0b1` |
 | RoboCasa | `dynisafety-robocasa` | 3.11 | `numpy==2.2.5`、`mujoco==3.3.1`；资产约 10 GB |
-| RoboDojo | `RoboDojo` | 3.11 | `numpy==1.26.0`、`torch==2.7.0`（cu128）、Isaac Sim 5.1、Isaac Lab 2.3 |
+| RoboDojo | `rsb_robodojo61`（自建，见 `env_notes/robodojo.md`） | 3.12 | Isaac Sim 6.1（E00 决定的移植）、`numpy==2.3.1`、`torch==2.11.0`；自建克隆，`Assets` 只读共享 |
 | CALVIN | `calvin_venv` | **3.8** | 官方 `install.sh`；`hazardlib` 必须兼容 |
 
 纯 Python 开发（T01–T06）另建 `hz38` 与 `hz311` 两个轻量环境，用于双版本测试。
