@@ -1,11 +1,9 @@
-# BenchmarkDescriptor DRAFT for CALVIN (T01).
+# BenchmarkDescriptor for CALVIN (T01 draft, completed by task H1).
 #
-# Filled ONLY from what docs/design/02_benchmark_profiles.md §1-§2 marks as
-# verified ([已核实]: source read at calvin@fa03f01 / calvin_env@797142c, or the
-# README). Everything else is `unknown` and is the probe checklist for task H1.
-# `unknown` is not a capability: BenchmarkDescriptor.tier() refuses to guess
-# (TierUndeterminedError) while tier-relevant fields are unknown, and
-# strict=True loading rejects the file until every unknown is probed away.
+# T01 filled what docs/design/02_benchmark_profiles.md §1-§2 marks as verified (source read at calvin@fa03f01 /
+# calvin_env@797142c, or the README). H1 removed every `unknown` with a probe in
+# hazardlib/src/hazardhosts/calvin/probes/ or with a conformance check; each entry names its evidence, the
+# outputs are in docs/design/reports/H-calvin.md. Values describe the adapter hazardhosts.calvin (CalvinHost).
 name: calvin
 bd_version: "1.0"   # BD schema version, as in the 01 §2 example
 
@@ -18,62 +16,80 @@ python: {required: "3.8", env_name: calvin_venv}   # 02 §1 table, [已核实 RE
 
 engine:
   name: pybullet
-  version: unknown   # [待探针]
+  version: "3.2.7"   # probes/scene_survey.py: pybullet.__version__ 3.2.7, API 202010061
 
-timebase:   # 02 §1 table / §2: bullet_time_step=240, control_freq=30, action_repeat=int(240//30)
-  physics_dt_s: 0.004166666666666667   # 1/240 s
+timebase:   # 02 §1 table / §2: bullet_time_step=240, control_freq=30, action_repeat=int(240//30); CalvinHost checks these against the engine at start-up
+  physics_dt_s: 0.004166666666666667   # 1/240 s (getPhysicsEngineParameters: fixedTimeStep 0.004166666667)
   control_dt_s: 0.03333333333333333    # 1/30 s
   substeps_per_action: 8
 
-gravity_mps2: unknown   # [待探针] measured free fall (D2); play_table_env.py sets -9.8 in load(), but the value used must be the measured one
-hazard_ccd: unknown     # [待探针] whether the adapter enables continuous collision detection for hazard bodies (D11 d)
+gravity_mps2: 9.8   # probes/physics.py §2: free-fall quadratic fit 9.800000000 m/s^2 (residual 2e-15 m); play_table_env.load() sets -9.8
+hazard_ccd: false   # probes/physics.py §7: no CCD on hazard bodies (a 0.01 m sphere tunnels through a 0.01 m wall at 12 m/s); the adapter does not enable it
 
-parallel:   # 02 does not state it; single PlayTableSimEnv is [推断], not verified
-  num_envs: unknown
-  batched: unknown
+parallel:           # CalvinHost drives one PlayTableSimEnv (one PyBullet client); no vectorised env exists in calvin_env
+  num_envs: 1
+  batched: false
 
 loop_owner: user_script   # evaluate_policy.py owns the loop (02 §1 table, [已核实])
-hook_point: "wrap/subclass PlayTableSimEnv.step and run the hazard hooks around each of the 8 stepSimulation calls; evaluate_policy.make_env has an 'insert your own env wrapper' comment (02 §2, plan)"
-spawn_mode: runtime       # loadURDF is used in play_table_scene.load (02 §2 alloc_hazard row, [已核实]); mid-episode spawn itself is [待探针]
-kinematic_pose_set: unknown      # [待探针] mass-zero or constraint approach (02 §2 set_hazard_pose)
-release_with_velocity: unknown   # [待探针] restore mass + resetBaseVelocity (02 §2 release_to_physics)
-contact_tier: unknown            # getContactPoints is used in the repo [已核实]; relative normal velocity via computeLinkVelocity [待探针]
-distance: unknown                # getClosestPoints [待探针] (02 §2 min_distance)
+hook_point: "hazardhosts.calvin.env.HookedPlayTableEnv: PlayTableSimEnv subclass whose step() (copy of play_table_env.py:222-243 @797142c, pinned) calls the hooks around each of the 8 stepSimulation calls; make_env() replaces the env target of evaluate_policy.make_env"
+spawn_mode: runtime       # alloc_hazard creates the body with createMultiBody mid-run (maximal coordinates) and pools it for reuse
+kinematic_pose_set: true      # probes/physics.py §3: mass 0 + resetBasePositionAndOrientation reads back exactly, zero velocity, no drift over 50 steps
+release_with_velocity: true   # probes/physics.py §4: mass restored + resetBaseVelocity reads back exactly (error 0)
+contact_tier: A               # per-partner-link contacts with normal and time from getClosestPoints after every physics step; partner link velocities from getLinkState(computeLinkVelocity=1) (C4, C6)
+distance: geometric           # min_distance() = getClosestPoints to the robot and the held object (probes/physics.py §6: works whatever the collision filter)
 
-robot_contact_bodies:            # 02 §9 open question 4: not yet answerable declaratively
-  # entries are exact:<name> / prefix:<start> / substr:<fragment> (D10 f); include may add the token held_object
-  include: unknown
-  exclude: unknown
+robot_contact_bodies:
+  # Partner names are "robot/<link>" for the robot's rigid bodies (probes/scene_survey.py lists all collision links);
+  # no scene body name starts with "robot/" (scene bodies: table/<link>, block_red, block_blue, block_pink, plane).
+  include: ["prefix:robot/", held_object]
+  exclude: []
 
-eef_contact_radius_m: unknown    # [待探针] effective robot contact radius for the standoff conversion (D1), checked by C13
+# probes/eef_radius.py: first-contact standoff from the TCP minus the probe radius. Closed gripper (opening < 5 mm),
+# 8 horizontal directions, the 10 closed frames among every 25th validation frame: median 0.0134 m (range
+# 0.0102-0.0176, sphere r 0.02; median 0.0136 for r 0.03). It is a
+# horizontal value: with the gripper open it is 0.050-0.054 along the finger axis and undefined across it (a 0.02
+# sphere passes between the fingers), and from above (+z) the wrist (panda_link6) is hit 0.30-0.32 m above the
+# TCP. One scalar cannot describe this gripper (H1 report: C13 fall, contract feedback).
+eef_contact_radius_m: 0.0134
 
 state_access:
-  eef: true               # robot.get_observation(): TCP pose (02 §2 robot_state, [已核实])
-  gripper: true           # same call: gripper opening
-  base: unknown           # fixed-base Franka Panda is [推断]; 02 does not state a base pose
-  objects: true           # scene objects' get_state() (02 §2 object_poses, [已核实])
-  fixtures: true          # scene.get_obs() registers doors/buttons/switches/lights (02 §2 structure, [已核实])
-  support_surfaces: true  # `surfaces` from the scene YAML (02 §2 object_poses, [已核实])
+  eef: true               # tcp link pose / velocity (getLinkState), what robot_obs[0:6] reports
+  gripper: true           # measured finger-joint sum (robot_obs[6]); not the command
+  base: true              # fixed base: getBasePositionAndOrientation of the robot
+  objects: true           # movable objects' base poses
+  fixtures: true          # table links (drawer, sliding door, button, switch, lights) via getLinkState
+  support_surfaces: true  # table top boxes measured by probes/surfaces.py (ray tests), in configs/hazard/calvin.yaml
 
-task_entity_source: oracle_config   # declarative Tasks start_info/end_info config (02 §2 structure, [已核实])
+task_entity_source: oracle_config   # declarative Tasks config new_playtable_tasks.yaml (02 §2 structure, [已核实])
 
 success_oracle:
   kind: state_diff   # Tasks.get_task_info_for_set differences start/end state (02 §2, [已核实])
-  readonly: unknown  # [待探针] C7: must not be affected by the hazard body
+  # readonly: the oracle only reads env.get_info() (C7; probes/oracle_isolation.py: parked / kinematic hazard ->
+  # every task verdict and the whole get_info() bit-identical). It does read contact lists, which include a
+  # released hazard that touches an object: lift_* is false while a hazard touches the lifted block.
+  readonly: true
 
-snapshot_restore: true   # serialize()/reset_from_storage() restore robot+scene exactly (02 §2, [已核实])
+# No snapshot / restore: probes/determinism.py --no-rebuild --restore bullet (saveState after the first reset to
+# the layout, restoreState after every later one) gives repeats that differ from the first from control step 0 on
+# (robot_obs up to 1.5e-5, scene_obs up to 0.073, rgb up to 187 grey levels); --restore storage (CALVIN's
+# serialize / reset_from_storage) differs more (robot_obs 3.5e-4, scene_obs 0.42, rgb 225). Likely cause, not
+# verified: the solver's contact manifolds and warm-start caches are not part of the saved state.
+snapshot_restore: false
 
 determinism:
-  same_seed_repro: unknown   # deterministicOverlappingPairs=1 is set [已核实] but the level needs C8
+  # probes/determinism.py and C8: CalvinHost rebuilds the PyBullet world in every reset_episode; four repeats
+  # after different episodes (released hazards, a growing hazard pool) are bit-identical in every observation.
+  # The upstream env.reset alone is not: the repeats then differ (up to 187 grey levels in rgb_static).
+  same_seed_repro: exact
 
-invalid_sample_mapping:   # [待探针]
-  setup_invalid: unknown
-  sim_unstable: unknown
+invalid_sample_mapping:
+  setup_invalid: "the runtime's rollback finds no room before the first overlap with a robot body (getClosestPoints overlap in the step after placement); CalvinHost re-parks the body"
+  sim_unstable: "CalvinHost checks robot / table joints, movable objects and unparked hazards before and after every physics step: a non-finite state or a speed above configs/hazard/calvin.yaml instability limits -> runtime.report_instability"
 
-observation_isolation:    # [待探针] C7/C9; robot_obs `contacts` may include hazard contacts (02 §2)
-  hazard_visible_in_rgb: unknown
-  hazard_in_state_vectors: unknown
+observation_isolation:
+  hazard_visible_in_rgb: true      # C9 (static and gripper cameras)
+  hazard_in_state_vectors: false   # C7: robot_obs / scene_obs unchanged by a floating hazard; the hazard is not a scene object
 
 policy_interface:
-  kind: unknown
-  notes: ""
+  kind: calvin_model_step
+  notes: "CalvinBaseModel.step(obs, goal) -> 7-D relative action (pos x3, euler x3 scaled by 0.02 m / 0.05 rad per step, integrated into the robot's target pose; gripper -1/1), env.step(action). policy_observation = rgb_static (200x200x3), rgb_gripper (84x84x3), robot_obs (15), scene_obs (24); depth maps exist in the env obs but are not exposed by the adapter (H x W float)."

@@ -121,10 +121,14 @@ def test_load_bd_by_name_and_by_path_agree(config_dir):
     assert by_name == by_path and by_name.hash() == by_path.hash()
 
 
-def test_load_bd_strict_error_names_the_file(config_dir):
+def test_load_bd_strict_error_names_the_file(config_dir, tmp_path):
+    text = (config_dir / "bd" / "calvin.yaml").read_text()
+    assert "\ngravity_mps2: 9.8 " in text
+    path = _write(tmp_path, text.replace("\ngravity_mps2: 9.8 ", "\ngravity_mps2: unknown "), "calvin_draft.yaml")
+    load_bd(str(config_dir / "bd" / "calvin.yaml"), strict=True)
     with pytest.raises(ConfigError) as err:
-        load_bd("calvin", strict=True, config_dir=config_dir)
-    assert "calvin.yaml" in str(err.value) and "unknown" in str(err.value)
+        load_bd(path, strict=True)
+    assert "calvin_draft.yaml" in str(err.value) and "unknown" in str(err.value)
 
 
 def test_load_bd_schema_error_names_the_file(tmp_path):

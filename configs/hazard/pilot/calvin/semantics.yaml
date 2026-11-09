@@ -1,0 +1,14 @@
+# PILOT (D14) semantics.yaml for CALVIN, task H1. Not for freezing or formal results ("试点").
+contact:
+  restitution_e: 0.0                      # D9 b: the main report uses e = 0
+  gap_tolerance_s: 0.02                   # conformance.yaml probe_runtime: 4.8 CALVIN physics steps, shorter than one control step (33 ms)
+clamp:
+  t_q_s: 0.1                              # conformance.yaml probe_runtime: 3 CALVIN control steps
+  opposing_normals_tol_rad: 0.3           # conformance.yaml probe_runtime
+toppling:
+  tilt_threshold_deg: 30.0                # conformance.yaml probe_runtime; CALVIN's rotate_* tasks need only 10-60 deg about z (yaw is ignored, R10)
+exposure:
+  low_exposure_radius_m: 0.1              # no CALVIN measurement; the T06 fixture value (not used by the pilot runs, which compute no exposure metric)
+stability:
+  hazard_induced_max_distance_m: 0.3      # conformance.yaml probe_runtime (C11 passes with it on CALVIN)
+  attribution_window_s: 0.5               # conformance.yaml probe_runtime (C11 passes with it on CALVIN)

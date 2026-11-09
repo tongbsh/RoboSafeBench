@@ -135,3 +135,19 @@ PYOPENGL_PLATFORM=egl python .../calvin_smoke.py $PWD/dataset/calvin_debug_datas
    本次烟雾测试（灯是灭的、零动作）两个版本结果逐位相同，所以上面两处差异都没有被这个测试覆盖。用哪个版本需要协调者定，定下后写进 Manifest 的 `benchmark_commits`。
 7. **EGL 设备选择**：日志里是 `EGL device choice: -1 of 7`，`get_env` 不设 `EGL_VISIBLE_DEVICES`，`CUDA_VISIBLE_DEVICES` 也不影响它。CALVIN 自己的 `play_lmp_wrapper.set_egl_device` 会根据 CUDA 设备号找对应的 EGL 设备号。本次实际渲染在哪张卡上没有核实 [未核实]。
 8. 无害的警告：gym 0.26.2 的停更提示；`urdfpy/urdf.py:2169` 的 `invalid value encountered in divide`。
+
+## H1 补充（H-calvin，2026-11-07）
+
+**测试依赖**（H1 第 12 条）：`calvin_venv` 里用 `pip install pytest` 新装了 `pytest 8.3.5`（Python 3.8 下解析到的版本），连带 `exceptiongroup 1.3.1`、`iniconfig 2.1.0`、`pluggy 1.5.0`、`tomli 2.5.0`；没有装或升级别的包。`PYTHONPATH=<worktree>/hazardlib/src python -m pytest hazardlib/tests -q -p no:cacheprovider`：1357 passed, 1 skipped（跳过的是 `test_source_hygiene.py:103`，需要 3.10+ 的 `sys.stdlib_module_names`），132 s。
+
+**EGL 设备（解决第 7 条的 [未核实]）**：`hazardhosts.calvin.probes.egl_devices` 列出 7 个 EGL 设备，EGL 序号 0/1/2 对应 CUDA 0/1/2，序号 3–5 是 Mesa 的 DRM 设备。`nvidia-smi` 的 GPU 2 是 PCI `00000000:41:00.0`。`CalvinHost` 在建 env 前设置 `EGL_VISIBLE_DEVICES=2`（PyBullet `eglRendererPlugin`）和 `EGL_DEVICE_ID=2`（pyrender，即 tacto），日志变成 `EGL device choice: 2 of 7 (from EGL_VISIBLE_DEVICES)`。运行期间 `nvidia-smi` 的进程表里，该进程只出现在 GPU 2 上，类型 G，约 256–264 MiB，无论带不带触觉相机都一样；它不在计算进程列表里（`--query-compute-apps`）。
+
+**导入 `calvin_agent.evaluation.*` 失败**：环境里的 `fsspec 2025.3.1` 在 `fsspec/caching.py:40` 用了 `list[[int, int]]`，Python 3.8 下报 `TypeError: 'type' object is not subscriptable`。适配器的原生评测循环（`hazardhosts/calvin/native.py`）因此不 import 这些模块，而是从固定提交 `fa03f01` 的 `evaluation/utils.py`、`evaluate_policy.py` 里按名字取出顶层定义执行，并在执行前检查这两个文件相对固定提交没有改动。
+
+**同种子复现**：上游 `env.reset(robot_obs, scene_obs)` 本身不能保证跨回合复现。同一布局、同一动作序列，中间插入别的回合之后，从第 8 个控制步起开始不同，`rgb_static` 最多差 187 个灰度级，`scene_obs` 最多差 2.7e-5。PyBullet 的 `saveState` / `restoreState` 也不行：从第 0 个控制步起就不同，`scene_obs` 最多差 0.073。CALVIN 自带的 `serialize` / `reset_from_storage` 差得更多：`robot_obs` 3.5e-4，`scene_obs` 0.42。另外 `reset_from_storage` 要求 pickle 里有录制文件才有的 `state_obs` / `done` / `info` 三个键，直接喂 `serialize()` 的结果会报 `KeyError`。只有每回合重建整个 PyBullet 世界（`CalvinHost.reset_episode`，每次约 0.08 s）才能让 4 次重复的所有观测逐位相同。复现命令：`python -m hazardhosts.calvin.probes.determinism ... [--no-rebuild [--restore bullet|storage]]`。
+
+**滚动摩擦**：PyBullet 动态体的滚动摩擦默认是 0。释放到桌面上的球体会以释放速度的约 5/7 一直滚下去，5 s 内不减速，直到滚出桌面落到地面。
+
+**退出时挂住（第 4 条的又一种情况）**：建 env 时如果带触觉相机（tacto / pyrender），`env.close()` 之后 `PlayTableSimEnv.__del__` 会再调一次 `close()`，抛 `pybullet.error: Not connected to physics server.`，进程随后挂住，只能 kill。`CalvinHost` 只开静态相机和夹爪相机（`configs/hazard/calvin.yaml` 的 `cameras`）。
+
+**判定器与接触**：危险体只是停放、或运动学放置但不接触任何东西时，`robot_obs`、`scene_obs`、整个 `get_info()` 以及所有任务的判定结果都与无危险运行逐位一致。危险体只落在桌面上时，只有 `get_info()['scene_info']['fixed_objects']['table']` 里桌子的接触信息不同，其余仍逐位一致。危险体碰到机械臂时，它会出现在 `robot_info['contacts']` 里，但判定结果不变。危险体碰到被举起的方块时，`lift_*` 判定为假，因为判定器读取方块的接触列表。危险体停放后立即读 `get_info()`，不会残留旧的接触（`probes/oracle_isolation.py`）。

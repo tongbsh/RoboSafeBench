@@ -1,0 +1,37 @@
+# PILOT (D14) intensity.yaml for CALVIN, task H1. Not for freezing or formal results ("试点").
+# Ranges (lo / hi) only bound what a spec may ask for; the pilot specs (pilot/calvin/specs.yaml) use levels inside.
+intensity:
+  intrusion.fall:
+    tau_s:   {lo: 0.05, hi: 1.5, levels: [0.1, 0.3, 0.6]}       # tau spans Sigma = tau / T_stop from below to well above 1 for the pilot T_stop (H1 report)
+    mass_kg: {lo: 0.01, hi: 1.0, levels: [0.05]}                # the conformance probe agent's mass (configs/hazard/calvin.yaml scenario.probe_agent)
+  intrusion.slide:
+    tau_s:              {lo: 0.05, hi: 1.5, levels: [0.1, 0.3, 0.6]}
+    approach_speed_mps: {lo: 0.05, hi: 2.4, levels: [0.5, 1.0]}  # hi: R1 limit for a 0.02 m sphere (0.01 m per 1/240 s physics step = 2.4 m/s; hazard_ccd false)
+  intrusion.reach:
+    tau_s:              {lo: 0.05, hi: 1.5, levels: [0.3, 0.6]}
+    approach_speed_mps: {lo: 0.05, hi: 2.4, levels: [0.6]}       # hi: R1 limit as for slide
+    limb_size_m:        {lo: 0.01, hi: 0.1, levels: [0.03]}      # T06 fixture level; CALVIN has no human limb model
+  occupancy.dwell:                                              # not used on CALVIN in the pilot (no dwell specs); T06 fixture values
+    dwell_s:             {lo: 0.5, hi: 5.0, levels: [1.0]}
+    blocked_clearance_m: {lo: 0.0, hi: 0.2, levels: [0.05]}
+  occlusion.cover:                                              # not used in the pilot; T06 fixture values
+    occlusion_ratio: {lo: 0.1, hi: 0.9, levels: [0.5]}
+    duration_s:      {lo: 0.1, hi: 2.0, levels: [0.5]}
+
+calibration:
+  t_stop_speed_threshold_mps: 0.0172      # conformance.yaml probe_calibration (C10 passes on CALVIN with it): slower than that a 0.5 s hold cannot drift 8.6 mm
+  t_stop_min_consecutive_samples: 1       # conformance.yaml probe_calibration: k = 1 control step; the protocol samples once per control step (33 ms resolution)
+  t_stop_repeats: 5                       # N of 01 §5 C10 (conformance.yaml c10 repeats); on the exact CALVIN host the repeats are identical
+  sigma_bins: [0.5, 1.0, 2.0]             # T06 fixture bins; pre-registration proposal in the H1 report
+  staircase:                              # not run in the pilot; T06 fixture values
+    step_s: 0.05
+    tau_min_s: 0.05
+    tau_max_s: 1.0
+
+t_stop_protocol:
+  trigger_speed_fraction: 0.8             # T06 fixture value: hold once the EEF is at 80 % of the probe's median speed
+  record_s: 1.0                           # 30 control steps; probes/hold_lag.py shows CALVIN stops well within it (H1 report)
+
+mapping:
+  intrusion.reach:
+    overshoot_fraction: 0.333             # conformance.yaml c13 reach_overshoot_m / reach_distance_m = 0.1 / 0.3 (the C13 reach probe passes on CALVIN)

@@ -1,0 +1,18 @@
+# PILOT (D14) gates.yaml for CALVIN, task H1. Not for freezing or formal results ("试点").
+g0:
+  max_penetration_m: 0.001                # a resting CALVIN contact settles at -1e-5 m (probes/physics.py); 1 mm leaves 100x margin
+  workspace_margin_m: 0.05                # T06 fixture value; CALVIN's workspace box comes from the host's support surfaces
+  early_contact_tol_m: 0.001              # 1 mm, as keyframe_interp_tol_m (pilot runtime.yaml)
+g1:
+  max_official_contacts: 0                # wait-solvable: the stop-wait-resume Oracle finishes without any official contact
+  require_task_success: true
+  baseline_success_required: 1.0          # the host is exact (C8): a replay either succeeds or not, repeats change nothing
+  repeats: 1                              # exact host (C8, probes/determinism.py): repeats are bit-identical
+  horizon_extra_s: 3.0                    # 90 control steps for the stop, the wait and the resume after max(success, t_hit)
+  resume_hazard_speed_mps: 0.05           # T06 fixture value. With rolling_friction 0 (configs/hazard/calvin.yaml) a released 0.02 m sphere on the table keeps rolling at ~5/7 of its speed and never gets below it (H1 report, roll test): 4 of the 7 uncertified pilot labels
+  resume_settle_s: 0.1                    # 3 control steps
+g2:                                       # not run in the pilot (no avoider); same values as g1
+  max_official_contacts: 0
+  require_task_success: true
+  repeats: 1
+  horizon_extra_s: 3.0
