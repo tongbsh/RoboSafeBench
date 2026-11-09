@@ -16,16 +16,27 @@
                                              --bd bd.yaml --seed S --adapter-version V --conformance report.json
                                              --calibration calibration.yaml --out-dir DIR
     hazardctl [--config-dir DIR] verify      --manifest-dir DIR [--bd bd.yaml]
+    hazardctl [--config-dir DIR] run         --host M:F --policy M:F --policy-name NAME --seeds S ... --env E
+                                             --out-dir DIR --task-context TC.yaml ... --bd bd.yaml
+                                             (--manifest-dir DIR | --instances gated.jsonl [--calibration C.yaml]
+                                             --pilot) [--labels L ...] [--frame-keys K ... --frame-sink M:F]
+                                             [--no-topple] [--allow-censored-t-stop]
+    hazardctl [--config-dir DIR] report      --runs DIR ... --out-dir DIR
 
 ``M:F`` is ``module:callable``: hosts are built as ``F(**host_args)``, policies and avoiders as
 ``F(host, **args)``; ``--host-arg`` / ``--policy-arg`` / ``--avoider-arg`` take ``key=value`` (value parsed as
 YAML). ``--config-dir`` defaults to ``$HAZARDLIB_CONFIG_DIR`` / the repository's ``configs/hazard``. Every
 command prints a one-line JSON summary. ``freeze`` needs the conformance report of ``python -m
 hazardlib.conformance --out`` and the ``calibration.yaml`` of ``calibrate`` (D13 a, b).
+
+``run`` and ``report`` are the Run stage (R1, D16 c; :mod:`hazardlib.run`): ``run`` takes a frozen Manifest
+directory (formal; ``verify_manifest`` must pass) or, with ``--pilot``, gated instances and a pilot ``--config-dir``;
+frame sinks are built as ``F(frames_dir, **args)`` (``--frame-sink-arg``). Both read ``run.yaml`` strictly.
 """
 import argparse
 import json
 import sys
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import yaml
@@ -33,6 +44,7 @@ import yaml
 from .calibrate.protocol import TStopProtocolSettings, run_t_stop_protocol, write_calibration
 from .config import default_config_dir
 from .driving import EpisodeSession
+from .gates.exposure import load_low_exposure_radius_m
 from .gates.settings import GateSettings
 from .gates.stage import gate_instances
 from .instantiate.builder import InstanceRejected, instantiate
@@ -42,6 +54,10 @@ from .pipeline_io import (load_object, read_bd, read_records, read_specs, read_t
                           write_records, write_yaml)
 from .probe.context import ProbeSettings, build_task_context
 from .probe.trace import read_probe_trace, record_probe_trace, write_probe_trace
+from .run.inputs import load_formal, load_pilot
+from .run.report import load_runs, summarize, write_report
+from .run.runner import FRAMES_DIR, run_stage
+from .run.settings import RunSettings
 from .runtime import RuntimeConfig
 
 
@@ -168,6 +184,45 @@ def cmd_verify(args: argparse.Namespace) -> None:
     _emit("verify", manifest_dir=args.manifest_dir, manifest_hash=digest, ok=True)
 
 
+def cmd_run(args: argparse.Namespace) -> None:
+    settings = RunSettings.load(args.config_dir)
+    bd = read_bd(args.bd)
+    if args.manifest_dir is not None:
+        if args.pilot or args.instances is not None or args.calibration is not None:
+            raise ValueError("--manifest-dir is a formal run: it takes no --pilot, --instances or --calibration "
+                             "(the frozen directory holds the instances and the calibration)")
+        inputs = load_formal(args.manifest_dir, args.task_context, bd, args.config_dir)
+    else:
+        if args.instances is None:
+            raise ValueError("give --manifest-dir (formal) or --instances with --pilot")
+        if not args.pilot:
+            raise ValueError("--instances %s is not a frozen Manifest: a run on non-frozen instances needs --pilot "
+                             "(D16 c)" % args.instances)
+        inputs = load_pilot(args.instances, args.task_context, bd, args.calibration)
+    host = load_object(args.host)(**_kwargs(args.host_arg))
+    session = EpisodeSession(host, RuntimeConfig.load(args.config_dir), inputs.provenance)
+    policy = load_object(args.policy)(host, **_kwargs(args.policy_arg))
+    sink = None
+    if args.frame_sink is not None:
+        sink = load_object(args.frame_sink)(str(Path(args.out_dir) / FRAMES_DIR), **_kwargs(args.frame_sink_arg))
+    result = run_stage(session, inputs, policy, args.policy_name, settings, args.out_dir, args.seeds, args.env,
+                       load_low_exposure_radius_m(args.config_dir), args.labels, sink, args.frame_keys,
+                       not args.no_topple, args.allow_censored_t_stop)
+    _emit("run", out_dir=args.out_dir, pilot=inputs.pilot, manifest_hash=inputs.manifest_hash,
+          policy_name=args.policy_name, planned=result.planned, ran=result.ran, skipped=result.skipped,
+          ran_by_kind=result.ran_by_kind)
+
+
+def cmd_report(args: argparse.Namespace) -> None:
+    settings = RunSettings.load(args.config_dir)
+    metas, records = load_runs(args.runs)
+    summary = summarize(metas, records, settings.report, settings.config_hash)
+    paths = write_report(args.out_dir, summary)
+    _emit("report", out_dir=args.out_dir, pilot=summary["pilot"], manifest_hash=summary["manifest_hash"],
+          counts=summary["counts"], main_rows=len(summary["main_tau"]), sigma_rows=len(summary["main_sigma"]),
+          files=paths)
+
+
 def _add_driver(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--host", required=True)
     parser.add_argument("--host-arg", action="append")
@@ -178,7 +233,7 @@ def _add_driver(parser: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="hazardctl", description="Hazard-as-Spec instance pipeline (T06)")
+    parser = argparse.ArgumentParser(prog="hazardctl", description="Hazard-as-Spec instance pipeline (T06) and run stage (R1)")
     parser.add_argument("--config-dir", default=None)
     sub = parser.add_subparsers(dest="command")
     sub.required = True
@@ -242,6 +297,36 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--manifest-dir", required=True)
     p.add_argument("--bd")
     p.set_defaults(func=cmd_verify)
+
+    p = sub.add_parser("run", help="run the policy under test on frozen (or pilot) instances + paired controls")
+    p.add_argument("--host", required=True)
+    p.add_argument("--host-arg", action="append")
+    p.add_argument("--policy", required=True)
+    p.add_argument("--policy-arg", action="append")
+    p.add_argument("--policy-name", required=True, help="name of the policy under test, written into every record")
+    p.add_argument("--seeds", type=int, nargs="+", required=True, help="environment seeds; every instance runs once "
+                                                                        "per seed (with its control)")
+    p.add_argument("--env", type=int, required=True)
+    p.add_argument("--out-dir", required=True)
+    p.add_argument("--task-context", nargs="+", required=True)
+    p.add_argument("--bd", required=True)
+    p.add_argument("--manifest-dir", help="frozen Manifest directory (formal run)")
+    p.add_argument("--instances", help="gated instances (pilot run, with --pilot)")
+    p.add_argument("--calibration", help="calibration.yaml (pilot run only; formal runs use the frozen one)")
+    p.add_argument("--pilot", action="store_true")
+    p.add_argument("--labels", nargs="+", help="certificate labels to run (default: all)")
+    p.add_argument("--frame-keys", nargs="+", help="observation keys whose images go to the frame sink")
+    p.add_argument("--frame-sink", help="M:F frame-sink factory, called as F(frames_dir, **args)")
+    p.add_argument("--frame-sink-arg", action="append")
+    p.add_argument("--no-topple", action="store_true", help="do not monitor the TaskContext entities for topple")
+    p.add_argument("--allow-censored-t-stop", action="store_true",
+                   help="accept a censored T_stop: Sigma is then an upper bound and flagged (D8)")
+    p.set_defaults(func=cmd_run)
+
+    p = sub.add_parser("report", help="run directories -> summary.yaml + report.md")
+    p.add_argument("--runs", nargs="+", required=True)
+    p.add_argument("--out-dir", required=True)
+    p.set_defaults(func=cmd_report)
     return parser
 
 
