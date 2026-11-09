@@ -649,6 +649,57 @@ def test_registry_imports_host_modules(tmp_path, monkeypatch):
     assert target.name == "t05-from-module" and target.adapter_version.endswith("/wrong_dt")
 
 
+def _fake_hazardhosts(tmp_path, monkeypatch, packages):
+    """Packages ``hazardhosts.<name>`` under ``tmp_path`` (``{name: {module: source}}``), reachable through a
+    temporary ``sys.path`` entry and the ``hazardhosts`` package path; removed from ``sys.modules`` afterwards."""
+    import hazardhosts
+    root = tmp_path / "hazardhosts"
+    for name, files in packages.items():
+        (root / name).mkdir(parents=True)
+        for module, source in files.items():
+            (root / name / ("%s.py" % module)).write_text(source)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.setattr(hazardhosts, "__path__", list(hazardhosts.__path__) + [str(root)])
+    for name in packages:
+        for key in [k for k in sys.modules if k == "hazardhosts." + name or k.startswith("hazardhosts.%s." % name)]:
+            monkeypatch.delitem(sys.modules, key)
+    importlib.invalidate_caches()
+
+
+_REGISTER = ("from hazardlib.conformance import make_fake_target, register_host\n"
+             "register_host(%r, lambda: make_fake_target(name=%r))\n")
+
+
+def test_registry_falls_back_to_the_target_module(tmp_path, monkeypatch):
+    """D15 e: hazardhosts.<name> first, then hazardhosts.<name>.target, else an error naming both imports."""
+    _fake_hazardhosts(tmp_path, monkeypatch, {
+        "t07init": {"__init__": _REGISTER % ("t07init", "t07init")},
+        "t07target": {"__init__": "", "target": _REGISTER % ("t07target", "t07target")},
+        "t07none": {"__init__": "", "target": "X = 1\n"},
+    })
+    assert resolve_target("t07init").name == "t07init"
+    assert "hazardhosts.t07init.target" not in sys.modules    # registered by __init__: no second import
+    assert resolve_target("t07target").name == "t07target"
+    assert "hazardhosts.t07target.target" in sys.modules
+    with pytest.raises(CapabilityError) as err:
+        resolve_target("t07none")
+    message = str(err.value)
+    assert "imported hazardhosts.t07none, which did not call register_host" in message
+    assert "imported hazardhosts.t07none.target, which did not call register_host" in message
+    with pytest.raises(CapabilityError) as err:
+        resolve_target("t07missing")
+    assert "importing hazardhosts.t07missing failed" in str(err.value)
+    assert "importing hazardhosts.t07missing.target failed" in str(err.value)
+
+
+def test_registry_reports_a_failing_target_import(tmp_path, monkeypatch):
+    _fake_hazardhosts(tmp_path, monkeypatch, {"t07broken": {"__init__": "",
+                                                           "target": "import no_such_simulator_t07\n"}})
+    with pytest.raises(CapabilityError, match="importing hazardhosts.t07broken.target failed: No module named "
+                                              "'no_such_simulator_t07'"):
+        resolve_target("t07broken")
+
+
 # ------------------------------------------------------------------------------------------------- report
 
 def test_report_layout_is_complete_and_validates():

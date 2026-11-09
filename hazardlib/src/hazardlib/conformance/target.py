@@ -17,7 +17,9 @@ A :class:`ConformanceTarget` bundles
   it fails C11 (01 §5, D13 h).
 
 Adapter packages register a factory at import time: ``register_host("calvin", make_target)``. ``resolve_target``
-imports the modules it is given, then ``hazardhosts.<name>`` if the name is still unknown, and calls the factory.
+imports the modules it is given, then ``hazardhosts.<name>`` if the name is still unknown, then
+``hazardhosts.<name>.target`` if it is still unknown (D15 e: the adapter may register in ``target.py`` and keep its
+``__init__.py`` empty), and calls the factory.
 """
 import dataclasses
 import importlib
@@ -175,20 +177,29 @@ def registered_hosts() -> List[str]:
     return sorted(_REGISTRY)
 
 
+def _try_import(module: str) -> str:
+    """Import ``module``; a one-line account of the outcome for the error message."""
+    try:
+        importlib.import_module(module)
+    except ImportError as exc:
+        return "importing %s failed: %s" % (module, exc)
+    return "imported %s, which did not call register_host" % module
+
+
 def resolve_target(name: str, modules: Sequence[str] = ()) -> ConformanceTarget:
-    """Import ``modules`` (each may register hosts), then, if ``name`` is still unknown, ``hazardhosts.<name>``;
-    call the registered factory. An unknown name is a :class:`CapabilityError` listing the known ones."""
+    """Import ``modules`` (each may register hosts); if ``name`` is still unknown, import ``hazardhosts.<name>``;
+    if still unknown, ``hazardhosts.<name>.target`` (D15 e); call the registered factory. An unknown name is a
+    :class:`CapabilityError` listing the known ones and what each of the two imports did."""
     for module in modules:
         importlib.import_module(module)
+    attempts = []  # type: List[str]
+    for module in ("hazardhosts." + name, "hazardhosts.%s.target" % name):
+        if name in _REGISTRY:
+            break
+        attempts.append(_try_import(module))
     if name not in _REGISTRY:
-        try:
-            importlib.import_module("hazardhosts." + name)
-        except ImportError as exc:
-            raise CapabilityError("no conformance host %r registered (known: %s); importing hazardhosts.%s "
-                                  "failed: %s" % (name, ", ".join(registered_hosts()), name, exc)) from None
-    if name not in _REGISTRY:
-        raise CapabilityError("no conformance host %r registered (known: %s); hazardhosts.%s did not call "
-                              "register_host" % (name, ", ".join(registered_hosts()), name))
+        raise CapabilityError("no conformance host %r registered (known: %s); %s"
+                              % (name, ", ".join(registered_hosts()), "; ".join(attempts)))
     target = _REGISTRY[name]()
     if not isinstance(target, ConformanceTarget):
         raise CapabilityError("the factory of host %r returned %r, not a ConformanceTarget"
