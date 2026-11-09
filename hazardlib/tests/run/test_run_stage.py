@@ -16,12 +16,13 @@ from hazardlib.run.runner import RUN_META_FILE
 
 
 def _run(world, out, make=RW.make_nominal, seeds=(0,), inputs=None, labels=None, policy_name=None, host=None,
-         allow_censored=False, monitor_topple=True, **policy_args):
+         allow_censored=False, monitor_topple=True, settings=None, **policy_args):
     inputs = inputs or load_formal(world.frozen_dir, [world.tc_path], world.bd, world.config_dir)
     host = host or RW.make_host()
     policy = make(host, **policy_args)
     session = world.session(host, inputs.provenance)
-    result = run_stage(session, inputs, policy, policy_name or policy.name, RunSettings.load(world.config_dir), out,
+    settings = settings or RunSettings.load(world.config_dir)
+    result = run_stage(session, inputs, policy, policy_name or policy.name, settings, out,
                        list(seeds), 0, load_low_exposure_radius_m(world.config_dir), labels, None, None,
                        monitor_topple, allow_censored)
     return result, read_episode_records(out / EPISODES_FILE, repair=False)
@@ -148,6 +149,14 @@ def test_resume_skips_finished_episodes_and_drops_an_interrupted_line(run_world_
     assert resumed.ran == 1 and resumed.skipped == 1 and [r["kind"] for r in records] == ["control", "hazard"]
     more, records = _run(world, out, labels=["uncertified"], seeds=(0, 1))
     assert more.ran == 2 and more.skipped == 2 and [r["seed"] for r in records] == [0, 0, 1, 1]
+    rebinned = RW.copy_tree(world.config_dir, tmp_path / "rebinned")       # report settings may change ...
+    RW.W.edit_yaml(rebinned / "run.yaml", lambda d: d["report"].update(tau_bin_edges_s=[0.25]))
+    same, _ = _run(world, out, labels=["uncertified"], seeds=(0, 1), settings=RunSettings.load(rebinned))
+    assert same.ran == 0 and same.skipped == 4
+    longer = RW.copy_tree(world.config_dir, tmp_path / "longer")           # ... the episode settings may not
+    RW.W.edit_yaml(longer / "run.yaml", lambda d: d["episode"].update(horizon_extra_s=2.0))
+    with pytest.raises(RunDirectoryError, match="episode_settings"):
+        _run(world, out, labels=["uncertified"], settings=RunSettings.load(longer))
     with pytest.raises(RunDirectoryError, match="policy_name: directory has 'nominal_bot', this run 'cautious'"):
         _run(world, out, make=RW.make_cautious, labels=["uncertified"])
     with pytest.raises(RunDirectoryError, match="monitor_topple"):

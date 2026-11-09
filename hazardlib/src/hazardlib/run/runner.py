@@ -3,9 +3,10 @@
 Output directory:
 
 * ``run_meta.yaml``: what identifies the run (mode, ``manifest_hash``, policy name and ``describe_policy``, BD
-  hash, calibration hash, ``run.yaml`` hash and episode settings, topple monitoring) plus the input paths of the
-  first invocation. A later invocation on the same directory must have the same identity (else refused): it
-  resumes the run, e.g. with more seeds.
+  hash, calibration hash, the ``run.yaml`` episode settings, topple monitoring) plus the ``run.yaml`` hash and the
+  input paths of the first invocation. A later invocation on the same directory must have the same identity (else
+  refused): it resumes the run, e.g. with more seeds. The ``report`` section of ``run.yaml`` may change in between
+  (every record keeps the ``run_config_hash`` it was run with).
 * ``episodes.jsonl``: one JSON record per finished episode, appended and flushed (``fsync``) right after the
   episode, so an interruption loses at most the running episode. On resume, a trailing line without its newline
   (an interrupted write) is dropped, and every (episode id, policy name, seed) that already has a record is
@@ -48,7 +49,7 @@ FRAMES_DIR = "frames"
 RECORD_VERSION = "1"
 META_VERSION = "1"
 IDENTITY_FIELDS = ("meta_version", "pilot", "manifest_hash", "benchmark", "bd_hash", "calibration_hash",
-                   "policy_name", "policy", "run_config_hash", "episode_settings", "monitor_topple")
+                   "policy_name", "policy", "episode_settings", "monitor_topple")
 
 
 class PolicyInProbeSetError(ValueError):
