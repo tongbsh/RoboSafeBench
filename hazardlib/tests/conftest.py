@@ -117,6 +117,7 @@ def complete_bd_dict():
         "robot_contact_bodies": {"include": ["prefix:arm", "prefix:gripper", "held_object"],
                                  "exclude": ["substr:camera"]},
         "eef_contact_radius_m": 0.02,
+        "robot_point_spacing_m": 0.005,
         "state_access": {"eef": True, "gripper": True, "base": False, "objects": True,
                         "fixtures": True, "support_surfaces": True},
         "task_entity_source": "oracle_config",

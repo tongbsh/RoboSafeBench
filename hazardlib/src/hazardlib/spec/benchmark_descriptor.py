@@ -5,6 +5,12 @@ required (omitting one cannot hide an unknown); any value may be the string
 ``"unknown"`` unless ``strict=True`` (an unknown must be removed by a probe
 before a BD may be used in a formal experiment, §2). Closed vocabularies are
 checked; open ones (``engine.name``, ``success_oracle.kind`` …) only for type.
+
+Exception (D15 a): ``robot_point_spacing_m: unknown`` is a declaration, not a
+pending probe: the host offers no robot geometry (``robot_collision_points``)
+and the standoff falls back to ``eef_contact_radius_m``. It is therefore not
+listed by :meth:`BenchmarkDescriptor.unknown_fields` and ``strict`` accepts it
+(:data:`DECLARATIVE_UNKNOWN_FIELDS`).
 """
 import dataclasses
 from typing import Any, Dict, List, Optional, Tuple
@@ -20,6 +26,8 @@ SPAWN_MODES = ("runtime", "pooled", "preload_xml")
 CONTACT_TIERS = ("A", "B", "C")
 DISTANCE_KINDS = ("geometric", "surrogate", "none")
 REPRO_LEVELS = ("exact", "statistical", "unknown")
+#: Fields whose ``unknown`` is a declared capability level rather than an open probe (see the module docstring).
+DECLARATIVE_UNKNOWN_FIELDS = ("robot_point_spacing_m",)
 
 
 class TierUndeterminedError(CapabilityError):
@@ -174,6 +182,7 @@ class BenchmarkDescriptor(_BDRecord):
     distance: str = choice(DISTANCE_KINDS)  # type: ignore[assignment]
     robot_contact_bodies: RobotContactBodies
     eef_contact_radius_m: float
+    robot_point_spacing_m: float
     state_access: StateAccess
     task_entity_source: str = choice(ENTITY_SOURCES)  # type: ignore[assignment]
     success_oracle: SuccessOracle
@@ -193,6 +202,9 @@ class BenchmarkDescriptor(_BDRecord):
                 "gravity_mps2 must be > 0 (magnitude, world -z), got %r" % (self.gravity_mps2,))
         require(is_unknown(self.eef_contact_radius_m) or self.eef_contact_radius_m >= 0,
                 "eef_contact_radius_m must be >= 0, got %r" % (self.eef_contact_radius_m,))
+        require(is_unknown(self.robot_point_spacing_m) or self.robot_point_spacing_m > 0,
+                "robot_point_spacing_m must be > 0 or unknown (no robot geometry, D15 a), got %r"
+                % (self.robot_point_spacing_m,))
 
     @classmethod
     def from_dict(cls, data: Any, path: Optional[str] = None, strict: bool = False) -> "BenchmarkDescriptor":
@@ -205,8 +217,9 @@ class BenchmarkDescriptor(_BDRecord):
 
     # ------------------------------------------------------------------
     def unknown_fields(self) -> List[str]:
-        """Dotted paths of every field still equal to ``"unknown"``."""
-        return [p for p, _ in find_markers(self.to_dict(), (UNKNOWN,))]
+        """Dotted paths of every field still equal to ``"unknown"``, except the declarative ones
+        (:data:`DECLARATIVE_UNKNOWN_FIELDS`)."""
+        return [p for p, _ in find_markers(self.to_dict(), (UNKNOWN,)) if p not in DECLARATIVE_UNKNOWN_FIELDS]
 
     def require_complete(self) -> None:
         """Raise :class:`SpecError` listing every ``unknown`` field."""

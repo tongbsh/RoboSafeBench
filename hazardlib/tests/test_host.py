@@ -31,6 +31,7 @@ OPTIONAL_SIGNATURES = {
     "restore": ["env", "snap"],
     "support_surfaces": ["env"],
     "render_check": ["h"],
+    "robot_collision_points": ["env"],
 }
 DRIVER_SIGNATURES = {
     "reset_episode": ["env", "task_id", "layout_id", "seed"],
@@ -242,3 +243,59 @@ def test_surface_is_a_validated_record():
     for bad in ({"min_m": [2, 0, 0]}, {"name": ""}, {"source": ""}, {"max_m": [1, 1]}):
         with pytest.raises(SpecError):
             Surface.from_dict(dict(d, **bad))
+
+
+# ------------------------------------------------------------------------- D15 a (T07)
+
+def _robot(**kw):
+    values = dict(eef_pose=Pose([0.0, 0.0, 0.3], [1.0, 0.0, 0.0, 0.0]), eef_lin_vel_mps=[0.0, 0.0, 0.0],
+                  collision_body_pos=[[0.0, 0.0, 0.3], [0.0, 0.1, 0.4]], collision_body_names=["hand", "link"])
+    values.update(kw)
+    return RobotState(**values)
+
+
+def test_collision_body_quat_is_optional_and_parallel_to_the_positions():
+    assert _robot().collision_body_quat is None
+    quat = _robot(collision_body_quat=[[1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 2.0]]).collision_body_quat
+    assert quat.shape == (2, 4) and quat.dtype == np.float64
+    np.testing.assert_array_equal(quat[1], [0.0, 0.0, 0.0, 2.0])  # unit norm is not enforced
+
+
+@pytest.mark.parametrize("quat,match", [
+    ([[1.0, 0.0, 0.0, 0.0]], r"shape \(2, 4\)"),
+    ([[1.0, 0.0, 0.0], [1.0, 0.0, 0.0]], r"shape \(2, 4\)"),
+    ([[1.0, 0.0, 0.0, 0.0], [float("nan"), 0.0, 0.0, 1.0]], "finite"),
+    ([[1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0]], "zero quaternion"),
+    ([["a", 0, 0, 0], [1, 0, 0, 0]], "cannot convert"),
+])
+def test_collision_body_quat_is_validated(quat, match):
+    with pytest.raises(SpecError, match=match):
+        _robot(collision_body_quat=quat)
+
+
+def test_robot_collision_points_is_an_optional_method():
+    assert "robot_collision_points" in host_module.OPTIONAL_METHODS
+    assert "robot_collision_points" not in host_module.REQUIRED_METHODS
+
+
+class _BD:
+    def __init__(self, spacing):
+        self.name, self.robot_point_spacing_m = "toy", spacing
+
+
+def test_robot_geometry_offered_needs_method_and_bd_to_agree():
+    with_method = type("H", (), {"robot_collision_points": lambda self, env: {}})()
+    without = type("H", (), {})()
+    assert host_module.robot_geometry_offered(with_method, _BD(0.005)) is True
+    assert host_module.robot_geometry_offered(without, _BD("unknown")) is False
+    with pytest.raises(CapabilityError, match="offers robot_collision_points"):
+        host_module.robot_geometry_offered(with_method, _BD("unknown"))
+    with pytest.raises(CapabilityError, match="does not offer robot_collision_points"):
+        host_module.robot_geometry_offered(without, _BD(0.005))
+
+
+def test_a_geometry_host_must_report_body_orientations():
+    with pytest.raises(CapabilityError, match="collision_body_quat"):
+        host_module.require_body_quats(_robot(), object())
+    quat = [[1.0, 0.0, 0.0, 0.0]] * 2
+    np.testing.assert_array_equal(host_module.require_body_quats(_robot(collision_body_quat=quat), object()), quat)

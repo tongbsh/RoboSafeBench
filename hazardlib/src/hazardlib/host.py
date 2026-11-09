@@ -18,7 +18,7 @@ from typing import (TYPE_CHECKING, Any, Dict, List, Optional, Protocol, Sequence
 
 import numpy as np
 
-from ._records import (Record, SpecError, check_nonempty_str, check_vec, require)
+from ._records import (UNKNOWN, Record, SpecError, check_nonempty_str, check_vec, require)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only, avoids an import cycle with spec/
     from .spec.benchmark_descriptor import BenchmarkDescriptor
@@ -124,6 +124,11 @@ class RobotState:
     ``held_object_bodies`` (optional, D10 e) lists every collision body name of
     the held object when it has more than one; contacts with them classify as
     ``held_object``. When absent the runtime uses ``[held_object]``.
+    ``collision_body_quat`` (optional, D15 a) is the (N, 4) ``wxyz`` world
+    orientation of each collision body, parallel to ``collision_body_pos``;
+    finite with non-zero norm (unit norm is NOT enforced, like ``Pose``). It is
+    required when the host offers ``robot_collision_points`` (the core then
+    raises instead of falling back, see :func:`robot_geometry_offered`).
     """
     eef_pose: Pose
     eef_lin_vel_mps: Any
@@ -134,6 +139,7 @@ class RobotState:
     collision_body_names: Optional[List[str]] = None
     collision_body_lin_vel_mps: Any = None
     held_object_bodies: Optional[List[str]] = None
+    collision_body_quat: Any = None
 
     def __post_init__(self) -> None:
         self.eef_lin_vel_mps = _vec("RobotState.eef_lin_vel_mps", self.eef_lin_vel_mps, 3)
@@ -161,6 +167,18 @@ class RobotState:
             self.held_object_bodies = list(self.held_object_bodies)
             for i, name in enumerate(self.held_object_bodies):
                 check_nonempty_str("RobotState.held_object_bodies[%d]" % i, name)
+        if self.collision_body_quat is not None:
+            try:
+                quat = np.asarray(self.collision_body_quat, dtype=np.float64)
+            except (TypeError, ValueError):
+                raise SpecError("RobotState.collision_body_quat: cannot convert %r to a float array"
+                                % (self.collision_body_quat,)) from None
+            if quat.shape != (pos.shape[0], 4) or not np.all(np.isfinite(quat)):
+                raise SpecError("RobotState.collision_body_quat: expected finite shape (%d, 4) (wxyz), got %s"
+                                % (pos.shape[0], quat.shape))
+            if not np.all(np.linalg.norm(quat, axis=1) > 0):
+                raise SpecError("RobotState.collision_body_quat: contains a zero quaternion")
+            self.collision_body_quat = quat
 
 
 @dataclasses.dataclass(eq=False)
@@ -329,6 +347,13 @@ class OptionalHazardHost(Protocol):
         """Whether the hazard appears in the policy cameras."""
         ...
 
+    def robot_collision_points(self, env: int) -> Dict[str, np.ndarray]:
+        """Surface sample points (M, 3) of every robot collision body (held objects excluded), in that body's own
+        frame, constant within an episode, at most BD ``robot_point_spacing_m`` apart; keys are names of
+        ``RobotState.collision_body_names``. A host offering it must fill ``RobotState.collision_body_quat``
+        (D15 a)."""
+        ...
+
 
 @runtime_checkable
 class EpisodeDriver(Protocol):
@@ -360,7 +385,8 @@ REQUIRED_METHODS = (
     "release_to_physics", "robot_state", "object_poses", "hazard_contacts", "hazard_state",
     "time_state", "task_success", "hold_action", "install_hooks",
 )
-OPTIONAL_METHODS = ("min_distance", "snapshot", "restore", "support_surfaces", "render_check")
+OPTIONAL_METHODS = ("min_distance", "snapshot", "restore", "support_surfaces", "render_check",
+                    "robot_collision_points")
 
 
 def missing_methods(host: Any, names: Sequence[str] = REQUIRED_METHODS) -> List[str]:
@@ -375,3 +401,27 @@ def require_methods(host: Any, names: Sequence[str] = REQUIRED_METHODS) -> None:
     if missing:
         raise CapabilityError("%s is missing required method(s): %s"
                               % (type(host).__name__, ", ".join(missing)))
+
+
+def robot_geometry_offered(host: Any, bd: Any) -> bool:
+    """Whether ``host`` provides robot geometry (D15 a): ``robot_collision_points`` is callable and the BD gives a
+    numeric ``robot_point_spacing_m``. The two must agree; a host that offers the method under a BD saying
+    ``unknown`` (or the reverse) is a :class:`CapabilityError`, never a silent fallback to the scalar standoff."""
+    method = callable(getattr(host, "robot_collision_points", None))
+    spacing = getattr(bd, "robot_point_spacing_m", UNKNOWN)
+    declared = not (isinstance(spacing, str) and spacing == UNKNOWN)
+    if method != declared:
+        raise CapabilityError(
+            "%s %s robot_collision_points but its BD %r says robot_point_spacing_m = %r; the two must agree "
+            "(D15 a)" % (type(host).__name__, "offers" if method else "does not offer",
+                         getattr(bd, "name", "?"), spacing))
+    return method
+
+
+def require_body_quats(robot: RobotState, host: Any) -> np.ndarray:
+    """``robot.collision_body_quat``, which a host offering ``robot_collision_points`` must report (D15 a)."""
+    if robot.collision_body_quat is None or robot.collision_body_names is None:
+        raise CapabilityError("%s offers robot_collision_points but robot_state() reports no collision_body_quat "
+                              "(or no collision_body_names); the core needs body orientations to place the "
+                              "geometry (D15 a)" % (type(host).__name__,))
+    return robot.collision_body_quat
