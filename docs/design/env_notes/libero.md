@@ -2,7 +2,7 @@
 
 环境 `dynisafety-libero` 是本任务按仓库配方新建的（本机之前没有，也没有 `openvla-oft`）。克隆、配置、日志都在仓库外；没有动 RLinf 的 venv、`~/.libero/config.yaml`、`embodySafeAgent/` 下的任何文件，也没有动其他基准的环境。
 
-**SafeLIBERO 树还没定（BLOCKED，见 `docs/design/reports/E00-libero.md`）。** 本机找不到 DyniSafety 的 fork；下面所有 SafeLIBERO 相关的结果都是**临时**用 vlsa-aegis 的只读参考树跑的（`DYNISAFETY_LIBERO_ROOT` 指过去，`PYTHONDONTWRITEBYTECODE=1`，跑完核对过该树 `git status` 为空、没有新文件）。`third_party/dyniSafety_libero` 软链要等用户定了再建。
+**SafeLIBERO 树：用户 2026-11-09 选 vlsa-aegis `57b1aef`**（本机找不到 DyniSafety 的 fork）。旧 L3 的人手（`hand_pusher_1`）在这棵树里没有，H3 第 7 条对照表的 L3 一列空缺；找到 DyniSafety fork 后可以替换（`DYNISAFETY_LIBERO_SRC=<fork> bash scripts/setup/install_libero.sh`，或改软链）。树已原样复制到 `/data0/tongbaoshun/benchmarks/libero/safelibero_aegis57b1aef/`，主 worktree 的 `third_party/dyniSafety_libero` 软链过去。定树之前的烟雾测试是在只读源树上临时跑的（`DYNISAFETY_LIBERO_ROOT` 覆盖，源树 `git status` 始终为空）；定树之后用正式路径（不设覆盖变量）重跑了 `doctor`、L0 评测与 3 集映射回放，结果见“烟雾测试”。
 
 ## 机器
 
@@ -27,9 +27,9 @@
 | 项 | 路径 |
 |---|---|
 | 上游 LIBERO 克隆 | `/data0/tongbaoshun/benchmarks/libero/LIBERO`，`8f1084e`（= `install_libero.sh` 的 `LIBERO_SHA`），743 MB |
-| SafeLIBERO 参考树（只读，未定） | `/data0/tongbaoshun/workspace/embodySafeAgent/vlsa-aegis/safelibero`（vlsa-aegis `57b1aef`，705 MB） |
-| 仓库内入口 | 主 worktree `third_party/libero_upstream` → 上游克隆（软链，`.git/info/exclude` 已排除）；`third_party/dyniSafety_libero` 已加进 exclude，软链待定 |
-| LIBERO 配置（自建，不碰 `~/.libero`） | `/data0/tongbaoshun/benchmarks/libero/config/upstream/config.yaml`（指上游树）、`.../config/safelibero_aegis/config.yaml`（指参考树）；两者 `datasets` 都指 `/data0/dataset/LIBERO` |
+| SafeLIBERO 树（选定） | `/data0/tongbaoshun/benchmarks/libero/safelibero_aegis57b1aef/`：vlsa-aegis（`https://github.com/THU-RCSCT/vlsa-aegis`）`57b1aef306f2` 的 `safelibero/` 原样复制，982 个文件，705 MB（736,594,107 B）。来源记录 `copy/SOURCE.txt`，sha256 清单 `copy/sha256_manifest.txt`（与源树逐文件一致）。源树 `/data0/tongbaoshun/workspace/embodySafeAgent/vlsa-aegis/safelibero` 未改动 |
+| 仓库内入口 | 主 worktree `third_party/dyniSafety_libero` → 上面的副本；`third_party/libero_upstream` → 上游克隆；两个软链都在 `.git/info/exclude` 里 |
+| LIBERO 配置（自建，不碰 `~/.libero`） | `/data0/tongbaoshun/benchmarks/libero/config/safelibero/config.yaml`（指副本）、`.../config/upstream/config.yaml`（指上游树）；`datasets` 都指 `/data0/dataset/LIBERO`。`.../config/_provisional_safelibero_aegis_readonly_ref/` 是定树前指源树的旧配置，只为复现旧日志保留 |
 | conda 环境 | `/data0/tongbaoshun/conda/envs/dynisafety-libero`（8.3 GB） |
 | `dynisafety` | editable，指向主 worktree `/data0/tongbaoshun/workspace/RoboSafeBench/src`（`hazard/integration`，与 robocasa 环境相同做法） |
 | 官方演示 | `/data0/dataset/LIBERO/{libero_spatial,libero_object,libero_goal,libero_10,libero_90}`（只读） |
@@ -43,14 +43,13 @@ export MUJOCO_GL=egl PYOPENGL_PLATFORM=egl CUDA_VISIBLE_DEVICES=2 MUJOCO_EGL_DEV
 # 普通 LIBERO（上游树）：
 export LIBERO_CONFIG_PATH=/data0/tongbaoshun/benchmarks/libero/config/upstream
 #   并把 /data0/tongbaoshun/benchmarks/libero/LIBERO 放到 sys.path（libero 没有 pip 安装，见“已知坑”4）
-# SafeLIBERO（dynisafety 后端；树未定，下面是临时做法）：
-export LIBERO_CONFIG_PATH=/data0/tongbaoshun/benchmarks/libero/config/safelibero_aegis
-export DYNISAFETY_LIBERO_ROOT=/data0/tongbaoshun/workspace/embodySafeAgent/vlsa-aegis/safelibero
-export PYTHONDONTWRITEBYTECODE=1           # 别往只读参考树里写 __pycache__
+# SafeLIBERO（dynisafety 后端；树由 third_party/dyniSafety_libero 解析，不设 DYNISAFETY_LIBERO_ROOT）：
+export LIBERO_CONFIG_PATH=/data0/tongbaoshun/benchmarks/libero/config/safelibero
 export TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1  # 见“已知坑”1
+cd /data0/tongbaoshun/workspace/RoboSafeBench   # dynisafety 按当前目录找 configs/models，见“已知坑”3
 ```
 
-`LIBERO_CONFIG_PATH` 是 LIBERO 自己读的变量（上游 `libero/libero/__init__.py:5-7`，默认 `~/.libero`；参考树默认改成了 `~/.safelibero`）。配置文件不存在时 LIBERO 会在 import 时 `input()` 交互提问，所以必须先建好。
+`LIBERO_CONFIG_PATH` 是 LIBERO 自己读的变量（上游 `libero/libero/__init__.py:5-7`，默认 `~/.libero`；SafeLIBERO 树默认改成了 `~/.safelibero`）。配置文件不存在时 LIBERO 会在 import 时 `input()` 交互提问，所以必须先建好。
 
 ## 版本
 
@@ -59,7 +58,7 @@ export TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1  # 见“已知坑”1
 | Python | 3.10.22 |
 | numpy | 1.26.4（配方 `requirements/libero.txt` 没限 numpy，conda 建环境时先装上了 2.2.6，随后按 `pyproject` 的 `<2.0` 换成 1.26.4；之后所有 pip 都带 `-c constraints.txt` 钉住） |
 | mujoco | 3.6.0（`requirements/libero.txt` 的 `>=3.1,<3.7` 解析结果） |
-| robosuite | 1.4.0（上游 LIBERO `requirements.txt` 的固定值；参考树不固定版本） |
+| robosuite | 1.4.0（上游 LIBERO `requirements.txt` 的固定值；SafeLIBERO 树不固定版本） |
 | bddl / gym / easydict | 1.0.1 / 0.25.2 / 1.9（上游 LIBERO 固定值） |
 | torch | **2.8.0+cu128**（PyPI 默认 cu128 轮子，支持 sm_120，见下） |
 | numba / scipy / h5py / opencv-python | 0.68.1 / 1.15.3 / 3.16.0 / 4.11.0.86 |
@@ -100,9 +99,9 @@ LIBERO 本身**没有** `pip install -e`：两个树的包名都是 `libero`，�
 | 场景 | nq / nv | 状态长度 | 关节数 | 刚体数 |
 |---|---|---|---|---|
 | 普通 LIBERO `libero_spatial`（两个任务相同） | 48 / 43 | 92 | 18 | 38 |
-| SafeLIBERO `safelibero_spatial`（参考树，同两个任务） | 97 / 85 | 183 | 25 | 46 |
+| SafeLIBERO `safelibero_spatial`（同两个任务） | 97 / 85 | 183 | 25 | 46 |
 
-SafeLIBERO 多出的 7 个关节全是 free joint：`moka_pot_obstacle_1_joint0`、`white_storage_box_obstacle_1_joint0`、`milk_obstacle_1_joint0`、`wine_bottle_obstacle_1_joint0`、`red_coffee_mug_obstacle_1_joint0`、`yellow_book_obstacle_1_joint0`、`box_base_1_joint0`；多出的刚体是这 7 个物体的 `*_main` 加场景 XML 里的 `eef_marker`（无关节、`contype=conaffinity=0`、透明，参考树改了 `libero_*_base_style.xml`）。普通场景的 18 个关节在 SafeLIBERO 里**全部同名存在**，所以按关节名映射是完整的。注意：物体与关节的地址**不是**简单的前缀关系，障碍物插在中间（BDDL 的对象顺序），必须按名字查 `jnt_qposadr` / `jnt_dofadr`，不能截断拼接。仓库里的 `pad_init_state_for_hand`（`env.py:290-318`）只处理“手”这一个 7 维块，不能拿来做障碍物映射。
+SafeLIBERO 多出的 7 个关节全是 free joint：`moka_pot_obstacle_1_joint0`、`white_storage_box_obstacle_1_joint0`、`milk_obstacle_1_joint0`、`wine_bottle_obstacle_1_joint0`、`red_coffee_mug_obstacle_1_joint0`、`yellow_book_obstacle_1_joint0`、`box_base_1_joint0`；多出的刚体是这 7 个物体的 `*_main` 加场景 XML 里的 `eef_marker`（无关节、`contype=conaffinity=0`、透明，SafeLIBERO 树改了 `libero_*_base_style.xml`）。普通场景的 18 个关节在 SafeLIBERO 里**全部同名存在**，所以按关节名映射是完整的。注意：物体与关节的地址**不是**简单的前缀关系，障碍物插在中间（BDDL 的对象顺序），必须按名字查 `jnt_qposadr` / `jnt_dofadr`，不能截断拼接。仓库里的 `pad_init_state_for_hand`（`env.py:290-318`）只处理“手”这一个 7 维块，不能拿来做障碍物映射。
 
 **演示文件**（`libero_spatial`，`inspect_demo_*.log`）：
 - 每个 hdf5 50 集；`data` 属性有 `bddl_file_name`、`env_args`（JSON：`env_name` Libero_Tabletop_Manipulation，OSC_POSE 参数，`control_freq` 20，相机 `robot0_eye_in_hand`、`agentview` 128×128）、`env_name`、`macros_image_convention`（opengl）、`num_demos`、`problem_info`（含语言指令）、`tag`（libero-v1）、`total`。
@@ -114,7 +113,35 @@ SafeLIBERO 多出的 7 个关节全是 free joint：`moka_pot_obstacle_1_joint0`
 
 ## 烟雾测试
 
-### 1. `doctor` 与 L0 评测（SafeLIBERO，临时参考树）
+### 1. `doctor` 与 L0 评测（SafeLIBERO）
+
+**正式路径（定树后，`third_party/dyniSafety_libero` → 副本，不设 `DYNISAFETY_LIBERO_ROOT`，`LIBERO_CONFIG_PATH=.../config/safelibero`，主 worktree 下执行）：**
+
+`dynisafety doctor --backend libero`（`doctor_official.log`，exit 1）：`libero_tree`、`asset_libero_package` 变成 OK；剩下的 11 个 FAIL 是 `patches`（`doctor.py:372` 的路径错误，robocasa 也有）和 10 个本机不存在的模型服务环境（`conda_yaml:*`），都与 LIBERO 无关。
+
+```text
+OK      FAIL  python_torch_cuda         python 3.10.22; torch 2.8.0+cu128; cuda 12.8; device0=NVIDIA RTX PRO 6000 Blackwell ...
+OK      FAIL  libero_tree               tree=/data0/tongbaoshun/workspace/RoboSafeBench/third_party/dyniSafety_libero; upstream_ref=8f1084e…
+FAIL    FAIL  patches                   missing /data0/tongbaoshun/workspace/RoboSafeBench/scripts/apply_patches.sh
+OK      FAIL  sim_mujoco                mujoco 3.6.0
+OK      FAIL  numpy_mutex               numpy 1.26.4; ...
+OK      FAIL  asset_libero_package      libero package under /data0/tongbaoshun/workspace/RoboSafeBench/third_party/dyniSafety_libero
+OK      FAIL  conda_backend:dynisafet…  conda env dynisafety-libero (found)
+OK      FAIL  gpu                       n=1; 0:NVIDIA RTX PRO 6000 Blackwell Workstation Edition 95.0GiB
+summary: 35 checks, 11 fail, 14 warn
+```
+
+`dynisafety eval --backend libero --model random --suite safelibero_spatial --level 0 --task 0 --episodes 1 --output-root <logs>/eval_out_official`（`eval_l0_official.log`，exit 0，总 21.4 s）：
+
+```text
+[rescale] milk_obstacle_1 x0.85 geoms=5 meshes=1
+.../third_party/dyniSafety_libero/libero/libero/benchmark/__init__.py:146: UserWarning: Environment variable TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD detected, ... forcing weights_only=False.
+eval done task_id=0 episodes=1 successes=0 dir=.../eval_out_official/eval/libero/safelibero_spatial/l0/libero-random-safelibero_spatial-t0-l0-s7-20261109T145117
+```
+
+220 步，`termination: max_steps`，`success: false`，0 个接触事件，回合墙钟 16.3 s。与定树前那次比：`episodes.jsonl` 只有 `run_id`、`config_hash`、`wall_time_s` 不同；逐步 trace（221 行）只有 `run_id` 不同。
+
+**定树前（临时，只读源树，`DYNISAFETY_LIBERO_ROOT` 覆盖）：**
 
 `dynisafety doctor --backend libero`（`doctor.log`，exit 1）：torch/CUDA、mujoco、numpy 互斥、conda 环境、GPU 都 OK。与 LIBERO 有关的 FAIL：`libero_tree` 与 `asset_libero_package`（`doctor` 只认 `<workspace>/third_party/dyniSafety_libero` 或 `external/simulators/dyniSafety_libero`，不看 `DYNISAFETY_LIBERO_ROOT`；树定了建软链就会过）；`patches` 是 `doctor.py:372` 自己的路径错误（与 robocasa 笔记“已知坑”6 相同）。其余 FAIL 是 10 个模型服务环境（`openvla-oft`、`openpi` 等）本机不存在，与本任务无关。
 
@@ -139,7 +166,7 @@ eval done task_id=0 episodes=1 successes=0 dir=.../eval_out/eval/libero/safelibe
 
 `episodes.jsonl`：220 步（`max_steps` 220，另有 `num_steps_wait` 10），`termination: max_steps`，`success: false`，0 个接触事件，回合墙钟 16.3 s；`save_video: false`，没有视频。前两次失败与解法见“已知坑”1、3（`eval_l0_try1_no_requests.log`、`eval_l0_try2_weights_only.log`）。
 
-附加探针（同一临时树、同一命令改 `--level`，`--no-video`）：L1 exit 0（15.7 s，`active_obstacle: moka_pot_obstacle_1`）；L2 exit 0（12.0 s，同一障碍物）；**L3 失败**：`eval failed for task_id=0 (...): 'hand_pusher_1'`（`eval_l3_probe.log`）——参考树的 BDDL 里没有人手物体，旧 L3 跑不了。
+附加探针（定树前，同一树内容、同一命令改 `--level`，`--no-video`）：L1 exit 0（15.7 s，`active_obstacle: moka_pot_obstacle_1`）；L2 exit 0（12.0 s，同一障碍物）；**L3 失败**：`eval failed for task_id=0 (...): 'hand_pusher_1'`（`eval_l3_probe.log`）——这棵树的 BDDL 里没有人手物体，旧 L3 跑不了。
 
 ### 2. 演示回放（普通 LIBERO，上游树）
 
@@ -163,14 +190,15 @@ eval done task_id=0 episodes=1 successes=0 dir=.../eval_out/eval/libero/safelibe
 - **不是模型 XML 差别**：用演示自带的 `model_file`（修好路径）`reset_from_xml_string` 后重放，第 1 步误差相同，成功数相同（stove 2/3、between 3/3，`xml_*.json`）。
 - 试过把夹爪控制器的内部状态预设成 −1，误差变大（`diag_step1_preset_gripper.log`），这个假设不成立。真正原因**[未核实]**；可能与求解器热启动等不在 `get_state()` 里的状态有关。
 
-### 3. 同一初始状态放进 SafeLIBERO 场景（临时参考树）
+### 3. 同一初始状态放进 SafeLIBERO 场景
 
 脚本 `--mode mapped`：先在普通场景导出关节布局（`replay/layout_plain_*.json`），在 SafeLIBERO 场景里按关节名把演示 `states[0]` 的 qpos / qvel 逐块拷过去；7 个障碍物（含 `box_base_1`）放到 (10, 10+i, 0.2)、单位四元数、速度 0（|x|、|y| 都 > 5，旧代码 `detect_visible_obstacles` 认为不可见）；时间分量照拷。误差按同样的名字映射投影回普通布局后与演示比。
 
 - 映射后第 0 步的投影误差 0.0（初始状态完全设进去了）；障碍物落到地面后停在 z = −0.002…0.106，整集不动（`obstacle_final_pos`）。
 - 前 3 集：stove 2/3（第 0 集失败）、between 3/3，与普通场景相同。between 的所有误差数字与普通场景**逐位相同**；stove 第 1 集末步 robot 误差 0.054（普通 0.114），成功步 115（普通 111），其余集相同——多出的物体改变了接触求解的顺序，个别集有微小分叉。
 - 每任务 10 集：stove 8/10、between 10/10，失败的集与普通场景是同两集（`summary_10ep.txt`）。
-- 每步墙钟 21–25 ms（参考树的 `OffScreenRenderEnv` 多渲染一个 `backview` 相机，物体也多）。
+- 每步墙钟 21–25 ms（SafeLIBERO 树的 `OffScreenRenderEnv` 多渲染一个 `backview` 相机，物体也多）。
+- 以上在定树前用只读源树跑。**定树后用副本（`--tree <主 worktree>/third_party/dyniSafety_libero`，`LIBERO_CONFIG_PATH=.../config/safelibero`）重跑 3 集**（`replay/mapped_official_*.json`、`summary_mapped_official.txt`）：stove 2/3、between 3/3；6 集的所有结果字段（成功步、各步误差、障碍物终点）与定树前**完全相同**，只有墙钟不同。
 
 结论：演示初始状态可以按关节名映射进 SafeLIBERO 场景，障碍物停远处不影响回放；回放失败来自演示本身的开环分叉，与场景替换无关。
 
@@ -186,12 +214,12 @@ eval done task_id=0 episodes=1 successes=0 dir=.../eval_out/eval/libero/safelibe
 | 上游 LIBERO 克隆 | 743 MB |
 | `_venv_mj237`（可删） | 37 MB |
 | 日志目录 | < 1 MB |
-| 参考树（未复制，只读） | 705 MB；若定用它并复制到 `/data0/tongbaoshun/benchmarks/libero/`，再加 705 MB |
+| SafeLIBERO 副本 `safelibero_aegis57b1aef/` | 705 MB（含 97 MB 的 `obstacle_objects.zip`，见“已知坑”11） |
 
 ## 已知坑
 
 1. **torch ≥ 2.6 读不了 LIBERO 的 `init_files`**：`benchmark/__init__.py` 里的 `torch.load(init_states_path)` 没传 `weights_only`，2.6 起默认 `True`，报 `Unsupported global: numpy.core.multiarray._reconstruct`。而 sm_120 需要 torch ≥ 2.7，两者没法用旧 torch 绕开。解法：启动时设 `TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1`（torch 会打一条 UserWarning），不改上游；只对本机可信的 `init_files` 用。H3 / R1-L 的启动脚本要带上它。
-2. **LIBERO 首次 import 会 `input()`**：配置文件不存在时 `libero/libero/__init__.py` 在 import 阶段交互提问，无人值守会卡住或 EOF。用 `LIBERO_CONFIG_PATH` 指向事先写好的配置（本机两份，见上）。参考树的默认目录是 `~/.safelibero`，不是 `~/.libero`。
+2. **LIBERO 首次 import 会 `input()`**：配置文件不存在时 `libero/libero/__init__.py` 在 import 阶段交互提问，无人值守会卡住或 EOF。用 `LIBERO_CONFIG_PATH` 指向事先写好的配置（本机两份，见上）。SafeLIBERO 树的默认目录是 `~/.safelibero`，不是 `~/.libero`。
 3. **`dynisafety` 的随机策略要 `requests`**：`policies/transports/http.py` 顶层 `import requests`，`pyproject` 没声明；缺了它所有适配器都注册失败，`eval` 只报 `policy/model 'random' is not registered. Available: (none)`，不说缺什么。另外策略 / 模型目录是按**当前目录**往上找 `configs/models` 的（`policies/registry.py:48-56`），要在仓库根目录下运行。
 4. **两个 `libero` 包不能同时装**：上游树和 SafeLIBERO 树的包名都是 `libero`，同一进程只能有一个；普通场景与 SafeLIBERO 场景要分进程跑，配置也要分开（本机两份 `LIBERO_CONFIG_PATH`）。
 5. **conda 配方装上了 numpy 2**：`environment/dynisafety-libero.yml` 只装 `requirements/libero.txt`，里面没限 numpy，解析出 2.2.6；后面装 robosuite / numba 也会再拉 numpy 2。所有 pip 都要带 `-c constraints.txt`（`numpy==1.26.4`）。
@@ -200,3 +228,4 @@ eval done task_id=0 episodes=1 successes=0 dir=.../eval_out/eval/libero/safelibe
 8. **EGL 设备**：与 robocasa 笔记“已知坑”5 相同，`MUJOCO_EGL_DEVICE_ID` 必须出现在 `CUDA_VISIBLE_DEVICES` 里，两个都设 2。进程退出时 robosuite 的 `MjRenderContext.__del__` 会打印 `EGLError` 异常栈（`Exception ignored in ...`），不影响结果。
 9. `gym` 0.25.2 每次 import 打印“Gym has been unmaintained...”，robosuite 打印“没有私有宏文件”的警告，都无影响。
 10. 评测 Manifest 的 `git_dirty: true` 来自主 worktree 里未跟踪的 `docs/researchProgress.md`，与本环境无关。
+11. **`assets/obstacle_objects.zip` 不是目录的重复**：没有任何文件引用它（运行时读的是 `assets/obstacle_objects/`），但逐文件对比，161 个文件里 152 个相同，3 个不同（`moka_pot_obstacle/moka_pot_handle.xml`、`moka_pot_obstacle.xml`、`moka_pot_small_obstacle.xml`），6 个只在 zip 里（`black_book_obstacle/`）。所以复制时保留了它（`copy/zip_vs_dir.txt`）。
