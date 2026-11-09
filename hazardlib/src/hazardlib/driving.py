@@ -147,15 +147,19 @@ class EpisodeSession:
     def run_episode(self, env: int, instance: Optional[HazardInstance], policy: Any, task_id: str,
                     layout_id: str, seed: int, horizon_s: float, controller: Any = None,
                     control_id: Optional[str] = None, record_trace: bool = False, stop_on_success: bool = False,
-                    measure_visibility: bool = False) -> EpisodeResult:
+                    measure_visibility: bool = False, task_entities: Optional[List[str]] = None,
+                    control_onset_s: Optional[float] = None) -> EpisodeResult:
         """``arm`` -> ``reset_episode`` -> control steps until ``horizon_s`` (or the first success with
-        ``stop_on_success``, or when ``controller.finished`` becomes true) -> ``end_episode``."""
+        ``stop_on_success``, or when ``controller.finished`` becomes true) -> ``end_episode``.
+        ``task_entities`` and ``control_onset_s`` are passed to ``runtime.arm`` unchanged (topple monitoring;
+        ``control_onset_s`` is the paired instance's nominal onset of a control episode, D12 a)."""
         controller = controller if controller is not None else PlainController()
         describe_policy(policy)
         if instance is None:
-            self.runtime.arm(env, None, control_id=control_id)
+            self.runtime.arm(env, None, task_entities=task_entities, control_id=control_id,
+                             control_onset_s=control_onset_s)
         else:
-            self.runtime.arm(env, instance)
+            self.runtime.arm(env, instance, task_entities=task_entities, control_onset_s=control_onset_s)
         self.host.reset_episode(env, task_id, layout_id, seed)
         policy.reset(task_id, layout_id, seed)
         controller.reset()
