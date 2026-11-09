@@ -3,7 +3,7 @@
 The suite is only as good as the defects it catches. Each FakeHost mutation (``fakehost.MUTATIONS``) must fail
 exactly the checks pinned in ``CAUGHT_BY``, each with status ``fail`` (a crash is not a catch), and the clean FakeHost
 must pass all of C1-C13. The test-local defects below (FakeHost subclasses and targets) cover host contract items
-the ten mutations do not touch; each must fail the checks named for it. Honest variants (no CCD, other gravity,
+the eleven mutations do not touch; each must fail the checks named for it. Honest variants (no CCD, other gravity,
 other time step, one environment, no held object) must pass. On hosts that declare statistical repro, C2 / C7 / C8 /
 C12 are judged against C8's per-kind bounds (D13 h): unverified while they are PLACEHOLDER, and the defects in
 ``STATISTICAL_DEFECTS`` must still fail under bounds the honest noisy host passes.
