@@ -1,6 +1,6 @@
 # T07 — 核心收尾：机器人几何 standoff、碰撞体路径、宿主注册回退（D15 a、b、e）
 
-起点分支：从 `hazard/integration` 新建 `hazard/T07`　依赖：T05-F、T06-F、`fix-hook-times` 已合并　需要仿真器：否　先读：T00；`00_paradigm.md` §5.2 与 §13 的 **D15（本任务的依据：a、b、e）**；`01_integration_rules.md` §2（BD 的 `robot_point_spacing_m`）、§3.1、§3.2（`robot_collision_points`）、§3.4、§5 的 C13；H1 汇报的 §1 “C13 失败分析”、§3.4 与“对契约的反馈”第 3–5 条。H1 汇报在未合并的分支上，用 `git show origin/hazard/H-calvin:docs/design/reports/H-calvin.md` 读，**不要合并该分支**。
+起点分支：从 `hazard/integration` 新建 `hazard/T07`　依赖：T05-F、T06-F、`fix-hook-times` 已合并　需要仿真器：否　先读：T00；`00_paradigm.md` §5.2 与 §13 的 **D15（本任务的依据：a、b、e）**；`01_integration_rules.md` §2（BD 的 `robot_point_spacing_m`）、§3.1、§3.2（`robot_collision_points`）、§3.4、§5 的 C13；H1 汇报的 §1 “C13 失败分析”、§3.4 与“对契约的反馈”第 3–5 条。H1 已于 2026-11-09 合并进 `hazard/integration`（`ca2c8fa`），汇报在 `docs/design/reports/H-calvin.md`。
 
 本任务**允许**改动 T01 的 `host.py`、`spec/benchmark_descriptor.py`，T05 的 `conformance/`（含 FakeHost），T06 的 `probe/`、`instantiate/`、`gates/g0.py`、`driving.py`（D15 批准的跨任务修改），只做下面列出的改动。
 
@@ -13,7 +13,7 @@
 1. **契约（D15 a）**
    - `RobotState` 增可选 `collision_body_quat`：N × 4，wxyz，与 `collision_body_pos` 一一对应；校验形状、有限、范数非零。
    - `OptionalHazardHost` 与 `OPTIONAL_METHODS` 增 `robot_collision_points(env) -> Dict[str, np.ndarray]`：机器人自身每个碰撞体（不含抓持物）在其刚体系下的表面采样点（M × 3），回合内不变，键与 `collision_body_names` 一致。宿主提供它而 `RobotState` 没给 `collision_body_quat` 时，核心报错，不静默退回。
-   - BD 增必填字段 `robot_point_spacing_m`（可为 `unknown`；数值时 > 0），进 BD 哈希，`tier()` 不变。`configs/hazard/bd/calvin.yaml` 补 `robot_point_spacing_m: unknown`，**加在文件末尾**，减少与 H1 分支的冲突；测试夹具与 FakeHost 的 BD 同步补上。`test_benchmark_descriptor.py` 只增加用例。
+   - BD 增必填字段 `robot_point_spacing_m`（可为 `unknown`；数值时 > 0），进 BD 哈希，`tier()` 不变。`configs/hazard/bd/calvin.yaml`（H1 补全的版本）补 `robot_point_spacing_m: unknown`，加在文件末尾；测试夹具与 FakeHost 的 BD 同步补上。`test_benchmark_descriptor.py` 只增加用例。
 
 2. **探针 trace 与 TaskContext（D15 a、b）**
    - 录制（`driving.py` 的 trace 步）：
@@ -92,7 +92,7 @@
 
 ## 验收标准（贴输出）
 
-1. `python -m pytest hazardlib -q` 在 `hz38`、`hz311` 全绿（`PYTHONPATH=<worktree>/hazardlib/src`；贴总数，对比 `docs/researchProgress.md` 里集成分支的基线）。
+1. `python -m pytest hazardlib -q` 在 `hz38`、`hz311` 全绿（`PYTHONPATH=<worktree>/hazardlib/src`；贴总数，对比集成分支 `ca2c8fa` 的基线：`hz38` 1388 passed、1 skipped，`hz311` 1389 passed）。
 2. `python -m hazardlib.conformance --host fake` 仍是 13 项 pass；“腕部”世界里，标量 standoff 的 C13 fall 失败、几何 standoff 通过（贴两次的 C13 行）。
 3. 全部变异体被抓到，含 `bad_geometry`。
 4. 无数值默认值、无仿真库 import、Python 3.8 兼容（既有卫生测试通过）。
@@ -101,7 +101,7 @@
 ## 不要做
 
 - 不改 `docs/design/00–03`、`src/dynisafety/`；
-- 不合并或改动 `hazard/H-calvin`（CALVIN 宿主接入几何是 H1-F 的事）；
+- 不改 `hazardlib/src/hazardhosts/calvin/`（CALVIN 宿主接入几何是 H1-F 的事）。例外：本任务的接口改动若让 CALVIN 宿主的 import 或测试失败，只做保持原行为的最小兼容修改，并在汇报里逐处列出；
 - 不实现真实宿主；
 - 不给 PLACEHOLDER 赋值；不改 `conformance.yaml` 的键与值；
 - 不为通过测试放宽阈值。
