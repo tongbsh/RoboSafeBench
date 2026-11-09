@@ -24,7 +24,7 @@
 | T04 运行时与 FakeHost | `prompts/T04_runtime_fakehost.md` | `hazard/integration` | — |
 | T05 一致性套件 | `prompts/T05_conformance.md` | `hazard/integration` | — |
 | T06 流水线 | `prompts/T06_pipeline.md` | `hazard/integration` | — |
-| E00 环境搭建 | `prompts/E00_env_bringup.md` | `claude/sweet-newton-2clmpw` | `BENCH` |
+| E00 环境搭建 | `prompts/E00_env_bringup.md` | `claude/sweet-newton-2clmpw`（E00(libero) 起：`hazard/integration`） | `BENCH` |
 | H1 CALVIN | `prompts/H00_host_template.md` + `prompts/H1_calvin.md` | `hazard/integration` | — |
 | H2 RoboCasa | `prompts/H00_host_template.md` + `prompts/H2_robocasa.md` | `hazard/integration` | — |
 | H3 LIBERO | `prompts/H00_host_template.md` + `prompts/H3_libero.md` | `hazard/integration` | — |
@@ -32,6 +32,8 @@
 | H5 RoboTwin | `prompts/H00_host_template.md` + `prompts/H5_robotwin.md` | `hazard/integration` | — |
 | H6 RoboDojo | `prompts/H00_host_template.md` + `prompts/H6_robodojo.md` | `hazard/integration` | — |
 | X1 策略矩阵 | `prompts/X1_policies.md` | `hazard/integration` | `BENCH` |
+| T07 核心收尾（D15 a、b、e） | `prompts/T07_followup.md` | `hazard/integration` | — |
+| R1 Run 阶段核心（D16 c） | `prompts/R1_run.md` | `hazard/integration` | — |
 
 所有任务都先读 `prompts/T00_shared_context.md`。
 

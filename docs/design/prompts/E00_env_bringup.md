@@ -25,9 +25,20 @@
 - 使用本仓库既有的 `dynisafety-robocasa`（`make install-robocasa` 或 `scripts/setup/install_robocasa.sh`，见 `docs/user/install.md`）。需要 `MUJOCO_GL=egl`。资产约 10 GB，**下载前先问用户**。
 - 烟雾测试：`dynisafety doctor --backend robocasa`；`dynisafety eval --backend robocasa --model random_mobile --suite robocasa_nav --level 0` 跑 1 个 episode；另外直接用 robocasa 的 API 构建一个原子操作任务（例如 `PickPlaceCounterToCabinet`，类名以源码为准），`reset` 后执行 20 步零动作，打印 `env.fixtures` 与 `env.objects` 的键。
 
-**libero**
-- 使用既有环境（README：`conda activate openvla-oft`；`make install-libero`；`pip install -e ".[libero]"`）。
-- 烟雾测试：`dynisafety doctor --backend libero`；`dynisafety sweep --suite smoke`（或 `--dry-run` 后单格 `eval`）。确认 SafeLIBERO 套件可用。
+**libero**（2026-11-09 改写，D16；起点分支 `hazard/integration`）
+- **现状（协调者核对）**：本机**没有** README 说的 `openvla-oft` / `dynisafety-libero` conda 环境；`third_party/dyniSafety_libero` 不存在，`external/simulators/dyniSafety_libero` 也不存在。已有、**只读不改**的参考：
+  - SafeLIBERO 原版树 `/data0/tongbaoshun/workspace/embodySafeAgent/vlsa-aegis/safelibero`（vlsa-aegis 仓库 `57b1aef`；有 `safelibero_{spatial,goal,object,long}` 的 BDDL、`init_files`、`assets/obstacle_objects`）；
+  - RLinf 的 venv（`/data0/tongbaoshun/workspace/RLinf/.venv`、`/home/tongbaoshun/venvs/rlinf-openpi-libero`：libero、robosuite 1.4.1、mujoco 3.8.1、torch 2.11.0+cu130），`~/.libero/config.yaml` 指向 RLinf venv 里的 libero；
+  - 官方演示 `/data0/dataset/LIBERO/{libero_spatial,libero_object,libero_goal,libero_10}`（hdf5，共 94 GB）。
+- **SafeLIBERO 树**：`scripts/setup/install_libero.sh` 优先用 DyniSafety 的 fork（带 `safelibero_*` BDDL、人手资产、障碍物资产），否则克隆上游 LIBERO（缺这些）。先在本机找 fork（`DYNISAFETY_LIBERO_SRC`、其他 workspace）；找不到时比较 vlsa-aegis 的 SafeLIBERO 树与仓库 `src/dynisafety/backends/libero` 所需的文件（BDDL、`hand_objects`、`obstacle_objects`、`backends/libero/assets/obstacle_pack_gso`），列出差异，**先问用户**再决定用哪棵树；不要从网上找来路不明的 fork。树放仓库外（如 `/data0/tongbaoshun/benchmarks/libero/`），`third_party/dyniSafety_libero` 用软链并加进 `.git/info/exclude`（与 robocasa 的做法相同）。
+- **环境**：按 `environment/dynisafety-libero.yml` 新建 `dynisafety-libero`（Python 3.10，`numpy<2`）。**注意 Blackwell sm_120**：配方里的 torch 2.4.1 cu124 不支持 sm_120（CALVIN、RoboCasa 都遇到过）。仿真与渲染不需要 GPU torch；若评测进程要在本进程里跑策略，需要支持 sm_120 的 torch（cu128 及以上），先核实 `requirements/libero.txt` 其余依赖能否共存，不能就让策略走独立环境 + 服务（`policies/transports`），写清楚选了哪条路。不要改 RLinf 的 venv。
+- **渲染**：`MUJOCO_GL=egl`，只用 GPU 2（`CUDA_VISIBLE_DEVICES=2`、`MUJOCO_EGL_DEVICE_ID=2`），`nvidia-smi` 核实。
+- **烟雾测试**：
+  1. `dynisafety doctor --backend libero`；`dynisafety eval --backend libero --model random --suite safelibero_spatial --level 0` 跑 1 个回合，确认 SafeLIBERO 场景可加载、L0 能跑完（产出与耗时贴进汇报）；
+  2. **演示回放**（D16 a 的前提）：对 `libero_spatial` 的 2 个任务各取 3 集演示，在**普通 LIBERO** 场景里按演示初始状态复位、开环执行演示动作，记录成功率与逐步状态误差（演示里存的 `states` 与回放所得之差，取末步与最大值）；
+  3. **同一初始状态放进 SafeLIBERO 场景**：同一任务的 SafeLIBERO 场景多了障碍物（可能还有人手）的自由度，演示的 `states` 不能直接设。查明两者状态向量的差别，按关节 / 刚体名映射把演示初始状态设进 SafeLIBERO 场景（障碍物停放在远处），开环回放同样 3 集，记录成功率与误差。做不到就如实写原因，这是 H3 的阻塞信息；
+  4. 记录：`control_freq`、物理步长、每个动作的子步数（从 robosuite 读出并实测），演示的集数与每集步数分布，演示里有没有 `model_file` / `init_state` / `ep_meta` 之类的字段。
+- 回放脚本放 `scratch/`，不进 git；数值与输出写进 env_notes 与汇报。
 
 **simplerenv**
 - 使用既有环境（`make install-simplerenv`）；烟雾测试：`dynisafety doctor --backend simplerenv`；`dynisafety eval --backend simplerenv --model random --suite bridge --level 0` 1 个 episode。
