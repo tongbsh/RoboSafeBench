@@ -12,6 +12,10 @@ World (one independent copy per environment index):
 * **scene**: an infinite table plane at ``table_height_m`` (reported as a support surface with the
   configured extent) and static task-object spheres. The first time a dynamic hazard hits a task object, its
   orientation is multiplied by the object's configured ``on_hit_rotation_wxyz`` (topple / yaw tests).
+* **robot geometry** (D15 a): with ``robot_point_spacing_m`` set, ``robot_collision_points`` samples the surface
+  of every robot sphere (held bodies excluded) at most that far apart (:func:`sphere_surface_points`, body frame =
+  the sphere centre, identity orientation) and ``robot_state`` reports identity ``collision_body_quat``. With
+  ``None`` the method is absent and the BD says ``robot_point_spacing_m: unknown`` (the scalar standoff branch).
 * **hazards**: spheres only (other shapes raise ``CapabilityError``). A parked hazard sits at
   ``park_pos_m``, is not rendered and touches nothing. A kinematic hazard stays where it was posed; overlaps
   are checked at the end of every physics step. A dynamic hazard flies ballistically under
@@ -39,7 +43,11 @@ Mutations (:data:`MUTATIONS`), one injected defect each, for the conformance sui
 ``park_interacts``            a parked hazard still collides and is still rendered (at the parking pose)
 ``oracle_depends_on_hazard``  ``task_success`` is false while any hazard is visible
 ``bad_standoff``              ``nominal_hit_instance`` aims the hazard centroid at the EEF reference point,
-                              ignoring the standoff ``r_hazard + eef_contact_radius_m`` (D1)
+                              ignoring the standoff (D1, D15 a)
+``bad_geometry``              ``robot_collision_points`` reports every sample shifted outward from its body origin
+                              by that body's radius (each sphere reported at twice its size, while the physics is
+                              unchanged): the geometric standoff is too large by ``r`` in every direction; needs
+                              ``robot_point_spacing_m`` (D15 a)
 ``hook_dependent_release``    ``release_to_physics`` ignores the given velocity and uses the last two posed
                               positions divided by the physics step
 ``post_impact_vn``            ``hazard_contacts`` returns the contacts one hook late
@@ -55,6 +63,7 @@ from ..host import (OPTIONAL_METHODS, CapabilityError, ContactObs, HazardHandle,
                     RobotState, Surface, TimeState)
 from ..kinematics.hit import FAMILY_FALL, build_hit_path
 from ..kinematics.path import SampledPath
+from ..kinematics.standoff import RobotGeometry, first_contact_along_normal
 from ..kinematics.subdivide import hook_times
 from ..semantics.events import classify_partner
 from ..spec.benchmark_descriptor import BenchmarkDescriptor
@@ -62,7 +71,7 @@ from ..spec.hazard_spec import AgentSpec
 from ..spec.instance import HazardInstance
 
 MUTATIONS = ("tunneling", "residual_velocity", "state_leak", "wrong_dt", "no_rollback", "park_interacts",
-             "oracle_depends_on_hazard", "bad_standoff", "hook_dependent_release", "post_impact_vn")
+             "oracle_depends_on_hazard", "bad_standoff", "hook_dependent_release", "post_impact_vn", "bad_geometry")
 ACTION_MODES = ("follow", "hold", "velocity")
 TABLE_NAME = "table"
 
@@ -82,6 +91,25 @@ def _quat_mul(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     w2, x2, y2, z2 = b
     return np.array([w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2, w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
                      w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2, w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2])
+
+
+def sphere_surface_points(radius_m: float, spacing_m: float) -> np.ndarray:
+    """Points on a sphere of ``radius_m`` around the origin, neighbours at most ``spacing_m`` apart along the
+    surface: an even number of latitude rings (so the equator and both poles are sampled) ``pi r / n_rings <=
+    spacing`` apart, each ring with a multiple of four points (so the +-x and +-y directions are sampled)."""
+    r = positive_float("radius_m", radius_m)
+    g = positive_float("spacing_m", spacing_m)
+    rings = 2 * int(np.ceil(np.pi * r / (2.0 * g)))
+    out = [(0.0, 0.0, r)]
+    for k in range(1, rings):
+        theta = np.pi * k / rings
+        count = 4 * int(np.ceil(2.0 * np.pi * r * np.sin(theta) / (4.0 * g)))
+        phi = 2.0 * np.pi * np.arange(count) / count
+        ring = np.stack([r * np.sin(theta) * np.cos(phi), r * np.sin(theta) * np.sin(phi),
+                         np.full(count, r * np.cos(theta))], axis=1)
+        out.extend(tuple(p) for p in ring)
+    out.append((0.0, 0.0, -r))
+    return np.array(out, dtype=np.float64)
 
 
 def _xy(name: str, value: Any) -> Tuple[float, float]:
@@ -172,6 +200,7 @@ class FakeWorldConfig:
     robot_include: Tuple[str, ...]
     robot_exclude: Tuple[str, ...]
     eef_contact_radius_m: float
+    robot_point_spacing_m: Optional[float]
     image_px: int
     image_min_xy_m: Tuple[float, float]
     image_max_xy_m: Tuple[float, float]
@@ -201,6 +230,8 @@ class FakeWorldConfig:
         set_("robot_include", tuple(self.robot_include))
         set_("robot_exclude", tuple(self.robot_exclude))
         set_("eef_contact_radius_m", non_negative_float("eef_contact_radius_m", self.eef_contact_radius_m))
+        if self.robot_point_spacing_m is not None:
+            set_("robot_point_spacing_m", positive_float("robot_point_spacing_m", self.robot_point_spacing_m))
         set_("image_px", positive_int("image_px", self.image_px))
         set_("max_contacts_per_step", positive_int("max_contacts_per_step", self.max_contacts_per_step))
         if not self.tasks:
@@ -322,7 +353,8 @@ def _sphere_entry(pos: np.ndarray, vel: np.ndarray, half_acc: np.ndarray, center
 class FakeHost:
     """See the module docstring. ``disable`` names optional methods to remove (degradation tests);
     ``ccd=False`` turns continuous collision detection off honestly (the BD then says ``hazard_ccd: false``);
-    ``report_body_velocities=False`` leaves ``RobotState.collision_body_lin_vel_mps`` empty."""
+    ``report_body_velocities=False`` leaves ``RobotState.collision_body_lin_vel_mps`` empty. Without
+    ``config.robot_point_spacing_m`` the optional ``robot_collision_points`` is absent as if disabled."""
 
     def __init__(self, config: FakeWorldConfig, mutations: Sequence[str] = (), disable: Sequence[str] = (),
                  ccd: bool = True, report_body_velocities: bool = True) -> None:
@@ -334,6 +366,10 @@ class FakeHost:
         not_optional = sorted(set(disable) - set(OPTIONAL_METHODS))
         if not_optional:
             raise ValueError("only optional methods can be disabled, not %s" % not_optional)
+        if config.robot_point_spacing_m is None:
+            disable = tuple(disable) + ("robot_collision_points",)
+        if "bad_geometry" in mutations and "robot_collision_points" in disable:
+            raise ValueError("the mutation bad_geometry needs robot geometry (robot_point_spacing_m)")
         self.config = config
         self.mutations = frozenset(mutations)
         self.ccd = bool(ccd)
@@ -369,6 +405,7 @@ class FakeHost:
             "contact_tier": "A", "distance": "geometric" if self._enabled["min_distance"] else "surrogate",
             "robot_contact_bodies": {"include": list(cfg.robot_include), "exclude": list(cfg.robot_exclude)},
             "eef_contact_radius_m": cfg.eef_contact_radius_m,
+            "robot_point_spacing_m": cfg.robot_point_spacing_m if self._enabled["robot_collision_points"] else "unknown",
             "state_access": {"eef": True, "gripper": False, "base": False, "objects": True, "fixtures": True,
                              "support_surfaces": self._enabled["support_surfaces"]},
             "task_entity_source": "oracle_config",
@@ -440,10 +477,12 @@ class FakeHost:
         held_names = None
         if cfg.report_held_object_bodies and cfg.held_object is not None:
             held_names = [b.name for b in cfg.held_bodies]
+        quats = [_IDENTITY_QUAT] * len(bodies) if self._enabled["robot_collision_points"] else None
         return RobotState(eef_pose=Pose(world.eef.copy(), _IDENTITY_QUAT), eef_lin_vel_mps=world.eef_vel.copy(),
                           collision_body_pos=[world.eef + np.array(b.center_m) for b in bodies],
                           held_object=cfg.held_object, collision_body_names=[b.name for b in bodies],
-                          collision_body_lin_vel_mps=velocities, held_object_bodies=held_names)
+                          collision_body_lin_vel_mps=velocities, held_object_bodies=held_names,
+                          collision_body_quat=quats)
 
     def hazard_state(self, h: HazardHandle) -> HazardState:
         hz = self._hazard(h)
@@ -517,6 +556,11 @@ class FakeHost:
             return False
         lo, hi = self.config.image_min_xy_m, self.config.image_max_xy_m
         return all(lo[i] - hz.radius <= hz.pos[i] <= hi[i] + hz.radius for i in range(2))
+
+    def robot_collision_points(self, env: int) -> Dict[str, np.ndarray]:
+        """Body-frame surface samples of every robot sphere (not the held bodies), see the module docstring."""
+        self._world(env)
+        return {name: points.copy() for name, points in self._geometry_points().items()}
 
     # ---------------------------------------------------------------------------------- EpisodeDriver
 
@@ -613,17 +657,36 @@ class FakeHost:
                              t_hit_s: float, tau_s: float, params: Mapping[str, Any],
                              keyframe_dt_s: float) -> HazardInstance:
         """A nominal-collision instance on the task's nominal EEF path (D1). The centroid target is the EEF
-        reference point plus ``standoff = r_hazard + eef_contact_radius_m`` along the approach normal
-        (``+z`` for a fall, ``-direction`` otherwise); ``bad_standoff`` drops the standoff. Keyframes sample
-        the solved path every ``keyframe_dt_s``; orientation stays the identity."""
+        reference point plus the standoff along the approach normal (``+z`` for a fall, ``-direction``
+        otherwise): with robot geometry the first contact along the normal with the samples of the robot's own
+        spheres (``robot_link`` per the BD rules) placed at ``t_hit`` (D15 a; none -> ``ValueError``), else
+        ``r_hazard + eef_contact_radius_m``; ``bad_standoff`` drops the standoff. Keyframes sample the solved path
+        every ``keyframe_dt_s``; orientation stays the identity."""
         nominal = self.nominal_eef_path(task_id)
         radius = self.sphere_radius(agent)
         if family == FAMILY_FALL:
             normal = np.array([0.0, 0.0, 1.0])
         else:
             normal = -unit_vec3("params.direction", params["direction"])
-        standoff = 0.0 if "bad_standoff" in self.mutations else radius + self.config.eef_contact_radius_m
-        hit_point = nominal.pos(t_hit_s) + standoff * normal
+        eef = nominal.pos(t_hit_s)
+        source, body, spacing = "eef_contact_radius", None, None
+        if self._enabled["robot_collision_points"]:
+            spacing = self.config.robot_point_spacing_m
+            geometry = RobotGeometry(self._geometry_points(), spacing)
+            names = [b.name for b in self.config.robot_bodies if self._classify(b.name) is PartnerClass.ROBOT_LINK]
+            points, owners = geometry.restricted(names).world_points(
+                {b.name: eef + np.array(b.center_m) for b in self.config.robot_bodies if b.name in names},
+                {name: _IDENTITY_QUAT for name in names})
+            contact = first_contact_along_normal(agent, eef, normal, points, owners)
+            if contact is None:
+                raise ValueError("no_robot_contact_along_normal: a hazard approaching along %s misses every robot "
+                                 "sample point at t_hit=%r" % (normal.tolist(), t_hit_s))
+            standoff, source, body = contact.standoff_m, "robot_geometry", contact.body
+        else:
+            standoff = radius + self.config.eef_contact_radius_m
+        if "bad_standoff" in self.mutations:
+            standoff = 0.0
+        hit_point = eef + standoff * normal
         plan = build_hit_path(family, nominal, t_hit_s, hit_point, tau_s, params)
         times = hook_times(plan.path.t_start_s, plan.path.t_end_s, keyframe_dt_s)
         data = {
@@ -634,7 +697,8 @@ class FakeHost:
             "onset_time_s": plan.onset_time_s, "release_time_s": plan.release_time_s,
             "release_velocity": {"lin_mps": plan.release_velocity.tolist(), "ang_radps": [0.0, 0.0, 0.0]},
             "certificate": None,
-            "provenance": {"builder": "FakeHost.nominal_hit_instance", "task_id": task_id, "standoff_m": standoff},
+            "provenance": {"builder": "FakeHost.nominal_hit_instance", "task_id": task_id, "standoff_m": standoff,
+                           "standoff_source": source, "standoff_body": body, "robot_point_spacing_m": spacing},
         }
         return HazardInstance.from_dict(data)
 
@@ -658,6 +722,13 @@ class FakeHost:
         if h.key not in hazards:
             raise ValueError("hazard %r is not allocated in env %d" % (h.key, h.env))
         return hazards[h.key]
+
+    def _geometry_points(self) -> Dict[str, np.ndarray]:
+        spacing = self.config.robot_point_spacing_m
+        if spacing is None:
+            raise CapabilityError("this FakeHost world has no robot geometry (robot_point_spacing_m is None)")
+        scale = 2.0 if "bad_geometry" in self.mutations else 1.0
+        return {b.name: scale * sphere_surface_points(b.radius_m, spacing) for b in self.config.robot_bodies}
 
     def _classify(self, name: str) -> PartnerClass:
         cfg = self.config

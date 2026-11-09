@@ -82,7 +82,7 @@ def world_config(**overrides):
                       FakeSphere("robot0_camera", (0.0, 0.15, 0.1), 0.02)),
         held_object=None, held_bodies=(), report_held_object_bodies=True,
         robot_include=("prefix:robot0_", "held_object"), robot_exclude=("substr:camera",),
-        eef_contact_radius_m=HAND_R, image_px=32, image_min_xy_m=(-0.5, -0.5), image_max_xy_m=(0.5, 0.5),
+        eef_contact_radius_m=HAND_R, robot_point_spacing_m=None, image_px=32, image_min_xy_m=(-0.5, -0.5), image_max_xy_m=(0.5, 0.5),
         max_contacts_per_step=8, tasks=tasks())
     values.update(overrides)
     return FakeWorldConfig(**values)
@@ -268,14 +268,16 @@ def assemble_conformance_config_dir(target):
     return target
 
 
-def conformance_target(config_dir, decel_mps2=None, ccd=True):
+def conformance_target(config_dir, decel_mps2=None, ccd=True, robot_point_spacing_m=None):
     """The suite's FakeHost world (``fakehost.yaml``: the suite's scenario needs its tasks and geometry) on this
     module's host class and timebase, so that its BD, hence ``bd_hash``, equals that of
-    ``make_host(decel_mps2, ccd=ccd)``. The BD records the timebase, gravity, CCD, environments, contact-body
-    rules, EEF contact radius, state access and optional methods, not the tasks or the scene geometry."""
+    ``make_host(decel_mps2, ccd=ccd, robot_point_spacing_m=...)``. The BD records the timebase, gravity, CCD,
+    environments, contact-body rules, EEF contact radius, robot point spacing (D15 a), state access and optional
+    methods, not the tasks or the scene geometry."""
     cls, kwargs = (GripperHost, {}) if decel_mps2 is None else (BrakingHost, {"decel_mps2": decel_mps2})
-    return make_fake_target(ccd=ccd, world_overrides={"substeps_per_action": SUBSTEPS}, host_cls=cls,
-                            host_kwargs=kwargs, config_dir=config_dir)
+    overrides = {"substeps_per_action": SUBSTEPS, "robot_point_spacing_m": robot_point_spacing_m}
+    return make_fake_target(ccd=ccd, world_overrides=overrides, host_cls=cls, host_kwargs=kwargs,
+                            config_dir=config_dir)
 
 
 def conformance_report(config_dir, **target):

@@ -74,7 +74,7 @@ def world_config(**overrides):
                       FakeSphere("robot0_camera", (0.0, 0.15, 0.1), 0.02)),
         held_object=None, held_bodies=(), report_held_object_bodies=True,
         robot_include=("prefix:robot0_", "held_object"), robot_exclude=("substr:camera",),
-        eef_contact_radius_m=HAND_R, image_px=32, image_min_xy_m=(-0.5, -0.5), image_max_xy_m=(0.5, 0.5),
+        eef_contact_radius_m=HAND_R, robot_point_spacing_m=0.005, image_px=32, image_min_xy_m=(-0.5, -0.5), image_max_xy_m=(0.5, 0.5),
         max_contacts_per_step=8, tasks=tasks())
     values.update(overrides)
     return FakeWorldConfig(**values)

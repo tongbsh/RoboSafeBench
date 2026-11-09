@@ -1,7 +1,10 @@
-"""C13: nominal hit timing (D1). The robot replays the scripted motion; hazards built with ``build_hit_path`` on the
-known nominal EEF path, with ``standoff = r_hazard + eef_contact_radius_m``, must make their first official contact
-within ``hit_time_abs_tol_s`` of the nominal ``t_hit`` (residuals reported). Instances come from the suite's own D1
-builder and, when the target provides it, from the instance builder used on this host
+"""C13: nominal hit timing (D1, D15 a). The robot replays the scripted motion; hazards built with ``build_hit_path`` on
+the known nominal EEF path, with the D15 a standoff, must make their first official contact within
+``hit_time_abs_tol_s`` of the nominal ``t_hit`` (residuals reported). The standoff: when the host offers robot geometry
+(``robot_collision_points`` and a numeric BD ``robot_point_spacing_m``), the first contact along the approach normal
+with the host's samples of the robot's own bodies (``robot_link`` per the BD rules), placed with the body poses
+recorded in the first replay at ``t_hit``; otherwise ``r_hazard + eef_contact_radius_m``. Instances come from the
+suite's own builder and, when the target provides it, from the instance builder used on this host
 (``ConformanceTarget.build_hit_instance``).
 
 The motion must be repeatable: two replays are compared first; if they differ by more than
@@ -11,9 +14,11 @@ physics step of the host (01 §5); a smaller configured value fails the check.
 """
 import numpy as np
 
-from hazardlib.conformance.harness import build_nominal_hit_instance
+from hazardlib.conformance.harness import RobotAtHit, build_nominal_hit_instance
 from hazardlib.conformance.suite import Check
-from hazardlib.host import PartnerClass
+from hazardlib.host import PartnerClass, robot_geometry_offered
+from hazardlib.kinematics.standoff import RobotGeometry
+from hazardlib.semantics import EventKind, classify_partner
 from hazardlib.kinematics.hit import FAMILY_FALL, FAMILY_REACH, FAMILY_SLIDE
 from hazardlib.kinematics.path import SampledPath
 
@@ -38,10 +43,29 @@ def _params(ctx, family):
     raise ValueError("c13_nominal_hit.families: unsupported family %r" % (family,))
 
 
+def _first_partner(events):
+    """Name of the robot-side partner of the first official (dynamic) contact event, if any."""
+    official = [e for e in events or [] if e.kind is EventKind.DYNAMIC and e.partner_class in ROBOT_SIDE]
+    return min(official, key=lambda e: e.time_s).partner_name if official else None
+
+
 def _trace(probe, run):
     times, pos, _ = probe.robot_trace(run)
     begin = run.begin_scene["eef"]
     return np.concatenate([[0.0], times]), np.vstack([begin[None, :], pos])
+
+
+def _robot_at_hit(ctx, probe, run_, env):
+    """The host's robot geometry with the body poses of ``run_`` (D15 a), or ``None`` without geometry."""
+    if not robot_geometry_offered(ctx.host, ctx.bd):
+        return None
+    rules = ctx.bd.robot_contact_bodies
+    points = ctx.host.robot_collision_points(env)
+    own = sorted(n for n in points
+                 if classify_partner(n, list(rules.include), list(rules.exclude), [], []) is PartnerClass.ROBOT_LINK)
+    ctx.require(bool(own), "robot_collision_points names no robot_link body (got %s)" % sorted(points))
+    geometry = RobotGeometry({n: points[n] for n in own}, ctx.bd.robot_point_spacing_m)
+    return RobotAtHit(geometry, probe.body_pose_paths(run_, own))
 
 
 def run(ctx):
@@ -76,8 +100,13 @@ def run(ctx):
         nominal = SampledPath(traces[0][0], traces[0][1], None)
         ctx.record("nominal_path_source", "recorded EEF trace of the first replay")
 
+    robot = _robot_at_hit(ctx, probe, replays[0], env)
+    ctx.record("standoff_source", "eef_contact_radius" if robot is None else "robot_geometry")
+    if robot is not None:
+        ctx.record("robot_geometry", {"bodies": sorted(robot.geometry.points), "spacing_m": robot.geometry.spacing_m,
+                                      "points": sum(len(p) for p in robot.geometry.points.values())})
     builders = [("suite", lambda **kw: build_nominal_hit_instance(
-        nominal_eef_path=nominal, eef_contact_radius_m=ctx.bd.eef_contact_radius_m, **kw))]
+        nominal_eef_path=nominal, eef_contact_radius_m=ctx.bd.eef_contact_radius_m, robot=robot, **kw))]
     if target.build_hit_instance is not None:
         builders.append(("target", target.build_hit_instance))
     else:
@@ -98,21 +127,25 @@ def run(ctx):
                                 "first_official_contact_t_s": first, "partner_class": log.partner_class,
                                 "release_kind": (run_.info["release"] or {}).get("kind"),
                                 "kinematic_overlaps": log.kinematic_overlap_count,
-                                "standoff_m": instance.provenance.get("standoff_m")}
+                                "standoff_m": instance.provenance.get("standoff_m"),
+                                "standoff_source": instance.provenance.get("standoff_source"),
+                                "standoff_body": instance.provenance.get("standoff_body"),
+                                "first_official_partner": _first_partner(run_.events)}
             if not ctx.expect(first is not None, "%s: no official contact (nominal hit at %.4f s)"
                               % (label, instance.nominal_hit_time_s)):
                 continue
             ctx.expect(log.partner_class in ROBOT_SIDE, "%s: first official partner %r" % (label, log.partner_class))
             ctx.expect(abs(residual) < tol, "%s: first official contact %.5f s, nominal t_hit %.5f s, residual %+.5f s "
-                                            "(|.| >= %r): re-measure eef_contact_radius_m or fix the builder's "
-                                            "standoff, do not widen the tolerance"
+                                            "(|.| >= %r): re-measure the robot geometry (robot_collision_points) "
+                                            "or eef_contact_radius_m, do not widen the tolerance"
                        % (label, first, instance.nominal_hit_time_s, residual, tol))
     ctx.record("hits", residuals)
 
 
 CHECK = Check("C13", "nominal hit timing",
-              "on a repeatable scripted motion, hazards built on the nominal EEF path with the D1 standoff first "
-              "touch the robot within hit_time_abs_tol_s of t_hit (suite builder and the host's builder)", run)
+              "on a repeatable scripted motion, hazards built on the nominal EEF path with the D15 a standoff (robot "
+              "geometry, else r_hazard + eef_contact_radius_m) first touch the robot within hit_time_abs_tol_s of "
+              "t_hit (suite builder and the host's builder)", run)
 
 
 def test_c13_nominal_hit(conformance):

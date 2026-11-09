@@ -149,9 +149,10 @@ def test_bd_is_complete_and_tier_a():
 # ------------------------------------------------------------------------------------------- mutations
 
 def test_mutation_list_is_the_t04_list():
+    # the T04 list plus T07's bad_geometry (D15 a)
     assert set(MUTATIONS) == {"tunneling", "residual_velocity", "state_leak", "wrong_dt", "no_rollback",
                               "park_interacts", "oracle_depends_on_hazard", "bad_standoff",
-                              "hook_dependent_release", "post_impact_vn"}
+                              "hook_dependent_release", "post_impact_vn", "bad_geometry"}
 
 
 def test_tunneling_steps_over_the_hand_but_declares_ccd():

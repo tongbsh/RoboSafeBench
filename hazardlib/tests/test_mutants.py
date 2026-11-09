@@ -45,12 +45,13 @@ CAUGHT_BY = {
     "bad_standoff": ("C13",),
     "hook_dependent_release": ("C3", "C4", "C5", "C6"),
     "post_impact_vn": ("C3", "C4", "C6", "C11"),
+    "bad_geometry": ("C13",),
 }
 # mutation -> the check of 01 §5 whose claim the defect breaks (must be among the catches)
 INTENDED = {
     "tunneling": "C3", "residual_velocity": "C3", "state_leak": "C2", "wrong_dt": "C1", "no_rollback": "C3",
     "park_interacts": "C2", "oracle_depends_on_hazard": "C7", "bad_standoff": "C13",
-    "hook_dependent_release": "C5", "post_impact_vn": "C6",
+    "hook_dependent_release": "C5", "post_impact_vn": "C6", "bad_geometry": "C13",
 }
 
 
@@ -815,3 +816,73 @@ def test_running_the_suite_loads_no_simulator_or_dynisafety_module():
     result = _python(["-c", code])
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "[]"
+
+
+# ------------------------------------------------------------------------ T07: robot geometry (D15 a)
+
+def _c13(report):
+    return [c for c in report["checks"] if c["id"] == "C13"][0]
+
+
+@functools.lru_cache(maxsize=None)
+def _wrist_report(geometry):
+    return run_suite(SuiteSession(resolve_target("fake_wrist" if geometry else "fake_wrist_scalar")))
+
+
+def test_the_wrist_world_passes_every_check_with_robot_geometry():
+    report = _wrist_report(True)
+    assert _statuses(report) == {cid: "pass" for cid in CHECK_IDS}, [
+        (c["id"], c["reason"]) for c in report["checks"] if c["status"] != "pass"]
+    c13 = _c13(report)
+    assert c13["measured"]["standoff_source"] == "robot_geometry"
+    assert "robot0_wrist" in c13["measured"]["robot_geometry"]["bodies"]
+    hits = c13["measured"]["hits"]
+    for label in ("suite/intrusion.fall", "target/intrusion.fall"):
+        assert hits[label]["standoff_source"] == "robot_geometry"
+        assert hits[label]["standoff_body"] == hits[label]["first_official_partner"] == "robot0_wrist"
+    for label, hit in sorted(hits.items()):
+        print("wrist/geometry %-22s residual %+.6f s standoff %.6f m body %s" % (
+            label, hit["residual_s"], hit["standoff_m"], hit["standoff_body"]))
+
+
+def test_the_wrist_world_fails_c13_fall_with_the_scalar_standoff():
+    """H1's failure on FakeHost: the scalar standoff puts the hazard 0.05 m above the EEF, but it meets the wrist
+    first; slides and reaches at hand height are unaffected."""
+    report = _wrist_report(False)
+    statuses = _statuses(report)
+    assert {cid for cid, s in statuses.items() if s != "pass"} == {"C13"} and statuses["C13"] == "fail"
+    c13 = _c13(report)
+    assert c13["measured"]["standoff_source"] == "eef_contact_radius"
+    tol = ConformanceConfig.load().number("c13_nominal_hit", "hit_time_abs_tol_s")
+    hits = c13["measured"]["hits"]
+    for label, hit in sorted(hits.items()):
+        print("wrist/scalar   %-22s residual %+.6f s standoff %.6f m first partner %s" % (
+            label, hit["residual_s"], hit["standoff_m"], hit["first_official_partner"]))
+        if label.endswith("fall"):
+            assert hit["residual_s"] < -tol and hit["first_official_partner"] == "robot0_wrist"
+        else:
+            assert abs(hit["residual_s"]) < tol
+    assert "re-measure the robot geometry (robot_collision_points) or eef_contact_radius_m" in c13["reason"]
+    assert "intrusion.fall" in c13["reason"] and "intrusion.slide" not in c13["reason"]
+
+
+def test_bad_geometry_inflates_the_standoff_in_every_family():
+    hits = _c13(_report("bad_geometry"))["measured"]["hits"]
+    clean = _c13(_report("clean"))["measured"]["hits"]
+    tol = ConformanceConfig.load().number("c13_nominal_hit", "hit_time_abs_tol_s")
+    for label, hit in hits.items():
+        assert hit["standoff_m"] == pytest.approx(clean[label]["standoff_m"] + 0.03, abs=1e-12)  # hand radius
+        assert hit["residual_s"] > tol, label
+
+
+def test_bad_geometry_needs_robot_geometry():
+    with pytest.raises(ValueError, match="bad_geometry needs robot geometry"):
+        make_fake_target(("bad_geometry",), world_overrides={"robot_point_spacing_m": None})
+
+
+def test_the_clean_fakehost_reports_geometric_standoffs():
+    c13 = _c13(_report("clean"))
+    assert c13["measured"]["standoff_source"] == "robot_geometry"
+    assert sorted(c13["measured"]["robot_geometry"]["bodies"]) == ["robot0_hand", "robot0_link"]  # camera excluded
+    for hit in c13["measured"]["hits"].values():
+        assert hit["standoff_source"] == "robot_geometry" and hit["standoff_body"] == "robot0_hand"

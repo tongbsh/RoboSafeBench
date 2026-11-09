@@ -5,6 +5,11 @@
 honest ``ccd=False``, world overrides (e.g. another gravity) or a FakeHost subclass (test-local defects in
 ``hazardlib/tests/test_mutants.py``). The registry entry ``fake`` is the clean host.
 
+``wrist=True`` adds the ``wrist_world`` bodies of fakehost.yaml (T07, D15 a): a wrist sphere above the EEF that a
+hazard falling onto the EEF meets first, as on H1's Panda gripper. The registry entries ``fake_wrist`` (robot
+geometry, C13 fall passes) and ``fake_wrist_scalar`` (``robot_point_spacing_m: None``, the scalar standoff
+``r_hazard + eef_contact_radius_m``, C13 fall fails) reproduce H1's C13 failure and its fix.
+
 FakeHost has no engine faults, so ``inject_engine_fault`` plays the host's fault detector: it reports the fault
 through the installed hooks (``report_instability``) at the position of a scene body, or of the given hazard. On
 FakeHost, C11 therefore checks the mapping path (hook forwarding, attribution, denominator), not detection.
@@ -63,18 +68,26 @@ def fake_scenario(data: Mapping[str, Any]) -> Scenario:
 
 def load_fakehost_config(config_dir: Optional[Union[str, Path]] = None) -> Dict[str, Any]:
     data = load_config(FAKEHOST_CONFIG, strict=True, config_dir=config_dir)
-    for key in ("adapter_version", "world", "scenario"):
+    for key in ("adapter_version", "world", "scenario", "wrist_world"):
         if not isinstance(data, Mapping) or key not in data:
             raise ConfigError("fakehost.yaml needs the top-level key %r" % key)
     return dict(data)
 
 
+def wrist_world_overrides(data: Mapping[str, Any]) -> Dict[str, Any]:
+    """``world_overrides`` of the wrist world: the robot bodies of ``world`` plus ``wrist_world.extra_robot_bodies``."""
+    bodies = list(data["world"]["robot_bodies"]) + list(data["wrist_world"]["extra_robot_bodies"])
+    return {"robot_bodies": tuple(_sphere(b) for b in bodies)}
+
+
 def make_fake_target(mutations: Sequence[str] = (), ccd: bool = True,
                      world_overrides: Optional[Mapping[str, Any]] = None, host_cls: Optional[type] = None,
                      host_kwargs: Optional[Mapping[str, Any]] = None, name: str = "fake",
-                     config_dir: Optional[Union[str, Path]] = None) -> ConformanceTarget:
+                     config_dir: Optional[Union[str, Path]] = None, wrist: bool = False) -> ConformanceTarget:
     data = load_fakehost_config(config_dir)
-    world = fake_world_config(data["world"], world_overrides)
+    overrides = dict(wrist_world_overrides(data)) if wrist else {}
+    overrides.update(dict(world_overrides or {}))
+    world = fake_world_config(data["world"], overrides)
     cls = FakeHost if host_cls is None else host_cls
     if not (isinstance(cls, type) and issubclass(cls, FakeHost)):
         raise TypeError("host_cls must be FakeHost or a subclass, got %r" % (cls,))
@@ -100,10 +113,22 @@ def make_fake_target(mutations: Sequence[str] = (), ccd: bool = True,
                                      entity_pos=host.hazard_state(hazard).pos)
 
     tag = "+".join(sorted(mutations)) if mutations else "clean"
+    if wrist:
+        tag += "/wrist"
     return ConformanceTarget(name=name, host=host, adapter_version="%s/%s" % (data["adapter_version"], tag),
                              scenario=scenario, motion_action=lambda t: FakeAction.follow(),
                              nominal_eef_path=host.nominal_eef_path(motion_task),
                              build_hit_instance=build_hit_instance, inject_engine_fault=inject_engine_fault)
 
 
+def make_fake_wrist_target() -> ConformanceTarget:
+    return make_fake_target(name="fake_wrist", wrist=True)
+
+
+def make_fake_wrist_scalar_target() -> ConformanceTarget:
+    return make_fake_target(name="fake_wrist_scalar", wrist=True, world_overrides={"robot_point_spacing_m": None})
+
+
 register_host("fake", make_fake_target)
+register_host("fake_wrist", make_fake_wrist_target)
+register_host("fake_wrist_scalar", make_fake_wrist_scalar_target)
