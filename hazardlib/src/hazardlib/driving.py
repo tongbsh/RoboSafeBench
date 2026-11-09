@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
 
 import numpy as np
 
-from .host import DRIVER_METHODS, PartnerClass, require_methods
+from .host import DRIVER_METHODS, PartnerClass, require_body_quats, require_methods, robot_geometry_offered
 from .runtime import KINEMATIC, RELEASED, HazardRuntime, Provenance, RuntimeConfig
 from .semantics import ContactEvent, EventKind, HazardEventLog, classify_partner
 from .spec.instance import HazardInstance
@@ -114,20 +114,57 @@ class EpisodeSession:
         info = self.runtime.episode_info(env)
         return None if info is None else info["phase"]
 
-    def _robot_side_bodies(self, robot: Any) -> Optional[Dict[str, List[float]]]:
-        if robot.collision_body_names is None:
+    def geometry_offered(self) -> bool:
+        """Whether the host offers robot geometry (``robot_collision_points`` and a numeric BD
+        ``robot_point_spacing_m``, D15 a); a mismatch between the two is a ``CapabilityError``."""
+        return robot_geometry_offered(self.host, self.runtime.bd)
+
+    def robot_geometry(self, env: int) -> Optional[Dict[str, Any]]:
+        """The trace header's ``robot_geometry`` (D15 a): ``{"spacing_m", "points"}`` with the body-frame samples
+        of the bodies the BD rules classify as ``robot_link``, or ``None`` when the host offers no geometry."""
+        if not self.geometry_offered():
             return None
+        rules = self.runtime.bd.robot_contact_bodies
+        points = self.host.robot_collision_points(env)
+        own = {}
+        for name in sorted(points):
+            if classify_partner(name, rules.include, rules.exclude, [], []) is PartnerClass.ROBOT_LINK:
+                own[name] = np.asarray(points[name], dtype=np.float64).tolist()
+        return {"spacing_m": float(self.runtime.bd.robot_point_spacing_m), "points": own}
+
+    def _robot_bodies(self, robot: Any) -> Dict[str, Any]:
+        """Trace fields of the collision bodies (D15 b): ``robot_bodies`` holds the robot's own bodies only
+        (``robot_link`` per the BD rules, never the held object or its ``held_object_bodies``),
+        ``robot_body_quats`` their orientations when the host reports ``collision_body_quat`` (a host with
+        robot geometry must), ``held_object_bodies_pos`` the held object's bodies (``None`` when nothing is
+        held)."""
+        out = {"robot_bodies": None, "robot_body_quats": None,
+               "held_object_bodies_pos": None}  # type: Dict[str, Any]
+        if self.geometry_offered():
+            require_body_quats(robot, self.host)
+        if robot.collision_body_names is None:
+            return out
         held = list(robot.held_object_bodies) if robot.held_object_bodies is not None else (
             [] if robot.held_object is None else [robot.held_object])
-        bodies = self.runtime.bd.robot_contact_bodies
-        out = {}
-        for name, pos in zip(robot.collision_body_names, robot.collision_body_pos):
-            if classify_partner(name, bodies.include, bodies.exclude, held, []) in _ROBOT_SIDE:
-                out[name] = [float(v) for v in pos]
+        rules = self.runtime.bd.robot_contact_bodies
+        quats = robot.collision_body_quat
+        own, own_quats, held_pos = {}, {}, {}  # type: Dict[str, List[float]], Dict[str, List[float]], Dict[str, List[float]]
+        for i, (name, pos) in enumerate(zip(robot.collision_body_names, robot.collision_body_pos)):
+            kind = classify_partner(name, rules.include, rules.exclude, held, [])
+            if kind is PartnerClass.ROBOT_LINK:
+                own[name] = [float(v) for v in pos]
+                if quats is not None:
+                    own_quats[name] = [float(v) for v in quats[i]]
+            elif kind is PartnerClass.HELD_OBJECT:
+                held_pos[name] = [float(v) for v in pos]
+        out["robot_bodies"] = own
+        out["robot_body_quats"] = own_quats if quats is not None else None
+        out["held_object_bodies_pos"] = held_pos if robot.held_object is not None else None
         return out
 
     def _trace_step(self, env: int, t: float, robot: Any, in_contact: bool, phase: Optional[str]) -> Dict[str, Any]:
         poses = self.host.object_poses(env)
+        bodies = self._robot_bodies(robot)
         return {
             "t_s": float(t),
             "eef_pos": [float(v) for v in robot.eef_pose.pos],
@@ -135,7 +172,9 @@ class EpisodeSession:
             "eef_lin_vel_mps": [float(v) for v in robot.eef_lin_vel_mps],
             "gripper": robot.gripper_opening_m,
             "held_object": robot.held_object,
-            "robot_bodies": self._robot_side_bodies(robot),
+            "robot_bodies": bodies["robot_bodies"],
+            "robot_body_quats": bodies["robot_body_quats"],
+            "held_object_bodies_pos": bodies["held_object_bodies_pos"],
             "object_poses": {name: {"pos": [float(v) for v in pose.pos], "quat": [float(v) for v in pose.quat]}
                              for name, pose in sorted(poses.items())},
             "in_contact": bool(in_contact),
