@@ -28,6 +28,15 @@
 11. **供 R1-L 使用**：`policy_observation` 的键与图像格式要与 `src/dynisafety/backends/libero` 交给策略的观测一致（相机名、分辨率、是否翻转、状态向量），在汇报里列出对照表；任务语言指令从 BDDL 读出，经 `policy_observation` 或宿主方法提供，写清楚接口。不实现策略桥接（R1-L 的事）。
 12. **宿主注册**：写在 `hazardhosts/libero/target.py`，`__init__.py` 保持为空（D15 e）。
 
+13. **E00(libero) 的结论（2026-11-09，先读 `env_notes/libero.md`）**：
+   - 环境 `dynisafety-libero`（Python 3.10、numpy 1.26.4、mujoco 3.6.0、robosuite 1.4.0、torch 2.8.0+cu128）；启动前设 `TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1`、`LIBERO_CONFIG_PATH=/data0/tongbaoshun/benchmarks/libero/config/safelibero`、`MUJOCO_GL=egl`；`dynisafety` 从仓库根目录运行。
+   - SafeLIBERO 树是 vlsa-aegis `57b1aef` 的副本（`third_party/dyniSafety_libero` 软链，用户定）。它**没有**旧 L3 的人手：第 7 条的 L3 一列留空并注明原因。它也没有普通 `libero_*` 套件；普通 LIBERO 与 SafeLIBERO 的包都叫 `libero`，不能在同一进程里 import。演示用 h5py 直接读，不需要 import 普通 LIBERO。
+   - 用 SafeLIBERO 的 Level I 场景（与旧论文主结果一致）；任务按名字对应到 `/data0/dataset/LIBERO/<套件>/<任务>_demo.hdf5`。
+   - 初始状态按**关节名**映射（障碍物的自由关节在状态向量中间，不能按位置截取拼接）；`states[k]` 是动作 k 之前的状态，`obs[k]` 是动作 k 之后的观测。
+   - 开环回放不是逐位精确的（E00 实测 20 集里 2 集失败，第 1 步就有约 5e-3 的 qpos 误差，主要在夹爪），所以第 9 条只保留回放成功的集；回放误差的统计写进汇报。
+   - 控制 20 Hz、物理步 0.002 s、每动作 25 子步；子步循环在 `robosuite/environments/base.py:388-393`。
+   - GPU：GPU 0 与 GPU 2 都可用（默认 2，`CUDA_VISIBLE_DEVICES=2 MUJOCO_EGL_DEVICE_ID=2`）；卡上约 92 GB 是用户的占卡进程，不要动它；GPU 1 不用。
+
 ## 额外验收
 - 回归检查前后一致（贴两次输出的差异）。
 - 汇报里的“旧 L1–L3 → 新强度轴”映射表附原始数据路径。

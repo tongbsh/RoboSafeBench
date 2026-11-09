@@ -29,6 +29,7 @@
 | **H6** | RoboDojo 适配器（含 E1–E8 引擎探针） | T01–T06（含 T05-F、T06-F）、E00(robodojo) | 是 | 探针报告 + 适配器 | 大 |
 | **X1** | 策略矩阵与服务 | E00 | 是 | `policy_matrix.md`、每基准至多两个策略的服务脚本 | 中 |
 | **R1** | Run 阶段核心（D16 c）：`hazardctl run` / `report`、对照回合、汇总表、视频帧记录接口，见 `prompts/R1_run.md` | T06（可与 T07 并行，不碰 T07 改的文件） | 否 | FakeHost 上端到端 | 中 |
+| **R1-F** | R1 收尾（D17 a、b）：`run.yaml` / `report.yaml` 拆分、`run.yaml` 进 `config_hashes`、冻结目录带 TaskContext 与 BD | R1 | 否 | 小提交 | 小 |
 | **R1-L** | LIBERO 端到端：策略桥接（复用 `src/dynisafety/policies`）、视频编码、spatial 4 任务 × 1–2 个策略的试点运行（prompt 在 H3 后写） | R1、H3、X1(libero) 或既有服务脚本 | 是 | 视频、成功率与安全指标表（试点） | 中 |
 
 **阶段与并行。**
