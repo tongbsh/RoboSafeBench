@@ -170,8 +170,13 @@ def config_dir(target, run_yaml=None, conformance=False):
 
 def conformance_report(config_dir_):
     """C1-C13 on the suite's FakeHost world with this module's host class and timebase (same BD hash as
-    :func:`make_host`)."""
-    target = make_fake_target(ccd=True, world_overrides={"substeps_per_action": W.SUBSTEPS}, host_cls=RunHost,
+    :func:`make_host`). Where ``FakeWorldConfig`` has ``robot_point_spacing_m`` (D15 a, part of the BD), the
+    suite's world takes this world's value too."""
+    overrides = {"substeps_per_action": W.SUBSTEPS}
+    world = W.world_config(tasks=tasks())
+    if hasattr(world, "robot_point_spacing_m"):
+        overrides["robot_point_spacing_m"] = world.robot_point_spacing_m
+    target = make_fake_target(ccd=True, world_overrides=overrides, host_cls=RunHost,
                               host_kwargs={"decel_mps2": DECEL_MPS2}, config_dir=config_dir_)
     return run_suite(SuiteSession(target, ConformanceConfig.load(config_dir_)))
 
