@@ -20,7 +20,7 @@
 6. **接触**：可复用 `dynisafety.backends._engine.mujoco_contact`（本环境 Python 3.11，且已装 `dynisafety` 时可 import；否则自行用 `hazardlib` 内的最小实现并在汇报中说明）。**真几何距离**用 `mujoco.mj_geomDistance`，实测。
 7. **`hold_action`**：零臂增量、零底盘速度、保持夹爪；需实测机器人是否漂移。
 8. **按 (任务, 布局种子) 探针**：布局由种子程序化生成；探针运行必须按种子；至少 5 个种子 × 3 个任务。
-9. **探针素材**：RoboCasa 演示 / MimicGen 数据的获取方式与大小先在 `env_notes` 里调研并**先问用户**再下载；若暂时拿不到，用脚本化的零 / 保持运行 + 少量手写探针轨迹（明确标注为临时，不得当正式探针集）。
+9. **探针素材**：三个任务（`PickPlaceCounterToCabinet`、`OpenDrawer`、`OpenCabinet`）的人类演示（pretrain 与 target 两个划分）已由协调者下载并解压到 robocasa 注册表的默认位置（用户 2026-11-09 同意；来源、哈希与集数见 `env_notes/robocasa.md` 的“演示数据”）。演示回放是一类探针来源；R4 要求至少两类，第二类（脚本专家或闭环参考策略）由本任务提供或在汇报里说明缺口。MimicGen 数据未下载，需要时先问用户。若改用别的任务，其演示同样先问用户再下载。
 10. **资产约 11 GB**：已由 E00 处理，本任务不再下载。objaverse、纹理、生成纹理是官方 `robocasa/robocasa-assets@1b92c3d`（sha256 已核）；lightwheel 固定装置与物体来自第三方镜像；`aigen_objs` 没下，默认物体库（objaverse + lightwheel）用不到它。资产来源写进 BD 注释与汇报。仓库导航后端的 `ensure_generative_texture_tex_aliases` 在镜像资产上会建错软链（env_notes 已知坑第 10 条），本环境已没有这个问题，适配器不要依赖它。
 11. **GPU 与渲染**：只用 **GPU 2**。激活后 `export MUJOCO_GL=egl CUDA_VISIBLE_DEVICES=2 MUJOCO_EGL_DEVICE_ID=2`：`MUJOCO_EGL_DEVICE_ID` 是 EGL 序号（本机 EGL 0–2 对应 CUDA 0–2），会覆盖 robosuite 的 `render_gpu_device_id`。E00 已用 `nvidia-smi` 核实渲染只在 GPU 2；本任务同样核实并贴输出。本环境的 torch 是 cu126，不支持 sm_120，只能用 CPU，本任务也不需要 GPU 上的 torch。
 12. **宿主注册**：写在 `hazardhosts/robocasa/target.py`，`__init__.py` 保持为空。T07 之后 `--host robocasa` 会回退 import `hazardhosts.robocasa.target`（D15 e），不必再加 `--host-module`。

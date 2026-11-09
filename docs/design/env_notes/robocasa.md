@@ -131,6 +131,22 @@ cd <robocasa>/robocasa/models/assets && unzip -q <downloads>/textures.zip && unz
 
 - 官方下载脚本 `robocasa/scripts/download_datasets.py` 按 `box_links_ds.json`（410 个 tar）取数据，`PickPlaceCounterToCabinet`、`OpenDrawer`、`OpenCabinet` 各有 pretrain 人类、target 人类、pretrain MimicGen 三份，`CloseDrawer` 没有 target。抽查一条 Box 链接返回 404。
 - HF 上有第三方转存（如 `ember-lab-berkeley/robocasa365-pretrain-atomic`、`…-pretrain-mg`、按任务拆分的 `jellyho/robocasa365-<Task>`），大小与是否与官方一致 **[未核实]**。下载前要先问用户。
+- **（2026-11-09，协调者，用户同意后下载）** 回放演示需要每集的 `extras/episode_*/{states.npz, model.xml.gz, ep_meta.json}`（`robocasa/utils/lerobot_utils.py:199-310`）。`ember-lab-berkeley/*`、`jellyho/*` 是合并 / 重排过的 LeRobot 数据集，没有 `extras/`，不能按原场景回放。`huiwon/robocasa365` 保留了官方 tar 的目录结构（与 `box_links_ds.json` 的键一致），采用它，固定提交 `d27162d8b7d006e997cb9de6b719bc5a055479fb`：
+  - 只下了三个 H2 任务的人类演示，共 2.15 GB；MimicGen（约 23 GB）没下：
+
+    | 文件 | 大小 | sha256（= HF LFS oid，下载后 `sha256sum -c` 全部 OK） | 集数 |
+    |---|---|---|---|
+    | `pretrain/atomic/OpenDrawer/20250819/lerobot.tar` | 71 MB | `cdd81136…` | 102 |
+    | `pretrain/atomic/OpenCabinet/20250819/lerobot.tar` | 150 MB | `5fdfcb7b…` | 107 |
+    | `pretrain/atomic/PickPlaceCounterToCabinet/20250819/lerobot.tar` | 102 MB | `b14f83da…` | 108 |
+    | `target/atomic/OpenDrawer/20250816/lerobot.tar` | 479 MB | `dd1371ba…` | 514 |
+    | `target/atomic/OpenCabinet/20250813/lerobot.tar` | 788 MB | `332167c4…` | 500 |
+    | `target/atomic/PickPlaceCounterToCabinet/20250811/lerobot.tar` | 561 MB | `bd1f9d2c…` | 502 |
+
+  - 完整哈希、文件表与下载脚本在 `/data0/tongbaoshun/benchmarks/robocasa/_downloads/datasets_huiwon_d27162d/`（`lfs_oids.sha256`、`files.txt`、`fetch.sh`、`fetch.log`；tar 共 2.1 GB，可删）。
+  - 解压前检查：每个 tar 只有普通文件与目录，根目录只有 `lerobot/`，无绝对路径或 `..`。解压到注册表默认位置 `<robocasa 克隆>/datasets/v1.0/<split>/atomic/<Task>/<日期>/lerobot/`（`DATASET_BASE_PATH = None`，上游 `.gitignore` 已忽略 `datasets`）。
+  - 用 `robocasa.utils.dataset_registry_utils.get_ds_meta` 与 `lerobot_utils` 读取：6 个数据集都能找到；`extras` 集数与 `meta/info.json` 的 `total_episodes` 一致，第 0 集的 `states`、`ep_meta`（布局 / 风格）可读。集数略多于注册表名义值 100 / 500（注册表的值只用来算 `filter_key`）。
+  - 与官方是否逐字节一致**无法核实**（官方 Box 链接失效，没有官方哈希可对）。按原场景回放是否成功由 H2 实测。
 
 ## 烟雾测试
 
