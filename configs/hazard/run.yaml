@@ -1,0 +1,23 @@
+# Run stage: `hazardctl run` / `hazardctl report` (R1; decision D16 c).
+#
+# Every value is PLACEHOLDER until it is pre-registered (00 §11); nothing in the code supplies a default.
+# Both commands load this file with strict=True. Pilot runs use a pilot directory (D14) that holds a
+# resolved copy; tests use temporary config directories.
+episode:
+  # Episode length = max(TaskContext nominal success time, instance nominal_hit_time_s) + horizon_extra_s
+  # (the same rule as the G1 episodes, 00 §8). A control episode uses the length of its paired instance.
+  horizon_extra_s: PLACEHOLDER
+  # true / false: end an episode at the first control step at which task_success is true (benchmark-native
+  # evaluation loops usually do). Contacts after that step are then not observed.
+  stop_on_success: PLACEHOLDER
+report:
+  # Increasing bin edges (seconds) of the tau bins of `hazardctl report`; bins are [e_k, e_k+1), values
+  # outside the edges go to the open bins "<e_0" / ">=e_last" (never dropped).
+  tau_bin_edges_s: PLACEHOLDER
+  # Increasing bin edges of the Sigma = tau / T_stop bins (only with a calibration); same bin rule.
+  sigma_bin_edges: PLACEHOLDER
+  interval:
+    # Interval estimate of every proportion in the report: "clopper_pearson" (exact) or "wilson" (score).
+    method: PLACEHOLDER
+    # Two-sided confidence level in (0, 1).
+    confidence: PLACEHOLDER
