@@ -93,3 +93,7 @@ observation_isolation:
 policy_interface:
   kind: calvin_model_step
   notes: "CalvinBaseModel.step(obs, goal) -> 7-D relative action (pos x3, euler x3 scaled by 0.02 m / 0.05 rad per step, integrated into the robot's target pose; gripper -1/1), env.step(action). policy_observation = rgb_static (200x200x3), rgb_gripper (84x84x3), robot_obs (15), scene_obs (24); depth maps exist in the env obs but are not exposed by the adapter (H x W float)."
+
+# D15 a (T07): CalvinHost does not offer robot_collision_points yet (H1-F), so the standoff stays
+# r_hazard + eef_contact_radius_m. `unknown` here is the declaration "no robot geometry", not an open probe.
+robot_point_spacing_m: unknown

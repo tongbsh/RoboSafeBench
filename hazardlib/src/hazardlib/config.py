@@ -16,8 +16,8 @@ from typing import Any, List, Optional, Union
 
 import yaml
 
-from ._records import MARKERS, SpecError, find_markers
-from .spec.benchmark_descriptor import BenchmarkDescriptor
+from ._records import MARKERS, UNKNOWN, SpecError, find_markers
+from .spec.benchmark_descriptor import DECLARATIVE_UNKNOWN_FIELDS, BenchmarkDescriptor
 
 CONFIG_DIR_ENV = "HAZARDLIB_CONFIG_DIR"
 _SHOW_AT_MOST = 20
@@ -69,8 +69,9 @@ def default_config_dir() -> Path:
                       % (CONFIG_DIR_ENV, ", ".join(searched)))
 
 
-def _check_strict(data: Any, where: str) -> None:
-    found = find_markers(data, MARKERS)
+def _check_strict(data: Any, where: str, declarative: Any = ()) -> None:
+    """``declarative``: dotted paths whose ``unknown`` is a declaration, not an open probe (BD, D15 a)."""
+    found = [(p, m) for p, m in find_markers(data, MARKERS) if not (m == UNKNOWN and p in declarative)]
     if not found:
         return
     shown = ["%s=%s" % (p, m) for p, m in found[:_SHOW_AT_MOST]]
@@ -112,7 +113,9 @@ def load_bd(bench: Union[str, "os.PathLike[str]"], strict: bool = False,
     else:
         base = Path(config_dir) if config_dir is not None else default_config_dir()
         path = base / "bd" / (text + ".yaml")
-    data = load_yaml(path, strict=strict)
+    data = load_yaml(path, strict=False)
+    if strict:
+        _check_strict(data, str(path), DECLARATIVE_UNKNOWN_FIELDS)
     try:
         return BenchmarkDescriptor.from_dict(data, path=path.name, strict=strict)
     except SpecError as exc:

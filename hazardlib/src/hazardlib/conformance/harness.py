@@ -7,13 +7,15 @@
   ``hazard_contacts`` result with the time and whether the hazard was parked, every ``hazard_state`` the runtime
   reads, and while parked also the parked pose and ``render_check``.
 * :class:`HookTap` sits between the host and the runtime's hooks (``install_hooks`` receives the tap). It records
-  the host clock at every hook, the scene as ``begin_episode`` saw it and the EEF state after every physics step.
+  the host clock at every hook, the scene as ``begin_episode`` saw it, the EEF state after every physics step and
+  the robot collision bodies (names, positions, orientations if reported) at the reset and after every physics step
+  (C13 places the robot geometry with them, D15 a).
 * :class:`Probe` owns one recording host and one runtime and drives episodes (``arm`` -> ``reset_episode`` ->
   ``step`` -> ``end_episode``), sampling ``policy_observation`` and ``task_success`` after the reset and after
   every control step.
 * Probe instances: synthetic ``HazardInstance`` objects (spec id ``conformance.probe``) whose motion the checks
   choose freely (a hazard parked, floating, driven along a line, released toward a body, dropped), and
-  :func:`build_nominal_hit_instance`, the D1 builder of C13.
+  :func:`build_nominal_hit_instance`, the D1 / D15 a builder of C13.
 """
 import copy
 import dataclasses
@@ -25,6 +27,7 @@ from .._numeric import positive_float, unit_vec3, vec3
 from ..host import CapabilityError, ContactObs, HazardHandle, HazardState, RobotState
 from ..kinematics.hit import FAMILY_FALL, FAMILY_REACH, FAMILY_SLIDE, build_hit_path
 from ..kinematics.path import Path
+from ..kinematics.standoff import BodyPosePaths, RobotGeometry, first_contact_along_normal, robot_points_at
 from ..kinematics.subdivide import hook_times
 from ..runtime import HazardRuntime, RuntimeConfig
 from ..semantics import ContactEvent, HazardEventLog
@@ -100,11 +103,18 @@ class HookTap:
         self.marks = []  # type: List[HookMark]
         self.begin_scene = {}  # type: Dict[int, Dict[str, Any]]
         self.robot = {}  # type: Dict[int, List[Tuple[float, np.ndarray, np.ndarray]]]
+        self.bodies = {}  # type: Dict[int, List[Tuple[float, Optional[List[str]], np.ndarray, Optional[np.ndarray]]]]
 
     def __getattr__(self, name: str) -> Any:
         if name.startswith("__") or name in ("_runtime", "_host"):
             raise AttributeError(name)
         return getattr(self._runtime, name)
+
+    @staticmethod
+    def _body_row(t: float, robot: RobotState) -> Tuple[float, Optional[List[str]], np.ndarray, Optional[np.ndarray]]:
+        names = None if robot.collision_body_names is None else list(robot.collision_body_names)
+        quat = None if robot.collision_body_quat is None else np.array(robot.collision_body_quat)
+        return t, names, np.array(robot.collision_body_pos), quat
 
     def _mark(self, env: int, kind: str) -> float:
         state = self._host.time_state(env)
@@ -119,6 +129,7 @@ class HookTap:
         self.begin_scene[env] = {"t_s": t, "eef": np.array(robot.eef_pose.pos),
                                  "objects": {k: (np.array(p.pos), np.array(p.quat)) for k, p in poses.items()}}
         self.robot[env] = []
+        self.bodies[env] = [self._body_row(t, robot)]
 
     def pre_step(self, env: int) -> None:
         self._mark(env, "pre")
@@ -129,6 +140,7 @@ class HookTap:
         t = self._mark(env, "post")
         robot = self._host.robot_state(env)
         self.robot.setdefault(env, []).append((t, np.array(robot.eef_pose.pos), np.array(robot.eef_lin_vel_mps)))
+        self.bodies.setdefault(env, []).append(self._body_row(t, robot))
 
     def end_episode(self, env: int) -> HazardEventLog:
         return self._runtime.end_episode(env)
@@ -224,6 +236,7 @@ class EpisodeRun:
     log: Optional[HazardEventLog] = None
     events: Optional[List[ContactEvent]] = None
     info: Optional[Dict[str, Any]] = None
+    bodies: Optional[List[Tuple[float, Optional[List[str]], np.ndarray, Optional[np.ndarray]]]] = None
 
 
 def _copy_obs(obs: Any) -> Dict[str, Any]:
@@ -265,7 +278,7 @@ class Probe:
         scene = self.tap.begin_scene[env]
         run = EpisodeRun(env=env, instance=instance, ref=ref, t_start=scene["t_s"],
                          control_dt=self.host.time_state(env).control_dt_s, handle=handle, samples=[],
-                         begin_scene=scene, robot=self.tap.robot[env])
+                         begin_scene=scene, robot=self.tap.robot[env], bodies=self.tap.bodies[env])
         self._open[env] = run
         self._sample(run)
         return run
@@ -330,6 +343,29 @@ class Probe:
             return np.zeros(0), np.zeros((0, 3)), np.zeros((0, 3))
         return (np.array([r[0] for r in rows]) - run.t_start, np.array([r[1] for r in rows]),
                 np.array([r[2] for r in rows]))
+
+    def body_pose_paths(self, run: EpisodeRun, names: Sequence[str]) -> BodyPosePaths:
+        """Pose paths of the collision bodies ``names`` over ``run`` (times relative to its reset), from the reset
+        and every physics step. Every sample must report each body with its orientation (D15 a)."""
+        rows = run.bodies or []
+        times, pos, quat = [], {n: [] for n in names}, {n: [] for n in names}  # type: List[float], Any, Any
+        for t, row_names, row_pos, row_quat in rows:
+            if row_names is None or row_quat is None:
+                raise CapabilityError("robot_state() reports no collision_body_names / collision_body_quat, which a "
+                                      "host offering robot_collision_points must report (D15 a)")
+            index = {n: i for i, n in enumerate(row_names)}
+            missing = [n for n in names if n not in index]
+            if missing:
+                raise CapabilityError("robot_state() at t=%r s lacks the collision bodies %s" % (t - run.t_start, missing))
+            if times and t - run.t_start <= times[-1]:
+                continue  # the reset sample and the first step can share a clock reading
+            times.append(t - run.t_start)
+            for n in names:
+                pos[n].append(row_pos[index[n]])
+                quat[n].append(row_quat[index[n]])
+        if len(times) < 2:
+            raise CapabilityError("fewer than 2 robot body samples in the run")
+        return BodyPosePaths(times, pos, quat)
 
     def records(self, items: Sequence[Any], run: EpisodeRun) -> List[Any]:
         """The records of ``items`` (poses, releases, contacts, states ...) that belong to ``run``'s hazard."""
@@ -495,21 +531,40 @@ def drop_instance(instance_id: str, agent: AgentSpec, point: Sequence[float], on
                      onset_s, onset_s, np.zeros(3), end, point, {"probe": "drop"})
 
 
+@dataclasses.dataclass
+class RobotAtHit:
+    """The robot geometry of C13 (D15 a): the host's body-frame samples and the body poses recorded in a replay."""
+    geometry: RobotGeometry
+    paths: BodyPosePaths
+
+
 def build_nominal_hit_instance(instance_id: str, nominal_eef_path: Path, family: str, agent: AgentSpec,
                                t_hit_s: float, tau_s: float, params: Dict[str, Any], eef_contact_radius_m: float,
-                               keyframe_dt_s: float) -> HazardInstance:
-    """The suite's D1 builder: the centroid target is the nominal EEF position at ``t_hit_s`` plus
-    ``standoff = r_hazard(n) + eef_contact_radius_m`` along the approach normal ``n`` (``+z`` for a fall,
-    ``-params["direction"]`` for a slide / reach); ``build_hit_path`` solves the path, sampled every
-    ``keyframe_dt_s``."""
+                               keyframe_dt_s: float, robot: Optional[RobotAtHit] = None) -> HazardInstance:
+    """The suite's D1 builder: the centroid target is the nominal EEF position at ``t_hit_s`` plus the standoff
+    along the approach normal ``n`` (``+z`` for a fall, ``-params["direction"]`` for a slide / reach);
+    ``build_hit_path`` solves the path, sampled every ``keyframe_dt_s``. With ``robot`` (D15 a) the standoff is
+    the first contact along ``n`` with the robot samples placed at ``t_hit_s``
+    (:func:`~hazardlib.kinematics.standoff.first_contact_along_normal`; no contact is a ``CapabilityError``),
+    otherwise ``r_hazard(n) + eef_contact_radius_m``."""
     if family == FAMILY_FALL:
         normal = np.array([0.0, 0.0, 1.0])
     elif family in (FAMILY_SLIDE, FAMILY_REACH):
         normal = -unit_vec3("params.direction", params["direction"])
     else:
         raise CapabilityError("C13 has no nominal-hit construction for family %r" % (family,))
-    standoff = support_radius(agent, normal) + float(eef_contact_radius_m)
-    hit_point = nominal_eef_path.pos(t_hit_s) + standoff * normal
+    eef = nominal_eef_path.pos(t_hit_s)
+    if robot is None:
+        standoff = support_radius(agent, normal) + float(eef_contact_radius_m)
+        source, body, spacing = "eef_contact_radius", None, None
+    else:
+        points, owners = robot_points_at(robot.geometry, robot.paths, t_hit_s)
+        contact = first_contact_along_normal(agent, eef, normal, points, owners)
+        if contact is None:
+            raise CapabilityError("no_robot_contact_along_normal: a %s hazard approaching the EEF along %s at t_hit = "
+                                  "%r s misses every robot sample point" % (family, normal.tolist(), t_hit_s))
+        standoff, source, body, spacing = contact.standoff_m, "robot_geometry", contact.body, robot.geometry.spacing_m
+    hit_point = eef + standoff * normal
     plan = build_hit_path(family, nominal_eef_path, t_hit_s, hit_point, tau_s, params)
     times = hook_times(plan.path.t_start_s, plan.path.t_end_s, keyframe_dt_s)
     return HazardInstance.from_dict({
@@ -521,7 +576,8 @@ def build_nominal_hit_instance(instance_id: str, nominal_eef_path: Path, family:
         "release_velocity": {"lin_mps": plan.release_velocity.tolist(), "ang_radps": [0.0, 0.0, 0.0]},
         "certificate": None,
         "provenance": {"builder": "hazardlib.conformance.harness.build_nominal_hit_instance",
-                       "standoff_m": standoff},
+                       "standoff_m": standoff, "standoff_source": source, "standoff_body": body,
+                       "robot_point_spacing_m": spacing},
     })
 
 

@@ -3,7 +3,7 @@
 The suite is only as good as the defects it catches. Each FakeHost mutation (``fakehost.MUTATIONS``) must fail
 exactly the checks pinned in ``CAUGHT_BY``, each with status ``fail`` (a crash is not a catch), and the clean FakeHost
 must pass all of C1-C13. The test-local defects below (FakeHost subclasses and targets) cover host contract items
-the ten mutations do not touch; each must fail the checks named for it. Honest variants (no CCD, other gravity,
+the eleven mutations do not touch; each must fail the checks named for it. Honest variants (no CCD, other gravity,
 other time step, one environment, no held object) must pass. On hosts that declare statistical repro, C2 / C7 / C8 /
 C12 are judged against C8's per-kind bounds (D13 h): unverified while they are PLACEHOLDER, and the defects in
 ``STATISTICAL_DEFECTS`` must still fail under bounds the honest noisy host passes.
@@ -45,12 +45,13 @@ CAUGHT_BY = {
     "bad_standoff": ("C13",),
     "hook_dependent_release": ("C3", "C4", "C5", "C6"),
     "post_impact_vn": ("C3", "C4", "C6", "C11"),
+    "bad_geometry": ("C13",),
 }
 # mutation -> the check of 01 §5 whose claim the defect breaks (must be among the catches)
 INTENDED = {
     "tunneling": "C3", "residual_velocity": "C3", "state_leak": "C2", "wrong_dt": "C1", "no_rollback": "C3",
     "park_interacts": "C2", "oracle_depends_on_hazard": "C7", "bad_standoff": "C13",
-    "hook_dependent_release": "C5", "post_impact_vn": "C6",
+    "hook_dependent_release": "C5", "post_impact_vn": "C6", "bad_geometry": "C13",
 }
 
 
@@ -648,6 +649,57 @@ def test_registry_imports_host_modules(tmp_path, monkeypatch):
     assert target.name == "t05-from-module" and target.adapter_version.endswith("/wrong_dt")
 
 
+def _fake_hazardhosts(tmp_path, monkeypatch, packages):
+    """Packages ``hazardhosts.<name>`` under ``tmp_path`` (``{name: {module: source}}``), reachable through a
+    temporary ``sys.path`` entry and the ``hazardhosts`` package path; removed from ``sys.modules`` afterwards."""
+    import hazardhosts
+    root = tmp_path / "hazardhosts"
+    for name, files in packages.items():
+        (root / name).mkdir(parents=True)
+        for module, source in files.items():
+            (root / name / ("%s.py" % module)).write_text(source)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.setattr(hazardhosts, "__path__", list(hazardhosts.__path__) + [str(root)])
+    for name in packages:
+        for key in [k for k in sys.modules if k == "hazardhosts." + name or k.startswith("hazardhosts.%s." % name)]:
+            monkeypatch.delitem(sys.modules, key)
+    importlib.invalidate_caches()
+
+
+_REGISTER = ("from hazardlib.conformance import make_fake_target, register_host\n"
+             "register_host(%r, lambda: make_fake_target(name=%r))\n")
+
+
+def test_registry_falls_back_to_the_target_module(tmp_path, monkeypatch):
+    """D15 e: hazardhosts.<name> first, then hazardhosts.<name>.target, else an error naming both imports."""
+    _fake_hazardhosts(tmp_path, monkeypatch, {
+        "t07init": {"__init__": _REGISTER % ("t07init", "t07init")},
+        "t07target": {"__init__": "", "target": _REGISTER % ("t07target", "t07target")},
+        "t07none": {"__init__": "", "target": "X = 1\n"},
+    })
+    assert resolve_target("t07init").name == "t07init"
+    assert "hazardhosts.t07init.target" not in sys.modules    # registered by __init__: no second import
+    assert resolve_target("t07target").name == "t07target"
+    assert "hazardhosts.t07target.target" in sys.modules
+    with pytest.raises(CapabilityError) as err:
+        resolve_target("t07none")
+    message = str(err.value)
+    assert "imported hazardhosts.t07none, which did not call register_host" in message
+    assert "imported hazardhosts.t07none.target, which did not call register_host" in message
+    with pytest.raises(CapabilityError) as err:
+        resolve_target("t07missing")
+    assert "importing hazardhosts.t07missing failed" in str(err.value)
+    assert "importing hazardhosts.t07missing.target failed" in str(err.value)
+
+
+def test_registry_reports_a_failing_target_import(tmp_path, monkeypatch):
+    _fake_hazardhosts(tmp_path, monkeypatch, {"t07broken": {"__init__": "",
+                                                           "target": "import no_such_simulator_t07\n"}})
+    with pytest.raises(CapabilityError, match="importing hazardhosts.t07broken.target failed: No module named "
+                                              "'no_such_simulator_t07'"):
+        resolve_target("t07broken")
+
+
 # ------------------------------------------------------------------------------------------------- report
 
 def test_report_layout_is_complete_and_validates():
@@ -815,3 +867,97 @@ def test_running_the_suite_loads_no_simulator_or_dynisafety_module():
     result = _python(["-c", code])
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "[]"
+
+
+# ------------------------------------------------------------------------ T07: robot geometry (D15 a)
+
+def _c13(report):
+    return [c for c in report["checks"] if c["id"] == "C13"][0]
+
+
+@functools.lru_cache(maxsize=None)
+def _wrist_report(geometry):
+    return run_suite(SuiteSession(resolve_target("fake_wrist" if geometry else "fake_wrist_scalar")))
+
+
+def test_the_wrist_world_passes_every_check_with_robot_geometry():
+    report = _wrist_report(True)
+    assert _statuses(report) == {cid: "pass" for cid in CHECK_IDS}, [
+        (c["id"], c["reason"]) for c in report["checks"] if c["status"] != "pass"]
+    c13 = _c13(report)
+    assert c13["measured"]["standoff_source"] == "robot_geometry"
+    assert "robot0_wrist" in c13["measured"]["robot_geometry"]["bodies"]
+    hits = c13["measured"]["hits"]
+    for label in ("suite/intrusion.fall", "target/intrusion.fall"):
+        assert hits[label]["standoff_source"] == "robot_geometry"
+        assert hits[label]["standoff_body"] == hits[label]["first_official_partner"] == "robot0_wrist"
+    for label, hit in sorted(hits.items()):
+        print("wrist/geometry %-22s residual %+.6f s standoff %.6f m body %s" % (
+            label, hit["residual_s"], hit["standoff_m"], hit["standoff_body"]))
+
+
+def test_the_wrist_world_fails_c13_fall_with_the_scalar_standoff():
+    """H1's failure on FakeHost: the scalar standoff puts the hazard 0.05 m above the EEF, but it meets the wrist
+    first; slides and reaches at hand height are unaffected."""
+    report = _wrist_report(False)
+    statuses = _statuses(report)
+    assert {cid for cid, s in statuses.items() if s != "pass"} == {"C13"} and statuses["C13"] == "fail"
+    c13 = _c13(report)
+    assert c13["measured"]["standoff_source"] == "eef_contact_radius"
+    tol = ConformanceConfig.load().number("c13_nominal_hit", "hit_time_abs_tol_s")
+    hits = c13["measured"]["hits"]
+    for label, hit in sorted(hits.items()):
+        print("wrist/scalar   %-22s residual %+.6f s standoff %.6f m first partner %s" % (
+            label, hit["residual_s"], hit["standoff_m"], hit["first_official_partner"]))
+        if label.endswith("fall"):
+            assert hit["residual_s"] < -tol and hit["first_official_partner"] == "robot0_wrist"
+        else:
+            assert abs(hit["residual_s"]) < tol
+    assert "re-measure the robot geometry (robot_collision_points) or eef_contact_radius_m" in c13["reason"]
+    assert "intrusion.fall" in c13["reason"] and "intrusion.slide" not in c13["reason"]
+
+
+def test_bad_geometry_inflates_the_standoff_in_every_family():
+    hits = _c13(_report("bad_geometry"))["measured"]["hits"]
+    clean = _c13(_report("clean"))["measured"]["hits"]
+    tol = ConformanceConfig.load().number("c13_nominal_hit", "hit_time_abs_tol_s")
+    for label, hit in hits.items():
+        assert hit["standoff_m"] == pytest.approx(clean[label]["standoff_m"] + 0.03, abs=1e-12)  # hand radius
+        assert hit["residual_s"] > tol, label
+
+
+def test_bad_geometry_needs_robot_geometry():
+    with pytest.raises(ValueError, match="bad_geometry needs robot geometry"):
+        make_fake_target(("bad_geometry",), world_overrides={"robot_point_spacing_m": None})
+
+
+def test_the_clean_fakehost_reports_geometric_standoffs():
+    c13 = _c13(_report("clean"))
+    assert c13["measured"]["standoff_source"] == "robot_geometry"
+    assert sorted(c13["measured"]["robot_geometry"]["bodies"]) == ["robot0_hand", "robot0_link"]  # camera excluded
+    for hit in c13["measured"]["hits"].values():
+        assert hit["standoff_source"] == "robot_geometry" and hit["standoff_body"] == "robot0_hand"
+
+
+class GeometryUndeclared(FakeHost):
+    """Offers robot_collision_points but its BD says robot_point_spacing_m: unknown (D15 a mismatch)."""
+
+    def describe(self):
+        return dataclasses.replace(super().describe(), robot_point_spacing_m="unknown")
+
+
+class GeometryWithoutOrientation(FakeHost):
+    """Offers robot geometry but reports no collision_body_quat."""
+
+    def robot_state(self, env):
+        state = super().robot_state(env)
+        state.collision_body_quat = None
+        return state
+
+
+@pytest.mark.parametrize("cls,message", [(GeometryUndeclared, "robot_point_spacing_m"),
+                                         (GeometryWithoutOrientation, "collision_body_quat")])
+def test_c13_fails_a_host_whose_geometry_is_inconsistent(cls, message):
+    report = _run(make_fake_target(host_cls=cls), ["C13"])
+    check = _c13(report)
+    assert check["status"] == "fail" and message in check["reason"]

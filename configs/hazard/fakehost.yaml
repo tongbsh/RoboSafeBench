@@ -31,6 +31,9 @@ world:
   robot_include: ["prefix:robot0_", "held_object"]
   robot_exclude: ["substr:camera"]
   eef_contact_radius_m: 0.03
+  # D15 a (T07): robot_collision_points samples every robot sphere at most 5 mm apart (null: no robot geometry,
+  # BD robot_point_spacing_m: unknown, scalar standoff r_hazard + eef_contact_radius_m)
+  robot_point_spacing_m: 0.005
   image_px: 64
   image_min_xy_m: [-0.6, -0.6]
   image_max_xy_m: [0.6, 0.6]
@@ -67,3 +70,11 @@ scenario:
   motion_hit_direction: [0.0, -1.0, 0.0]
   motion_hold_time_s: 0.6
   motion_duration_s: 1.2
+# T07 (D15 a): the "wrist" world reproduces H1's C13 fall failure (a Panda gripper is first hit at the wrist when
+# the hazard comes from above). It is the world above plus a wrist sphere 0.12 m above the EEF; its bottom is
+# 0.05 m above the hand, so slides / reaches at hand height (probe sphere r = 0.02) pass under it, and a fall onto
+# the EEF meets it first. Registered hosts: fake_wrist (robot geometry) and fake_wrist_scalar (robot geometry off,
+# robot_point_spacing_m: null -> scalar standoff 0.02 + 0.03 m, which C13 fall must fail).
+wrist_world:
+  extra_robot_bodies:
+    - {name: robot0_wrist, center_m: [0.0, 0.0, 0.12], radius_m: 0.04}

@@ -19,15 +19,28 @@ Algorithm (every number comes from :class:`ProbeSettings`, i.e. ``configs/hazard
 5. **Nominal EEF path.** Inside each phase, ``path_samples_per_phase`` + 1 samples at equal phase-normalised
    times; at each sample the coordinate-wise median over the runs (linear interpolation of each run), placed
    at the nominal boundary times. Orientation: sign-aligned normalised mean of the runs' interpolated
-   quaternions if every step has one, else the identity (recorded). Robot-side collision bodies get median
-   paths the same way when every step of every run reports the same set (``provenance.robot_body_paths``).
-6. **Occupancy** = the nominal EEF samples plus the nominal body samples, time-stamped.
+   quaternions if every step has one, else the identity (recorded).
+   **Robot bodies (D15 a, b).** The trace's ``robot_bodies`` are the robot's own bodies only (no held object).
+   Every body reported at every step of every used run gets a median path the same way
+   (``provenance.robot_body_paths``); a body missing from some step is dropped and named in
+   ``provenance.robot_body_paths_dropped`` (the others are kept). When every step reports ``robot_body_quats``,
+   the kept bodies also get ``provenance.robot_body_quat_paths``, aggregated like the EEF orientation (each run
+   interpolated by normalised lerp, then the sign-aligned normalised mean). The runs' ``robot_geometry`` must be
+   identical (else ``ValueError``); one copy, restricted to the kept bodies, goes to
+   ``provenance.robot_geometry`` and needs every kept body's samples and orientations.
+   **Held object.** ``provenance.held_object_path`` = ``{time_s: [...], bodies: [{body: [x, y, z]}, ...]}``: the
+   nominal samples (a subset of the nominal EEF path's times) at which every used run holds the same held-object
+   bodies (both neighbouring trace steps report them; positions interpolated linearly, coordinate-wise median
+   over the runs), or ``None`` when no sample qualifies.
+6. **Occupancy** = the nominal EEF samples plus the nominal robot body samples, time-stamped (the held object is
+   not part of it).
 7. **Entities** (R3 order): static declarations -> grasped objects (``held_object`` in at least
    ``entity_min_run_fraction`` of the runs) -> moved objects (displaced by more than
    ``moved_object_min_displacement_m`` in that many runs) -> annotations. Each keeps its source; an annotation
    that names a different entity for an existing role raises.
 8. **Workspace**: the declared box if given (source ``declared``), else the bounding box of every EEF, robot
-   body and object position of the used runs (source ``probe_hull``). Gate G0 adds its own margin.
+   body, held-object body and object position of the used runs (source ``probe_hull``). Gate G0 adds its own
+   margin.
 9. **Support surfaces**: the host's (trace headers; they must agree across runs) else one estimated plane at the
    lowest task-object centre minus ``surface_below_object_m`` over the xy hull of objects and EEF (source
    ``probe_estimate``), else none.
@@ -168,13 +181,8 @@ def _phase_names(initial: str, n_segments: int) -> List[str]:
     return names
 
 
-def _median_quats(runs: List[_Run], run_times: List[np.ndarray]) -> Optional[np.ndarray]:
-    if not all(s.eef_quat is not None for r in runs for s in r.steps):
-        return None
-    stacks = []
-    for run, times in zip(runs, run_times):
-        quats = np.array([s.eef_quat for s in run.steps], dtype=np.float64)
-        stacks.append(SampledPath(run.t, run.pos, quats).quat(times))
+def _quat_consensus(stacks: List[np.ndarray]) -> Optional[np.ndarray]:
+    """Sign-aligned (to the first run) normalised mean of the runs' quaternions at common samples."""
     ref = stacks[0]
     total = np.zeros_like(ref)
     for q in stacks:
@@ -186,19 +194,32 @@ def _median_quats(runs: List[_Run], run_times: List[np.ndarray]) -> Optional[np.
     return total / norms
 
 
-def _body_paths(runs: List[_Run], run_times: List[np.ndarray]) -> Optional[Dict[str, np.ndarray]]:
-    names = None  # type: Optional[List[str]]
+def _median_quats(runs: List[_Run], run_times: List[np.ndarray]) -> Optional[np.ndarray]:
+    if not all(s.eef_quat is not None for r in runs for s in r.steps):
+        return None
+    stacks = []
+    for run, times in zip(runs, run_times):
+        quats = np.array([s.eef_quat for s in run.steps], dtype=np.float64)
+        stacks.append(SampledPath(run.t, run.pos, quats).quat(times))
+    return _quat_consensus(stacks)
+
+
+def _body_paths(runs: List[_Run], run_times: List[np.ndarray]) -> Tuple[Optional[Dict[str, np.ndarray]], List[str]]:
+    """Median paths of the robot bodies reported at every step of every run, and the names dropped because some
+    step lacks them. ``(None, [])`` when some step has no ``robot_bodies`` at all."""
+    common = None  # type: Any
+    seen = set()  # type: Any
     for run in runs:
         for step in run.steps:
             if step.robot_bodies is None:
-                return None
-            keys = sorted(step.robot_bodies)
-            if names is None:
-                names = keys
-            elif keys != names:
-                return None
+                return None, []
+            keys = set(step.robot_bodies)
+            seen |= keys
+            common = keys if common is None else common & keys
+    names = sorted(common or ())
+    dropped = sorted(seen - set(names))
     if not names:
-        return None
+        return None, dropped
     out = {}
     for name in names:
         per_run = []
@@ -206,7 +227,73 @@ def _body_paths(runs: List[_Run], run_times: List[np.ndarray]) -> Optional[Dict[
             values = np.array([s.robot_bodies[name] for s in run.steps], dtype=np.float64)
             per_run.append(run.interp(values, times))
         out[name] = np.median(np.stack(per_run), axis=0)
+    return out, dropped
+
+
+def _body_quat_paths(runs: List[_Run], run_times: List[np.ndarray],
+                     names: List[str]) -> Optional[Dict[str, np.ndarray]]:
+    """Orientation paths of ``names`` when every step reports them (``_median_quats`` per body), else ``None``."""
+    if not all(s.robot_body_quats is not None and all(n in s.robot_body_quats for n in names)
+               for r in runs for s in r.steps):
+        return None
+    out = {}
+    for name in names:
+        stacks = []
+        for run, times in zip(runs, run_times):
+            quats = np.array([s.robot_body_quats[name] for s in run.steps], dtype=np.float64)
+            stacks.append(SampledPath(run.t, run.pos, quats).quat(times))
+        consensus = _quat_consensus(stacks)
+        if consensus is None:
+            raise ValueError("the probe runs' orientations of robot body %r cancel out at some sample" % name)
+        out[name] = consensus
     return out
+
+
+def _robot_geometry(runs: List[_Run], names: List[str], quats: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """The runs' common robot geometry restricted to the kept bodies ``names`` (D15 a), or ``None``."""
+    found = [None if r.trace.header.robot_geometry is None else r.trace.header.robot_geometry.to_dict() for r in runs]
+    if all(g is None for g in found):
+        return None
+    if any(g != found[0] for g in found):
+        raise ValueError("probe runs report different robot geometry (robot_collision_points / "
+                         "robot_point_spacing_m); probe one host configuration at a time")
+    geometry = found[0]
+    if not names:
+        raise ValueError("the probe runs report robot geometry but no robot body is reported at every step")
+    missing = sorted(set(names) - set(geometry["points"]))
+    if missing:
+        raise ValueError("the robot geometry has no samples for the robot bodies %s" % missing)
+    if quats is None:
+        raise ValueError("the probe runs report robot geometry but not every step reports robot_body_quats "
+                         "(collision_body_quat is required with robot_collision_points, D15 a)")
+    return {"spacing_m": geometry["spacing_m"], "points": {n: geometry["points"][n] for n in names}}
+
+
+def _held_at(run: _Run, t: float) -> Optional[Dict[str, np.ndarray]]:
+    """Held-object body positions of ``run`` at ``t`` when both neighbouring steps report the same held bodies."""
+    i = int(np.searchsorted(run.t, t, side="right")) - 1
+    i = min(max(i, 0), len(run.steps) - 1)
+    j = min(i + 1, len(run.steps) - 1)
+    a, b = run.steps[i].held_object_bodies_pos, run.steps[j].held_object_bodies_pos
+    if not a or not b or set(a) != set(b):
+        return None
+    span = run.t[j] - run.t[i]
+    u = 0.0 if span <= 0 else min(max((t - run.t[i]) / span, 0.0), 1.0)
+    return {n: (1.0 - u) * np.array(a[n], dtype=np.float64) + u * np.array(b[n], dtype=np.float64) for n in a}
+
+
+def _held_object_path(runs: List[_Run], times: np.ndarray, run_times: List[np.ndarray]) -> Optional[Dict[str, Any]]:
+    out_t, out_bodies = [], []  # type: List[float], List[Dict[str, List[float]]]
+    for k, t in enumerate(times):
+        held = [_held_at(run, float(ts[k])) for run, ts in zip(runs, run_times)]
+        if any(h is None for h in held) or any(set(h) != set(held[0]) for h in held):
+            continue
+        out_t.append(float(t))
+        out_bodies.append({name: np.median(np.stack([h[name] for h in held]), axis=0).tolist()
+                           for name in sorted(held[0])})
+    if not out_t:
+        return None
+    return {"time_s": out_t, "bodies": out_bodies}
 
 
 def _speeds(run: _Run) -> np.ndarray:
@@ -374,7 +461,11 @@ def build_task_context(traces: Sequence[ProbeTrace], settings: ProbeSettings,
     if quats is None:
         quats = np.tile(np.array(_IDENTITY), (times.size, 1))
         quat_note = "identity: some probe step has no eef_quat"
-    bodies = _body_paths(consistent, per_run_times)
+    bodies, bodies_dropped = _body_paths(consistent, per_run_times)
+    body_names = sorted(bodies) if bodies is not None else []
+    body_quats = _body_quat_paths(consistent, per_run_times, body_names) if bodies is not None else None
+    geometry = _robot_geometry(consistent, body_names, body_quats)
+    held_path = _held_object_path(consistent, times, per_run_times)
 
     points = [positions]
     point_t = [times]
@@ -396,6 +487,8 @@ def build_task_context(traces: Sequence[ProbeTrace], settings: ProbeSettings,
             for step in run.steps:
                 if step.robot_bodies:
                     cloud.append(np.array(list(step.robot_bodies.values()), dtype=np.float64))
+                if step.held_object_bodies_pos:
+                    cloud.append(np.array(list(step.held_object_bodies_pos.values()), dtype=np.float64))
                 if step.object_poses:
                     cloud.append(np.array([p.pos for p in step.object_poses.values()], dtype=np.float64))
         hull = np.concatenate(cloud)
@@ -437,6 +530,10 @@ def build_task_context(traces: Sequence[ProbeTrace], settings: ProbeSettings,
         "nominal_quat": quat_note,
         "occupancy_content": "nominal_eef" if bodies is None else "nominal_eef_and_robot_bodies",
         "robot_body_paths": None if bodies is None else {k: v.tolist() for k, v in sorted(bodies.items())},
+        "robot_body_paths_dropped": bodies_dropped,
+        "robot_body_quat_paths": None if body_quats is None else {k: v.tolist() for k, v in sorted(body_quats.items())},
+        "robot_geometry": geometry,
+        "held_object_path": held_path,
         "entity_discovery": discovery,
         "workspace_source": workspace_source,
         "support_surface_source": surface_source,

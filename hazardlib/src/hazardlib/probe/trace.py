@@ -8,15 +8,24 @@ step), in seconds and SI units:
 
 ``TraceStep`` fields: ``t_s`` (seconds from the episode start), ``eef_pos``, ``eef_quat`` (wxyz or null),
 ``eef_lin_vel_mps`` (or null), ``gripper`` (the opening the host reports, any unit, or null),
-``held_object`` (or null), ``robot_bodies`` (robot-side collision body name -> position per the BD's
-``robot_contact_bodies``, or null), ``object_poses`` (name -> ``{pos, quat}``), ``in_contact`` (an official
+``held_object`` (or null), ``robot_bodies`` (the robot's own collision bodies, name -> position: the names the
+BD's ``robot_contact_bodies`` classify as ``robot_link``, never the held object or its ``held_object_bodies``;
+null without body names), ``robot_body_quats`` (the same bodies' wxyz orientations when the host reports
+``collision_body_quat``, else null), ``held_object_bodies_pos`` (the held object's collision bodies, name ->
+position; null while nothing is held), ``object_poses`` (name -> ``{pos, quat}``), ``in_contact`` (an official
 hazard contact happened during the step) and ``phase`` (the runtime's hazard phase, null when no hazard was
 armed). A probe run is meant to be hazard-free; ``build_task_context`` drops runs that are not.
 
 The header carries the task, layout, seed, the source (``kind`` in :data:`SOURCE_KINDS`, ``name``,
-``under_test``), the success event (``success``, ``success_t_s``), the control step and the host's
-support surfaces when it offers ``support_surfaces``. Rule R4: a source marked ``under_test`` is refused by
-``build_task_context``.
+``under_test``), the success event (``success``, ``success_t_s``), the control step, the host's
+support surfaces when it offers ``support_surfaces`` and ``robot_geometry`` when it offers
+``robot_collision_points`` (D15 a: ``spacing_m`` = BD ``robot_point_spacing_m`` and ``points``, the body-frame
+samples of the ``robot_link`` bodies, recorded once per trace). Rule R4: a source marked ``under_test`` is refused
+by ``build_task_context``.
+
+Schema history: ``"1"`` (T06); ``"2"`` (T07, D15 a/b): ``robot_bodies`` without held bodies, new step fields
+``robot_body_quats`` and ``held_object_bodies_pos``, new header field ``robot_geometry``. Readers accept only the
+current version.
 """
 import dataclasses
 import json
@@ -28,7 +37,7 @@ from .._records import (Record, check_finite, check_nonempty_str, check_positive
 from ..driving import REFERENCE_KINDS, EpisodeSession, describe_policy
 from ..host import Surface
 
-PROBE_TRACE_SCHEMA_VERSION = "1"
+PROBE_TRACE_SCHEMA_VERSION = "2"
 SOURCE_KINDS = REFERENCE_KINDS
 
 
@@ -61,6 +70,8 @@ class TraceStep(Record):
     gripper: Optional[float]
     held_object: Optional[str]
     robot_bodies: Optional[Dict[str, List[float]]]
+    robot_body_quats: Optional[Dict[str, List[float]]]
+    held_object_bodies_pos: Optional[Dict[str, List[float]]]
     object_poses: Dict[str, ObjectPose]
     in_contact: bool
     phase: Optional[str]
@@ -77,6 +88,35 @@ class TraceStep(Record):
         if self.robot_bodies is not None:
             for name, pos in self.robot_bodies.items():
                 check_vec("robot_bodies[%r]" % name, pos, 3)
+        if self.robot_body_quats is not None:
+            require(self.robot_bodies is not None and set(self.robot_body_quats) == set(self.robot_bodies),
+                    "robot_body_quats must name exactly the robot_bodies (%s), got %s"
+                    % (sorted(self.robot_bodies or {}), sorted(self.robot_body_quats)))
+            for name, quat in self.robot_body_quats.items():
+                check_vec("robot_body_quats[%r]" % name, quat, 4)
+                require(any(v != 0 for v in quat), "robot_body_quats[%r] is a zero quaternion" % name)
+        if self.held_object_bodies_pos is not None:
+            require(self.held_object is not None, "held_object_bodies_pos is set but held_object is null")
+            for name, pos in self.held_object_bodies_pos.items():
+                check_vec("held_object_bodies_pos[%r]" % name, pos, 3)
+                require(self.robot_bodies is None or name not in self.robot_bodies,
+                        "body %r is both a robot body and a held-object body" % name)
+
+
+@dataclasses.dataclass
+class TraceGeometry(Record):
+    """Robot geometry of a trace (D15 a): BD ``robot_point_spacing_m`` and body-frame samples per body."""
+    spacing_m: float
+    points: Dict[str, List[List[float]]]
+
+    def validate(self) -> None:
+        check_positive("spacing_m", self.spacing_m)
+        require(len(self.points) > 0, "robot_geometry.points names no body")
+        for name, points in self.points.items():
+            check_nonempty_str("robot_geometry body name", name)
+            require(len(points) > 0, "robot_geometry.points[%r] is empty" % name)
+            for i, p in enumerate(points):
+                check_vec("robot_geometry.points[%r][%d]" % (name, i), p, 3)
 
 
 @dataclasses.dataclass
@@ -90,6 +130,7 @@ class TraceHeader(Record):
     success_t_s: Optional[float]
     control_dt_s: float
     support_surfaces: Optional[List[Surface]]
+    robot_geometry: Optional[TraceGeometry]
     n_steps: int
 
     def validate(self) -> None:
@@ -171,6 +212,6 @@ def record_probe_trace(session: EpisodeSession, policy: Any, task_id: str, layou
         "schema_version": PROBE_TRACE_SCHEMA_VERSION, "task_id": task_id, "layout_id": layout_id, "seed": seed,
         "source": source, "success": result.success, "success_t_s": result.success_t_s,
         "control_dt_s": session.host.time_state(env).control_dt_s, "support_surfaces": surfaces,
-        "n_steps": len(result.trace_steps),
+        "robot_geometry": session.robot_geometry(env), "n_steps": len(result.trace_steps),
     }
     return ProbeTrace.from_dict({"header": header, "steps": result.trace_steps})

@@ -373,3 +373,73 @@ def test_unexpected_keys_are_rejected_at_every_level(bd_d):
     d["state_access"]["telepathy"] = True
     with pytest.raises(SpecError, match="telepathy"):
         BenchmarkDescriptor.from_dict(d)
+
+
+# ------------------------------------------------- D15 a: robot_point_spacing_m (T07)
+
+def test_robot_point_spacing_is_required(bd_d):
+    d = copy.deepcopy(bd_d)
+    d.pop("robot_point_spacing_m")
+    with pytest.raises(SpecError, match="missing required key.*robot_point_spacing_m"):
+        BenchmarkDescriptor.from_dict(d)
+
+
+@pytest.mark.parametrize("value", [0.0, -0.001])
+def test_robot_point_spacing_must_be_positive_when_numeric(make_bd_dict, value):
+    with pytest.raises(SpecError, match="robot_point_spacing_m must be > 0"):
+        BenchmarkDescriptor.from_dict(make_bd_dict(robot_point_spacing_m=value))
+
+
+@pytest.mark.parametrize("value,match", [("0.005", "expected a number"), (True, "expected a number")])
+def test_robot_point_spacing_type_is_checked(make_bd_dict, value, match):
+    with pytest.raises(SpecError, match=match):
+        BenchmarkDescriptor.from_dict(make_bd_dict(robot_point_spacing_m=value))
+
+
+def test_unknown_robot_point_spacing_declares_no_geometry_and_strict_accepts_it(make_bd_dict):
+    """D15 a: `unknown` means the host offers no robot geometry; it is a declaration, not an open probe."""
+    from hazardlib.spec.benchmark_descriptor import DECLARATIVE_UNKNOWN_FIELDS
+    assert DECLARATIVE_UNKNOWN_FIELDS == ("robot_point_spacing_m",)
+    d = make_bd_dict(robot_point_spacing_m="unknown")
+    bd = BenchmarkDescriptor.from_dict(d, strict=True)
+    assert bd.robot_point_spacing_m == "unknown" and bd.unknown_fields() == []
+    assert bd.to_dict()["robot_point_spacing_m"] == "unknown"
+    # any other unknown is still listed and still refused by strict
+    with pytest.raises(SpecError, match="1 unknown.*eef_contact_radius_m"):
+        BenchmarkDescriptor.from_dict(make_bd_dict(robot_point_spacing_m="unknown", eef_contact_radius_m="unknown"),
+                                      strict=True)
+
+
+@pytest.mark.parametrize("value", [0.004, "unknown"])
+def test_bd_hash_follows_robot_point_spacing(make_bd_dict, value):
+    base = BenchmarkDescriptor.from_dict(make_bd_dict())
+    changed = BenchmarkDescriptor.from_dict(make_bd_dict(robot_point_spacing_m=value))
+    assert changed.hash() != base.hash()
+    assert changed.tier() is base.tier() is Tier.A
+
+
+def test_robot_point_spacing_does_not_change_the_tier(make_bd_dict):
+    for value in (0.001, 0.05, "unknown"):
+        assert BenchmarkDescriptor.from_dict(make_bd_dict(robot_point_spacing_m=value)).tier() is Tier.A
+    assert BenchmarkDescriptor.from_dict(make_bd_dict(robot_point_spacing_m="unknown",
+                                                      contact_tier="B")).tier() is Tier.B
+
+
+def test_calvin_declares_no_robot_geometry_at_the_end_of_its_bd(calvin, config_dir):
+    assert calvin.robot_point_spacing_m == "unknown"
+    text = (config_dir / "bd" / "calvin.yaml").read_text(encoding="utf-8").rstrip().splitlines()
+    assert text[-1] == "robot_point_spacing_m: unknown"
+
+
+def test_load_bd_strict_accepts_only_the_declarative_unknown(tmp_path, make_bd_dict):
+    import yaml
+    from hazardlib.config import ConfigError
+    path = tmp_path / "toy.yaml"
+    path.write_text(yaml.safe_dump(make_bd_dict(robot_point_spacing_m="unknown")), encoding="utf-8")
+    assert load_bd(str(path), strict=True).robot_point_spacing_m == "unknown"
+    for override in ({"eef_contact_radius_m": "unknown"}, {"engine__version": "PLACEHOLDER"},
+                     {"robot_point_spacing_m": "PLACEHOLDER"}):
+        values = dict({"robot_point_spacing_m": "unknown"}, **override)
+        path.write_text(yaml.safe_dump(make_bd_dict(**values)), encoding="utf-8")
+        with pytest.raises(ConfigError, match="1 unresolved value"):
+            load_bd(str(path), strict=True)

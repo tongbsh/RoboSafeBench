@@ -5,8 +5,8 @@ import yaml
 
 import pipeline_world as W
 from hazardlib.config import ConfigError
-from hazardlib.probe import (PROBE_KEYS, ProbeSettings, ProbeSourceError, ProbeTrace, build_task_context,
-                             read_probe_trace, record_probe_trace, write_probe_trace)
+from hazardlib.probe import (PROBE_KEYS, PROBE_TRACE_SCHEMA_VERSION, ProbeSettings, ProbeSourceError, ProbeTrace,
+                             build_task_context, read_probe_trace, record_probe_trace, write_probe_trace)
 
 TABLE = {"name": "table", "min_m": [-1.0, -1.0, 0.0], "max_m": [1.0, 1.0, 0.0], "source": "scene_yaml"}
 
@@ -35,15 +35,17 @@ def synth(kind="scripted", name="s", seed=0, scale=1.0, events=(("close", 0.6),)
         steps.append({
             "t_s": float(t), "eef_pos": eef, "eef_quat": [1.0, 0.0, 0.0, 0.0] if quat else None,
             "eef_lin_vel_mps": None, "gripper": 0.0 if closed else 0.08, "held_object": "cube" if closed else None,
-            "robot_bodies": {"robot0_hand": eef}, "in_contact": contact_at is not None and abs(t - contact_at) < 1e-9,
+            "robot_bodies": {"robot0_hand": eef}, "robot_body_quats": None, "held_object_bodies_pos": None,
+            "in_contact": contact_at is not None and abs(t - contact_at) < 1e-9,
             "object_poses": {"cube": {"pos": cube, "quat": [1.0, 0.0, 0.0, 0.0]},
                              "lid": {"pos": lid, "quat": [1.0, 0.0, 0.0, 0.0]}},
             "phase": phase,
         })
-    header = {"schema_version": "1", "task_id": "pick", "layout_id": "L0", "seed": seed,
+    header = {"schema_version": PROBE_TRACE_SCHEMA_VERSION, "task_id": "pick", "layout_id": "L0", "seed": seed,
               "source": {"kind": kind, "name": name, "under_test": under_test}, "success": success,
               "success_t_s": float(times[-1]) if success else None, "control_dt_s": 0.02,
-              "support_surfaces": None if surfaces is None else [dict(s) for s in surfaces], "n_steps": len(steps)}
+              "support_surfaces": None if surfaces is None else [dict(s) for s in surfaces], "robot_geometry": None,
+              "n_steps": len(steps)}
     return ProbeTrace.from_dict({"header": header, "steps": steps})
 
 
