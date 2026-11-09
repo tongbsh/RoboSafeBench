@@ -11,11 +11,17 @@ Steps:
 1. **Hit time.** ``exposure.anchor`` must be ``nominal_ee_path``; ``t* = start + frac * duration`` of
    ``exposure.anchor_phase``. The reference point is ``p_ref = nominal_ee_path(t_hit) + exposure.offset_m``
    (recorded as ``provenance.anchor_point``, the ``p*`` of §5.2 used by the exposure check).
-2. **Standoff (D1).** The contact normal ``n`` points from the EEF towards the hazard (fall: ``+z``; reach:
-   ``-direction``; slide: see 4). The centroid target handed to ``build_hit_path`` is
-   ``p_ref + standoff * n`` with ``standoff = r_hazard(n) + eef_contact_radius_m``; ``r_hazard`` is the support
-   radius of the agent along ``n`` (sphere: its radius; box with the fixed identity orientation:
-   ``sum |n_i| h_i``; other shapes are refused). ``standoff_m`` goes into the provenance.
+2. **Standoff (D1, D15 a).** The contact normal ``n`` points from the EEF towards the hazard (fall: ``+z``; reach:
+   ``-direction``; slide: see 4). The centroid target handed to ``build_hit_path`` is ``p_ref + standoff * n``.
+   With robot geometry in the TaskContext (``provenance.robot_geometry`` with the robot body position and
+   orientation paths) the standoff is the first contact along ``n`` of the agent (identity orientation) with the
+   robot's sample points placed at ``t_hit`` (:mod:`hazardlib.kinematics.standoff`: body poses interpolated
+   linearly / by normalised lerp); a hazard that misses every point is rejected
+   ``no_robot_contact_along_normal``. Without geometry ``standoff = r_hazard(n) + eef_contact_radius_m``, where
+   ``r_hazard`` is the support radius of the agent along ``n`` (sphere: its radius; box with the fixed identity
+   orientation: ``sum |n_i| h_i``; other shapes are refused). ``standoff_m``, ``standoff_source``
+   (``robot_geometry`` / ``eef_contact_radius``), ``standoff_body`` (first contact body, ``None`` without
+   geometry) and ``robot_point_spacing_m`` go into the provenance.
 3. **Primitive parameters** from the intensity vector: see :mod:`hazardlib.instantiate.mapping`. The release
    window is ``runtime.yaml: release_velocity_window_s`` (D4), never an engine hook step.
 4. **Slide support.** The hazard slides horizontally on a support surface (the host's
@@ -23,7 +29,13 @@ Steps:
    height = surface top + the agent's z half-size. The hit time is the time closest to ``t*`` inside the anchor
    phase (``t*`` or a nominal sample) at which ``p_ref`` lies over a surface with
    ``0 <= p_ref_z - top <= 2 h_z + eef_contact_radius_m``; none -> rejected ``no_support_surface``. The normal
-   is then tilted out of the horizontal plane so that ``p_ref + standoff(n) n`` has the required height.
+   is then tilted out of the horizontal plane so that ``p_ref + standoff(n) n`` has the required height:
+   ``standoff(phi) sin(phi) = dz`` solved by bisection over ``phi`` in ``[-pi/2, pi/2]`` after checking that the
+   end points bracket ``dz`` (else ``no_support_surface``). The scalar standoff is monotone in ``phi``; the
+   geometric one is not, and can jump where a sample point enters or leaves the hazard's path, so with geometry a
+   tilt at which the hazard misses the robot is rejected ``no_robot_contact_along_normal`` and a bracket that
+   closes on such a jump (the first contact point at one end is off the path at the other end) is rejected
+   ``slide_normal_unsolved``; no approximate root is taken.
 5. **Keyframes** sample the analytic path every ``keyframe_dt_s`` (``hook_times``), plus ``t_hit`` and the
    release time (``insert_instants``: a grid point within round-off of either gives way); the largest linear-interpolation error at interior points must be <= ``keyframe_interp_tol_m``
    (else rejected ``keyframe_interp_error``). Orientation: the identity for every keyframe (``AgentSpec``
@@ -43,6 +55,8 @@ from .._records import is_unknown
 from ..hashing import sha256_hex
 from ..kinematics.hit import FAMILY_FALL, FAMILY_REACH, FAMILY_SLIDE, build_hit_path
 from ..kinematics.path import SampledPath
+from ..kinematics.standoff import (BodyPosePaths, RobotGeometry, first_contact_along_normal, point_standoffs,
+                                   robot_points_at)
 from ..kinematics.subdivide import hook_times, insert_instants
 from ..spec.benchmark_descriptor import BenchmarkDescriptor
 from ..spec.hazard_spec import AgentSpec, HazardSpec
@@ -51,7 +65,8 @@ from ..spec.task_context import TaskContext
 from .mapping import ZeroOvershootError, fall_release_height_m, reach_geometry, slide_start_distance_m
 from .settings import FAMILY_AXES, InstantiateSettings
 
-REJECT_REASONS = ("no_support_surface", "reach_zero_overshoot", "hit_path_invalid", "keyframe_interp_error")
+REJECT_REASONS = ("no_support_surface", "reach_zero_overshoot", "hit_path_invalid", "keyframe_interp_error",
+                  "no_robot_contact_along_normal", "slide_normal_unsolved")
 PRIMITIVES = {FAMILY_FALL: ("free_fall", (), ()),
               FAMILY_SLIDE: ("slide", (), ("direction",)),
               FAMILY_REACH: ("reach", ("speed_profile",), ("direction",))}
@@ -189,6 +204,72 @@ def _slide_normal(agent: AgentSpec, direction: np.ndarray, dz: float, r_eef: flo
     return at(0.5 * (lo + hi))
 
 
+class _RobotAt:
+    """The robot geometry of a TaskContext placed at one instant (D15 a)."""
+
+    def __init__(self, geometry: RobotGeometry, paths: BodyPosePaths, t: float) -> None:
+        self.geometry = geometry
+        self.points, self.bodies = robot_points_at(geometry, paths, t)
+
+    def contact(self, agent: AgentSpec, p_ref: np.ndarray, normal: np.ndarray) -> Any:
+        return first_contact_along_normal(agent, p_ref, normal, self.points, self.bodies)
+
+
+def _robot_geometry(task_context: TaskContext, bd: BenchmarkDescriptor) -> Optional[Tuple[RobotGeometry, BodyPosePaths]]:
+    """Geometry and body pose paths of the TaskContext, or ``None`` without geometry."""
+    prov = task_context.provenance
+    data = prov.get("robot_geometry")
+    if data is None:
+        return None
+    paths, quats = prov.get("robot_body_paths"), prov.get("robot_body_quat_paths")
+    if not paths or not quats:
+        raise ValueError("TaskContext %s/%s has robot_geometry but no robot_body_paths / robot_body_quat_paths"
+                         % (task_context.task_id, task_context.layout_id))
+    geometry = RobotGeometry.from_dict(data)
+    spacing = bd.robot_point_spacing_m
+    if is_unknown(spacing) or float(spacing) != geometry.spacing_m:
+        raise ValueError("BD %r says robot_point_spacing_m = %r but TaskContext %s/%s was probed with robot geometry "
+                         "spaced %r; use the BD the probe ran with" % (bd.name, spacing, task_context.task_id,
+                                                                      task_context.layout_id, geometry.spacing_m))
+    times = task_context.nominal_ee_path.time_s
+    return geometry.restricted(sorted(paths)), BodyPosePaths(times, paths, quats)
+
+
+def _geometric_slide_normal(agent: AgentSpec, direction: np.ndarray, dz: float, p_ref: np.ndarray,
+                            robot: _RobotAt) -> Tuple[np.ndarray, Any]:
+    """:func:`_slide_normal` with the geometric standoff (module docstring, step 4)."""
+    def normal_at(phi: float) -> np.ndarray:
+        return -direction * math.cos(phi) + np.array(_UP) * math.sin(phi)
+
+    def contact_at(phi: float) -> Any:
+        contact = robot.contact(agent, p_ref, normal_at(phi))
+        if contact is None:
+            raise InstanceRejected("no_robot_contact_along_normal",
+                                   "a slide tilted by %r rad toward the EEF misses every robot sample point" % phi)
+        return contact
+
+    lo, hi = -0.5 * math.pi, 0.5 * math.pi
+    if contact_at(lo).standoff_m * math.sin(lo) > dz or contact_at(hi).standoff_m * math.sin(hi) < dz:
+        raise InstanceRejected("no_support_surface", "the EEF is too far above the surface to be touched")
+    while True:
+        mid = 0.5 * (lo + hi)
+        if mid <= lo or mid >= hi:
+            break
+        if contact_at(mid).standoff_m * math.sin(mid) < dz:
+            lo = mid
+        else:
+            hi = mid
+    values = {phi: point_standoffs(agent, p_ref, normal_at(phi), robot.points) for phi in (lo, hi)}
+    first = {phi: int(np.argmax(v)) for phi, v in values.items()}
+    if not (np.isfinite(values[lo][first[hi]]) and np.isfinite(values[hi][first[lo]])):
+        raise InstanceRejected("slide_normal_unsolved",
+                               "standoff(phi) sin(phi) = %r has no root: the bisection closes at phi = %r on a jump "
+                               "of the geometric standoff (%r -> %r m)"
+                               % (dz, hi, float(values[lo].max()), float(values[hi].max())))
+    phi = 0.5 * (lo + hi)
+    return normal_at(phi), contact_at(phi)
+
+
 def instantiate(spec: HazardSpec, task_context: TaskContext, seed: int, bd: BenchmarkDescriptor,
                 settings: InstantiateSettings) -> HazardInstance:
     """See the module docstring."""
@@ -219,6 +300,7 @@ def instantiate(spec: HazardSpec, task_context: TaskContext, seed: int, bd: Benc
     nominal = SampledPath.from_pose_sequence(task_context.nominal_ee_path)
     offset = np.array(exposure.offset_m, dtype=np.float64)
     r_eef = _known(bd, "eef_contact_radius_m")
+    robot_geo = _robot_geometry(task_context, bd)
     agent = spec.agent
     window = settings.release_velocity_window_s
     tc_hash = task_context.hash()
@@ -239,6 +321,7 @@ def instantiate(spec: HazardSpec, task_context: TaskContext, seed: int, bd: Benc
         standoff = support_radius_m(agent, normal) + r_eef
         p_ref = nominal.pos(t_hit) + offset
         params = {"g": gravity}  # type: Dict[str, Any]
+        contact = None if robot_geo is None else _RobotAt(robot_geo[0], robot_geo[1], t_hit).contact(agent, p_ref, normal)
         extra["mapping"] = {"release_height_m": fall_release_height_m(tau, gravity), "gravity_mps2": gravity}
     elif family == FAMILY_REACH:
         direction, extra["direction_source"] = _direction(motion, stream, horizontal=False)
@@ -252,6 +335,7 @@ def instantiate(spec: HazardSpec, task_context: TaskContext, seed: int, bd: Benc
         normal = -direction
         standoff = support_radius_m(agent, normal) + r_eef
         p_ref = nominal.pos(t_hit) + offset
+        contact = None if robot_geo is None else _RobotAt(robot_geo[0], robot_geo[1], t_hit).contact(agent, p_ref, normal)
         params = {"direction": direction.tolist(), "reach_distance_m": geometry.reach_distance_m,
                   "overshoot_m": geometry.overshoot_m, "speed_profile": profile, "release_window_s": window}
         extra["mapping"] = {"reach_distance_m": geometry.reach_distance_m, "overshoot_m": geometry.overshoot_m,
@@ -276,13 +360,30 @@ def instantiate(spec: HazardSpec, task_context: TaskContext, seed: int, bd: Benc
                                                                 len(task_context.support_surfaces)))
         t_hit, p_ref, surface = chosen
         top = surface.max_m[2]
-        normal, standoff = _slide_normal(agent, direction, top + h_z - p_ref[2], r_eef)
+        if robot_geo is None:
+            normal, standoff = _slide_normal(agent, direction, top + h_z - p_ref[2], r_eef)
+            contact = None
+        else:
+            normal, contact = _geometric_slide_normal(agent, direction, top + h_z - p_ref[2], p_ref,
+                                                      _RobotAt(robot_geo[0], robot_geo[1], t_hit))
         params = {"direction": direction.tolist(), "speed_mps": intensity["approach_speed_mps"],
                   "release_window_s": window}
         extra["mapping"] = {"start_distance_m": slide_start_distance_m(intensity["approach_speed_mps"], tau),
                             "speed_mps": intensity["approach_speed_mps"]}
         extra["support_surface"] = dict(surface.to_dict(), top_m=top, hazard_half_height_m=h_z)
 
+    if robot_geo is not None:
+        if contact is None:
+            raise InstanceRejected("no_robot_contact_along_normal",
+                                   "a hazard approaching p_ref = %s along %s at t_hit = %r misses every robot sample "
+                                   "point" % (p_ref.tolist(), normal.tolist(), t_hit))
+        standoff = contact.standoff_m
+        geo = {"standoff_source": "robot_geometry", "standoff_body": contact.body,
+               "robot_point_spacing_m": robot_geo[0].spacing_m, "contact_point": contact.point.tolist(),
+               "hazard_support_radius_m": support_radius_m(agent, normal)}
+    else:
+        geo = {"standoff_source": "eef_contact_radius", "standoff_body": None, "robot_point_spacing_m": None,
+               "contact_point": (p_ref + r_eef * normal).tolist(), "hazard_support_radius_m": standoff - r_eef}
     centroid = p_ref + standoff * normal
     if family == FAMILY_SLIDE:
         centroid[2] = extra["support_surface"]["top_m"] + extra["support_surface"]["hazard_half_height_m"]
@@ -316,9 +417,12 @@ def instantiate(spec: HazardSpec, task_context: TaskContext, seed: int, bd: Benc
         "anchor": {"phase": ref.phase, "frac": ref.frac, "t_star_s": t_star, "offset_m": list(exposure.offset_m)},
         "anchor_point": p_ref.tolist(),
         "contact_normal": normal.tolist(),
-        "contact_point": (p_ref + r_eef * normal).tolist(),
+        "contact_point": geo["contact_point"],
         "standoff_m": standoff,
-        "hazard_support_radius_m": standoff - r_eef,
+        "standoff_source": geo["standoff_source"],
+        "standoff_body": geo["standoff_body"],
+        "robot_point_spacing_m": geo["robot_point_spacing_m"],
+        "hazard_support_radius_m": geo["hazard_support_radius_m"],
         "eef_contact_radius_m": r_eef,
         "hazard_quat_wxyz": list(IDENTITY_QUAT),
         "hazard_quat_source": "identity (HazardSpec.agent has no orientation field)",

@@ -12,11 +12,18 @@ every reason that applies (``G0Result.reasons``). Positions are hazard centroids
 ``slide_off_support``                slide: the centroid leaves the xy extent of its support surface.
 ``non_closing``                      at ``t_hit`` the hazard does not approach the nominal EEF along the contact
                                      normal (closing speed ``-(v_hazard - v_eef) . n <= 0``).
-``early_contact``                    some time in ``[onset, t_hit)`` the centroid is closer than
-                                     ``standoff - g0.early_contact_tol_m`` to the nominal robot: the EEF, plus
-                                     the robot-side collision bodies when the probe recorded them
-                                     (``checks.early_contact_check`` = ``eef_only`` / ``eef_and_bodies``). The
-                                     standoff along the hit normal is used for every point and direction.
+``early_contact``                    some time in ``[onset, t_hit)`` the hazard reaches the nominal robot early.
+                                     With robot geometry in the TaskContext (D15 a; ``checks.early_contact_check``
+                                     = ``robot_geometry``): the robot's sample points, placed with the body poses
+                                     interpolated to each probe time (linear / normalised lerp), and the held
+                                     object's bodies from ``held_object_path`` (as points, at times between two
+                                     adjacent held samples) penetrate the hazard shape (identity orientation) by
+                                     more than ``g0.early_contact_tol_m``; the same test as the distance check
+                                     below, with the robot reduced to points. Without geometry, unchanged: the
+                                     centroid is closer than ``standoff - g0.early_contact_tol_m`` to the EEF, plus
+                                     the robot body origins when the probe recorded them (``eef_only`` /
+                                     ``eef_and_bodies``); the standoff along the hit normal is used for every point
+                                     and direction.
 ``r1_step_ratio``                    (only when the BD says ``hazard_ccd: false``) a hook interval of the
                                      kinematic phase moves the hazard more than ``max_step_ratio`` x its
                                      smallest half extent (``needs_substeps`` at the BD physics step), or the
@@ -27,7 +34,7 @@ The parking pose is the host's (checked by conformance C2), not by G0. ``tau_vis
 measured by the gate stage (record only, D5).
 """
 import dataclasses
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 import numpy as np
 
@@ -35,6 +42,7 @@ from .._records import is_unknown
 from ..instantiate.builder import support_radius_m
 from ..kinematics.hit import FAMILY_FALL, FAMILY_SLIDE
 from ..kinematics.path import SampledPath
+from ..kinematics.standoff import BodyPosePaths, RobotGeometry, penetration_depths, robot_points_at
 from ..kinematics.subdivide import hook_times, needs_substeps
 from ..spec.benchmark_descriptor import BenchmarkDescriptor
 from ..spec.instance import HazardInstance
@@ -61,6 +69,56 @@ def _provenance(instance: HazardInstance, key: str) -> Any:
         raise ValueError("instance %r has no provenance.%s; G0 needs instances from hazardlib.instantiate"
                          % (instance.instance_id, key))
     return instance.provenance[key]
+
+
+def _held_points(held: Any, nominal_times: np.ndarray, t: float) -> Tuple[np.ndarray, List[str]]:
+    """Held-object body positions at ``t`` from ``held_object_path`` (samples on the nominal times): exactly at a
+    sample, or interpolated between two samples adjacent on the nominal time grid that hold the same bodies."""
+    if not held:
+        return np.zeros((0, 3)), []
+    times = list(held["time_s"])
+    index = {float(v): k for k, v in enumerate(nominal_times)}
+    for k, tk in enumerate(times):
+        if tk == t:
+            names = sorted(held["bodies"][k])
+            return np.array([held["bodies"][k][n] for n in names], dtype=np.float64), names
+        if k + 1 < len(times) and tk < t < times[k + 1]:
+            a, b = held["bodies"][k], held["bodies"][k + 1]
+            if index.get(times[k + 1]) != index.get(tk, -2) + 1 or set(a) != set(b):
+                return np.zeros((0, 3)), []
+            u = (t - tk) / (times[k + 1] - tk)
+            names = sorted(a)
+            return np.array([(1.0 - u) * np.array(a[n]) + u * np.array(b[n]) for n in names], dtype=np.float64), names
+    return np.zeros((0, 3)), []
+
+
+def _early_contact_geometry(instance: HazardInstance, task_context: TaskContext, nominal: SampledPath,
+                            hazard: np.ndarray, probe_t: np.ndarray, tol: float) -> Dict[str, Any]:
+    prov = task_context.provenance
+    geometry = RobotGeometry.from_dict(prov["robot_geometry"])
+    paths, quats = prov.get("robot_body_paths"), prov.get("robot_body_quat_paths")
+    if not paths or not quats:
+        raise ValueError("TaskContext %s/%s has robot_geometry but no robot_body_paths / robot_body_quat_paths"
+                         % (task_context.task_id, task_context.layout_id))
+    poses = BodyPosePaths(nominal.times_s, paths, quats)
+    geometry = geometry.restricted(sorted(paths))
+    held = prov.get("held_object_path")
+    worst = None  # type: Any
+    n_points = 0
+    for t, centre in zip(probe_t, hazard):
+        points, names = robot_points_at(geometry, poses, float(t))
+        held_pts, held_names = _held_points(held, nominal.times_s, float(t))
+        if held_names:
+            points = np.concatenate([points, held_pts])
+            names = names + held_names
+        n_points = max(n_points, len(names))
+        depths = penetration_depths(instance.agent, centre, points)
+        k = int(np.argmax(depths))
+        if worst is None or depths[k] > worst[0]:
+            worst = (float(depths[k]), names[k], float(t))
+    return {"max_penetration_m": worst[0], "body": worst[1], "time_s": worst[2], "tol_m": tol,
+            "samples": int(probe_t.size), "points": n_points, "held_object_points": bool(held),
+            "robot_point_spacing_m": geometry.spacing_m}
 
 
 def run_g0(instance: HazardInstance, task_context: TaskContext, bd: BenchmarkDescriptor,
@@ -136,6 +194,13 @@ def run_g0(instance: HazardInstance, task_context: TaskContext, bd: BenchmarkDes
     if probe_t.size == 0:
         probe_t = np.array([onset])
     hazard = frames.pos(probe_t)
+    if task_context.provenance.get("robot_geometry") is not None:
+        checks["early_contact_check"] = "robot_geometry"
+        checks["early_contact"] = _early_contact_geometry(instance, task_context, nominal, hazard, probe_t,
+                                                          settings.early_contact_tol_m)
+        if checks["early_contact"]["max_penetration_m"] > settings.early_contact_tol_m:
+            reasons.append("early_contact")
+        return _finish(instance, bd, settings, frames, onset, t_hit, dt, reasons, checks)
     robot = {"eef": nominal.pos(probe_t)}
     bodies = task_context.provenance.get("robot_body_paths")
     if bodies:
@@ -153,7 +218,12 @@ def run_g0(instance: HazardInstance, task_context: TaskContext, bd: BenchmarkDes
                                "threshold_m": threshold, "samples": int(probe_t.size)}
     if nearest[0] < threshold:
         reasons.append("early_contact")
+    return _finish(instance, bd, settings, frames, onset, t_hit, dt, reasons, checks)
 
+
+def _finish(instance: HazardInstance, bd: BenchmarkDescriptor, settings: G0Settings, frames: SampledPath,
+            onset: float, t_hit: float, dt: Any, reasons: List[str], checks: Dict[str, Any]) -> G0Result:
+    """The R1 check (last) and the result."""
     if bd.hazard_ccd is True:
         checks["r1_check"] = "skipped: BD hazard_ccd is true"
     else:

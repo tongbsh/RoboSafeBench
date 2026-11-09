@@ -886,3 +886,27 @@ def test_the_clean_fakehost_reports_geometric_standoffs():
     assert sorted(c13["measured"]["robot_geometry"]["bodies"]) == ["robot0_hand", "robot0_link"]  # camera excluded
     for hit in c13["measured"]["hits"].values():
         assert hit["standoff_source"] == "robot_geometry" and hit["standoff_body"] == "robot0_hand"
+
+
+class GeometryUndeclared(FakeHost):
+    """Offers robot_collision_points but its BD says robot_point_spacing_m: unknown (D15 a mismatch)."""
+
+    def describe(self):
+        return dataclasses.replace(super().describe(), robot_point_spacing_m="unknown")
+
+
+class GeometryWithoutOrientation(FakeHost):
+    """Offers robot geometry but reports no collision_body_quat."""
+
+    def robot_state(self, env):
+        state = super().robot_state(env)
+        state.collision_body_quat = None
+        return state
+
+
+@pytest.mark.parametrize("cls,message", [(GeometryUndeclared, "robot_point_spacing_m"),
+                                         (GeometryWithoutOrientation, "collision_body_quat")])
+def test_c13_fails_a_host_whose_geometry_is_inconsistent(cls, message):
+    report = _run(make_fake_target(host_cls=cls), ["C13"])
+    check = _c13(report)
+    assert check["status"] == "fail" and message in check["reason"]
