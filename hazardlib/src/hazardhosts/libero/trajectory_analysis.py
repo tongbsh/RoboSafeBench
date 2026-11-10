@@ -244,18 +244,52 @@ def derive(root, settings):
     print("DERIVED " + json.dumps({k: summary[k] for k in ("n_demonstrations", "n_source_success", "n_replay_success")}))
 
 
+def validate_in_workers(out, task_index, workers):
+    """Split the demonstrations round-robin over ``workers`` processes of the ``validate`` stage (each
+    has its own simulator); logs go to ``<out>/worker_<k>.log``. Returns the worst return code."""
+    import subprocess
+    import sys
+    root = Path(out)
+    rows = json.loads((root / "coverage.json").read_text())["demonstrations"]
+    processes = []
+    for worker in range(workers):
+        demos = [row["demo"] for i, row in enumerate(rows) if i % workers == worker]
+        if not demos:
+            continue
+        command = [sys.executable, "-u", "-m", "hazardhosts.libero.trajectory_analysis", "validate", "--out",
+                   str(root), "--demos", ",".join(demos)]
+        if task_index is not None:
+            command += ["--task-index", str(task_index)]
+        log = (root / ("worker_%d.log" % worker)).open("w")
+        processes.append((worker, subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT), log))
+    codes = {}
+    for worker, process, log in processes:
+        codes[worker] = process.wait()
+        log.close()
+        print("WORKER " + json.dumps({"worker": worker, "returncode": codes[worker]}), flush=True)
+    save_json(root / "workers_result.json", codes)
+    return max(abs(code) for code in codes.values()) if codes else 0
+
+
 def main():
     parser = argparse.ArgumentParser(__doc__)
     parser.add_argument("stage", choices=["collect", "derive", "validate", "report"])
     parser.add_argument("--out", required=True)
     parser.add_argument("--demos", help="validation subset for debugging; omitted processes every demonstration")
+    parser.add_argument("--task-index", type=int, help="task of the suite instead of the protocol file's; "
+                        "one output directory per task (the directory identity includes it)")
+    parser.add_argument("--workers", type=int, help="validate only: number of parallel simulator processes")
     args = parser.parse_args()
     settings = load_config("trajectory_analysis", strict=True, config_dir=Path(__file__).resolve().parents[4] /
                            "configs/hazard/pilot/libero")
+    if args.task_index is not None:
+        settings = dict(settings, task_index=args.task_index)
     if args.stage == "collect":
         collect(args.out, settings)
     elif args.stage == "derive":
         derive(args.out, settings)
+    elif args.stage == "validate" and args.workers:
+        raise SystemExit(validate_in_workers(args.out, args.task_index, args.workers))
     else:
         from .trajectory_candidates import validate, report
         if args.stage == "validate":
