@@ -1,5 +1,12 @@
 # DyniSafety Benchmark
 
+> **Research development (2026-11-10):** the Hazard-as-Spec implementation in
+> `hazardlib/` uses **original LIBERO**, with four canonical suites of ten tasks
+> each. Its protocol is separate from the legacy SafeLIBERO backend described
+> below. See [research progress](docs/researchProgress.md) and
+> [the original LIBERO report](docs/design/reports/H-libero.md), and
+> [the four-task π₀.₅ pilot](docs/design/reports/R1-L.md).
+
 DyniSafety is a dynamic physical safety benchmark for Vision-Language-Action
 (VLA) policies: it measures whether a policy keeps task success while responding
 safely to moving obstacles and human-like disturbances across four simulators

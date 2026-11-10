@@ -1,42 +1,17 @@
-# H3 — LIBERO（SafeLIBERO）适配器（`BENCH=libero`）
+# H3 — 原始 LIBERO 适配器（BENCH=libero；D18）
 
-**先读 `H00_host_template.md`，本文件只写 LIBERO 特有部分。**
-起点分支 `hazard/integration`（须已合并 T07，即 D15 a、b、e）；环境、SafeLIBERO 树、演示路径与已知坑见 `docs/design/env_notes/libero.md`（E00(libero) 产出）；本任务有**最多可复用的既有代码**，也是**手工 L1–L3 对照基线**所在，所以回归安全最重要。**按 D16 执行**：本任务完成后由 R1-L 接上被测策略，所以 `EpisodeDriver` 要能被 `hazardctl run` 直接使用。
+2026-11-10 用户更正覆盖本文件原来的 SafeLIBERO 方案。以原始 LIBERO 为宿主，四套件 `libero_spatial` / `libero_object` / `libero_goal` / `libero_10`，每套件 10 任务。
 
-## 已核实的事实（`02_benchmark_profiles.md` §5）
-- 危险体来源：SafeLIBERO 场景里手工放置的障碍物，名字含 `obstacle`，停放在 |x|、|y|>5 之外（`backends/libero/disturbance/_support.py: detect_visible_obstacles`）。
-- 接触：`backends/_engine/mujoco_contact.py`；`backends/libero/contact.py` 的机器人侧集合含 `obj_of_interest`（任务物体）。
-- G1 / G2 的既有部件：`policies/safety/oracle.py`、`policies/safety/aegis/*`、`backends/libero/safety/*`。
-- 手工 L1–L3 的落点来自 SafeLIBERO 作者放置，时机来自 `onset_schedule.py`（阶段分层）与反应式触发；`phase_anchors` 的生成脚本不在仓库中。
+当前实现与验收见 `docs/design/reports/H-libero.md`；代码在当前仓库 `hazardlib/src/hazardhosts/libero/`。旧 H3 worktree 的四个草稿已复用并改造，其 SafeLIBERO 假设不再适用。
 
-## 特有要求
+要求：
+1. 原始 BDDL、任务物体、相机、原生成功谓词、官方任务顺序保持；不 import SafeLIBERO，不映射 `safelibero_*` 套件。
+2. 危险体通过内存 MJCF 追加独立自由刚体；按名字映射演示与官方 init 状态。停放隔离要同时有 C2 与原始场景回放对照。
+3. 遵守 H00 的物理步钩子、几何、接触语义、严格 BD、C1–C13、原生循环 item 14、T_stop、门控与成本账本要求。
+4. spatial 前四个官方任务，每任务前 10 集演示；另验证 goal 与 long 各一任务。回放失败计数，不从成功率分母里静默删除。
+5. 仅成功参考回放生成 TaskContext；试点单来源偏离明确记录。被测 π₀.₅ 不作探针来源。
+6. G1 停等与 G2 分开；G2 未实现时记 uncertified。滑入构造失败、不可见落物、低暴露都如实报告。
+7. 旧 SafeLIBERO 手工 L1–L3 映射要求已撤销，历史报告保留。
+8. R1-L 在相同布局、种子与名义时机上配对危险 / 无危险回合；复用现有模型适配器，输出实际策略相机 MP4、时间戳、JSONL 与试点安全表。
 
-1. **回归保护**：本任务开始前与结束后各运行一次 `pytest tests -q -m "not sim"`（以实际标记为准），两次结果必须一致；`git diff --stat origin/hazard/integration -- src/dynisafety` 必须为空。
-2. **危险体池**：把 SafeLIBERO 的预置障碍物当作**池**，不使用其作者放置的落点与时机——位置与时机全部由 `hazardlib` 实例化；`alloc_hazard` 认领一个池成员，`set_hazard_visible(False)` 恢复停放。同一任务里池成员的形状 / 质量要在 BD 中声明（不能假设可自定义尺寸；若不可自定义，实例化的 `agent` 需约束到池成员，并如实记录这一限制）。
-3. **接触语义改动**：新宿主的 `robot_contact_bodies` 不含任务物体（只含机器人；抓持物标 `held_object`）。这与旧后端不同，**必须在汇报中列出受影响的旧结论方向**，但不重算旧结果。
-4. **实体**：任务物体名来自既有配置的 `task_object_names`；同时核实 BDDL 目标谓词能否静态读出任务相关实体（给出读取方式或结论“不行”）。**不得**用 `phase_anchors` 当探针结果；应自行做无危险回放得到阶段边界。
-5. **控制频率与子步**：实测 `control_dt`、`physics_dt`、每动作子步数，写入 BD；确认在 robosuite 的哪个函数里可以挂子步钩子（记录文件与行号）。
-6. **范围**：SafeLIBERO 的 `spatial` 套件 4 个任务即可，另加 `goal` 与 `long` 各 1 个任务，用来暴露旧代码里逐任务调参（`l1_home_workspace_onset` 等）的位置；汇报里列出这些旧调参在新范式下由什么机制取代（或无法取代）。
-7. **旧手工 L1–L3 的对照**：在汇报里给出一张映射表：旧 L1 / L2 / L3 ↔ 新的 `intrusion.fall / slide / reach` 在强度轴上的近似位置（用实测的 τ 估计旧设计的名义可用反应时间）。这张表是 H1 假设（强度轴能否复现手工排序）的前置输入，**只估计，不下结论**。
-8. **G1 / G2**：G1 用 `OraclePolicyWrapper` 包装演示回放（或一个参考策略）；G2 评估 AEGIS 能否作为 `PrivilegedAvoider` 接入（只做接口可行性评估，不做大规模运行）。
-
-9. **布局与探针（D16 a）**：
-   - `layout_id` = 演示文件 + 集号；`reset_episode(env, task_id, layout_id, seed)` 把该集演示的初始状态设进 SafeLIBERO 场景（按关节 / 刚体名映射，危险体池停放在远处；做法以 E00(libero) 的结论为准）。
-   - 探针素材：每个任务取演示前若干集（不少于 10 集）在各自初始状态上开环回放，**只保留回放成功的集**，记录 trace；回放失败率与原因写进汇报。R4 要求至少两类来源，第二类（脚本专家或闭环参考策略）做不了就在汇报里写明缺口，试点用 `min_source_kinds: 1`（与 H1 相同的偏离）。
-   - 实测 D16 a 要求的差异：同一任务下，演示初始状态与官方 `init_files` 初始状态之间任务物体位置的差别，以及演示回放的 EEF 路径与阶段时间分布（给数字，不下结论）。
-10. **机器人几何（D15 a）**：实现 `robot_collision_points` 与 `RobotState.collision_body_quat`（MuJoCo：`model.geom_*`、`model.mesh_vert`，在刚体系里按声明间距采样），BD 填 `robot_point_spacing_m`；C13 三族都走几何 standoff，报告各族首个接触刚体。抓持物照常放进 `collision_body_names`（D15 b）。
-11. **供 R1-L 使用**：`policy_observation` 的键与图像格式要与 `src/dynisafety/backends/libero` 交给策略的观测一致（相机名、分辨率、是否翻转、状态向量），在汇报里列出对照表；任务语言指令从 BDDL 读出，经 `policy_observation` 或宿主方法提供，写清楚接口。不实现策略桥接（R1-L 的事）。
-12. **宿主注册**：写在 `hazardhosts/libero/target.py`，`__init__.py` 保持为空（D15 e）。
-
-13. **E00(libero) 的结论（2026-11-09，先读 `env_notes/libero.md`）**：
-   - 环境 `dynisafety-libero`（Python 3.10、numpy 1.26.4、mujoco 3.6.0、robosuite 1.4.0、torch 2.8.0+cu128）；启动前设 `TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1`、`LIBERO_CONFIG_PATH=/data0/tongbaoshun/benchmarks/libero/config/safelibero`、`MUJOCO_GL=egl`；`dynisafety` 从仓库根目录运行。
-   - SafeLIBERO 树是 vlsa-aegis `57b1aef` 的副本（`third_party/dyniSafety_libero` 软链，用户定）。它**没有**旧 L3 的人手：第 7 条的 L3 一列留空并注明原因。它也没有普通 `libero_*` 套件；普通 LIBERO 与 SafeLIBERO 的包都叫 `libero`，不能在同一进程里 import。演示用 h5py 直接读，不需要 import 普通 LIBERO。
-   - 用 SafeLIBERO 的 Level I 场景（与旧论文主结果一致）；任务按名字对应到 `/data0/dataset/LIBERO/<套件>/<任务>_demo.hdf5`。
-   - 初始状态按**关节名**映射（障碍物的自由关节在状态向量中间，不能按位置截取拼接）；`states[k]` 是动作 k 之前的状态，`obs[k]` 是动作 k 之后的观测。
-   - 开环回放不是逐位精确的（E00 实测 20 集里 2 集失败，第 1 步就有约 5e-3 的 qpos 误差，主要在夹爪），所以第 9 条只保留回放成功的集；回放误差的统计写进汇报。
-   - 控制 20 Hz、物理步 0.002 s、每动作 25 子步；子步循环在 `robosuite/environments/base.py:388-393`。
-   - GPU：GPU 0 与 GPU 2 都可用（默认 2，`CUDA_VISIBLE_DEVICES=2 MUJOCO_EGL_DEVICE_ID=2`）；卡上约 92 GB 是用户的占卡进程，不要动它；GPU 1 不用。
-
-## 额外验收
-- 回归检查前后一致（贴两次输出的差异）。
-- 汇报里的“旧 L1–L3 → 新强度轴”映射表附原始数据路径。
+环境：使用 `env_notes/libero.md` 的 **upstream** LIBERO_CONFIG_PATH；其余 GPU 与版本约束不变。不得改上游文件或旧 `src/dynisafety` 后端。

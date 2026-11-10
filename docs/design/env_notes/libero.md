@@ -1,3 +1,7 @@
+# 当前入口更正（2026-11-10，D18）
+
+新 H3 / R1-L 使用**原始 LIBERO**，四个官方套件各 10 任务。`LIBERO_CONFIG_PATH` 使用本文件中 **upstream** 配置目录，不使用下方历史 SafeLIBERO 配置。原始 checkout 为 `third_party/libero_upstream`；没有改动上游。环境仍为 `dynisafety-libero`，其他数值以 H3 汇报为准。以下 E00 记录保留作历史。
+
 # LIBERO / SafeLIBERO 环境笔记（E00-libero，2026-11-09）
 
 环境 `dynisafety-libero` 是本任务按仓库配方新建的（本机之前没有，也没有 `openvla-oft`）。克隆、配置、日志都在仓库外；没有动 RLinf 的 venv、`~/.libero/config.yaml`、`embodySafeAgent/` 下的任何文件，也没有动其他基准的环境。

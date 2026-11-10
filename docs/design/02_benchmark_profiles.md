@@ -1,6 +1,6 @@
 # 六个基准的接入档案
 
-对象：LIBERO（SafeLIBERO）、SimplerEnv、RoboTwin、RoboCasa365、RoboDojo、CALVIN。前置：读 `00_paradigm.md` 与 `01_integration_rules.md`。
+对象：原始 LIBERO（D18）、SimplerEnv、RoboTwin、RoboCasa365、RoboDojo、CALVIN。前置：读 `00_paradigm.md` 与 `01_integration_rules.md`。
 证据来源：前四个来自本仓库代码与 P0 审计；RoboDojo、RoboCasa 来自 `docs/audit/r1_benchmark_capability.md`；CALVIN 来自对 `mees/calvin`（`fa03f01`）与 `mees/calvin_env`（`797142c`）的源码阅读。
 标注：**[已核实]** 源码里直接看到；**[推断]**；**[待探针]**。所有 `[待探针]` 项必须由对应适配器任务在服务器上消除，不得凭背景知识当事实使用。
 
@@ -10,7 +10,7 @@
 
 | 基准 | 引擎 | 环境 / Python | 时基 | 评测循环归属 | 预期 Tier | 预期接入难度 |
 |---|---|---|---|---|---|---|
-| LIBERO（SafeLIBERO） | MuJoCo（robosuite） | 既有 `openvla-oft` 环境（README）；Python 3.10 **[推断]** | 控制频率 **[待探针]** | 我们自己的脚本 | A | 低（有现成代码；依赖 SafeLIBERO 预置障碍物） |
+| 原始 LIBERO | MuJoCo（robosuite） | `dynisafety-libero`；Python 3.10 | 20 Hz；物理步 0.002 s（H3 实测） | 我们自己的脚本 | A（C1–C13 已验收） | 内存 MJCF 注入，保留原始任务 |
 | SimplerEnv（bridge） | SAPIEN 2.2.2 + ManiSkill2 real2sim | 既有 SimplerEnv 环境 | `control_freq=5`，`sim_freq=500`（`bridge.yaml`）**[已核实]** | 我们自己的脚本 | A | 低到中（控制步长 0.2 s，须子步挂钩；真实背景叠加） |
 | RoboTwin（main20） | SAPIEN 3.0.0b1 | 既有 RoboTwin 环境 | 物理 1/250 s；无统一 `control_freq` **[已核实]** | 我们自己的脚本 | A | 中到高（逐任务钩子与主臂规则 → 注解预算） |
 | RoboCasa365 | MuJoCo 3.3.1，`numpy==2.2.5` | `dynisafety-robocasa`，Python 3.11 **[已核实]** | `control_freq=20`（`kitchen.py:381`）；物理步长 **[待探针]** | robosuite 环境，我们自己的脚本 | A | 低到中 |
@@ -106,15 +106,16 @@
 
 ---
 
-## 5. LIBERO（SafeLIBERO）
+## 5. 原始 LIBERO（D18，2026-11-10）
 
-- 空间锚点依赖 SafeLIBERO **手工放置**的障碍物（`detect_visible_obstacles`：名字含 `obstacle`，停放在 |x|、|y|>5 之外）**[已核实]** → 它们就是现成的“预置池”；新范式把它们当危险体池使用，位置与时机改由 TaskContext 实例化，不再用 SafeLIBERO 作者的落点。
-- 接触：`backends/_engine/mujoco_contact.py`；`robot_contact_bodies` 目前含任务物体（`obj_of_interest`）→ 按 C1 的决定改为：只含机器人，抓持物标 `held_object`。
-- 实体：任务物体名（本仓库配置里的 `task_object_names`）、BDDL 目标谓词 **[推断，待核实]**。
-- 探针：LIBERO 演示（HDF5）**[推断]**；已有 16 个任务的阶段锚点（`libero.yaml: phase_anchors`，生成脚本不在仓库里）可作为对照，**不得**直接当作新探针结果。
-- G1 / G2：`policies/safety/oracle.py` 与 `aegis` + `backends/libero/safety/*` 已有 **[已核实]**。
-- 手工 L1–L3 与既有结果是**人工对照基线**；旧后端保持原样。
-- 局限：普通 LIBERO（非 SafeLIBERO）没有预置障碍物，需 MJCF 注入，**[待探针]**；因此开发期只用 SafeLIBERO 套件。
+- 四个套件：`libero_spatial`、`libero_object`、`libero_goal`、`libero_10`，各 10 任务；保持官方顺序，任务 id = `<suite>/<官方任务名>`。
+- 上游 `Lifelong-Robot-Learning/LIBERO@8f1084e`；与旧 SafeLIBERO 代码分开，不把套件改名为 `safelibero_*`。
+- 原始 BDDL / 物体 / 相机 / 成功谓词保持；在内存 MJCF 的 worldbody 末尾追加独立危险体，自由关节状态按名字映射，停放时关碰撞并补偿重力。
+- 时钟、接触与距离：每个 `MjSim.step` 前后挂钩；20 Hz 控制、0.002 s 物理步；scratch MjData 查询几何接触；`mj_geomDistance` 真几何间距。
+- 机器人侧只含机器人，抓持物单列；BDDL 的 `obj_of_interest` 与 `goal_state` 可静态读出，不把全部任务物体当作机器人。
+- 探针为官方 HDF5 演示的开环回放，布局取同集初始状态（D16）；正式双来源要求仍未满足，试点显式 `min_source_kinds: 1`。
+- G1 用参考演示的停等包装；G2 尚无该新宿主的完整 AEGIS 桥接，失败的 G1 标 `uncertified`。
+- C1–C13：12 pass / 1 skip（C12 单环境）；证据见 H3 汇报。旧 SafeLIBERO 手工 L1–L3 与本协议无直接一一对照，历史结论不重算。
 
 ## 6. SimplerEnv（bridge）
 

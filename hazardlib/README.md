@@ -1,9 +1,37 @@
 # hazardlib
 
 Simulator-agnostic core of the Hazard-as-Spec paradigm
-(`docs/design/00_paradigm.md`, `01_integration_rules.md`). Implemented so far: data
-structures and interfaces (T01) and the seconds-based kinematics and calibration math
-(T02). Not yet: safety semantics, runtime, probes, gates, conformance tests (T03–T06).
+(`docs/design/00_paradigm.md`, `01_integration_rules.md`). Implemented: specification objects, kinematics, safety semantics, runtime,
+probes, instantiation, gates, calibration, conformance C1–C13, freezing and
+paired policy run/report. Real hosts: CALVIN (pilot; fall timing follow-up
+pending) and **original LIBERO** (four canonical suites, ten tasks each).
+LIBERO does not import SafeLIBERO; hazards are appended to the original MJCF
+in memory. See [LIBERO report](../docs/design/reports/H-libero.md),
+[four-task π₀.₅ pilot](../docs/design/reports/R1-L.md), and
+[research progress](../docs/researchProgress.md).
+
+## Analyze all demonstrations of one task
+
+The development analyzer uses all 50 demonstrations of spatial task 0. It
+reconstructs recorded states for geometry, independently replays actions, derives
+phase/scene-conditioned parameters, and validates candidates without a tested VLA.
+Use the original LIBERO environment and GPU variables from
+[the environment notes](../docs/design/env_notes/libero.md).
+
+```bash
+export PYTHONPATH="$PWD/hazardlib/src"
+python -m hazardhosts.libero.trajectory_analysis collect --out _logs/libero_spatial_task0_50
+python -m hazardhosts.libero.trajectory_analysis derive --out _logs/libero_spatial_task0_50
+python -m hazardhosts.libero.trajectory_analysis validate --out _logs/libero_spatial_task0_50
+python -m hazardhosts.libero.trajectory_analysis report --out _logs/libero_spatial_task0_50
+```
+
+The development protocol is `configs/hazard/pilot/libero/trajectory_analysis.yaml`.
+Outputs include `analysis_report.md`, `task_configuration.yaml`, per-layout
+candidate ledgers, and standalone plots. Collection checks input identity before
+resuming; validation retains completed families and physical replay caches.
+Recorded success and local replay success are distinct. Uncertified candidates
+are never asserted solvable, and these bundles are not formal frozen manifests.
 
 ## Layout
 
@@ -21,7 +49,7 @@ hazardlib/
     hashing.py                   canonical JSON -> sha256 (format rules in the module docstring)
     config.py                    YAML loading for configs/hazard/ with strict mode
     _records.py                  internal dataclass <-> dict machinery
-  src/hazardhosts/<bench>/       empty adapter packages: libero simplerenv robotwin robocasa robodojo calvin
+  src/hazardhosts/<bench>/       real hosts: libero, calvin; scaffolds: simplerenv robotwin robocasa robodojo
   tests/
 ../configs/hazard/               bd/calvin.yaml (draft), annotations/, families|intensity|gates|
                                  semantics|conformance.yaml (skeletons, every value PLACEHOLDER)
