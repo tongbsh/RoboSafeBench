@@ -1,0 +1,32 @@
+# PILOT ONLY, not pre-registered. Settings of the LIBERO G2 privileged avoider
+# (hazardhosts.libero.avoider). They only decide what the avoider TRIES; a G2 pass is
+# always decided by the physical episode (no official contact and task success), so a
+# poor value costs certification rate, never soundness.
+
+# Hazard keep-out: bounding sphere of the hazard body (covers any tumbling orientation)
+# plus this margin. 0.03 m = 6 robot-geometry sampling intervals (0.005 m).
+clearance_margin_m: 0.03
+# How far ahead the moving hazard is predicted (privileged keyframes, then ballistic).
+# Covers the largest pilot tau (intensity.yaml tau_s hi = 1.5 s) plus the fall to the table.
+prediction_horizon_s: 2.0
+prediction_dt_s: 0.025
+# The robot only advances while this many upcoming nominal states are outside the
+# keep-out: the stop distance at the 0.24 m/s approach (T_stop <= 0.3 s = 6 control
+# steps, calibration.yaml of the pilot contexts) plus two steps.
+stop_lookahead_steps: 8
+# Released hazard slower than this for settle_steps control steps counts as resting
+# debris (same speed as gates.yaml g1.resume_hazard_speed_mps).
+rest_speed_mps: 0.05
+settle_steps: 2
+# Detour around resting debris: Cartesian offset of the nominal goals, searched over
+# these magnitudes (upward first, then eight horizontal directions with and without
+# lift), ramped by at most max_offset_step_m per control step (OSC goal reach is
+# 0.05 m per step) and planned detour_lookahead_steps nominal states ahead.
+offset_up_m: [0.03, 0.06, 0.09, 0.12, 0.15]
+offset_side_m: [0.04, 0.08, 0.12]
+offset_side_lift_m: [0.0, 0.06]
+max_offset_step_m: 0.02
+detour_lookahead_steps: 10
+# Subsampling of the 0.005 m robot surface samples used by the avoider's own clearance
+# test (keeps every k-th sample; the margin above is 6 sampling intervals).
+point_stride: 4
