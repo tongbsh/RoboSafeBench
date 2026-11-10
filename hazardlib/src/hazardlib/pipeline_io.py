@@ -21,11 +21,15 @@ RECORD_TAGS = ("instance", "rejection")
 
 
 def write_yaml(path: Any, data: Any) -> None:
-    Path(path).write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    # Real robot surface samples make TaskContexts tens of MB. LibYAML's safe
+    # implementation preserves the same schema without the Python parser cost.
+    dumper = getattr(yaml, "CSafeDumper", yaml.SafeDumper)
+    Path(path).write_text(yaml.dump(data, Dumper=dumper, sort_keys=False), encoding="utf-8")
 
 
 def read_yaml(path: Any) -> Any:
-    return yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+    return yaml.load(Path(path).read_text(encoding="utf-8"), Loader=loader)
 
 
 def read_task_context(path: Any) -> TaskContext:
