@@ -27,6 +27,9 @@ from .geometry import quat_to_mat
 from .host import LiberoHost
 from .pilot import assemble_config
 from .policies import DemoReplay
+from .scene_audit import rejection_reason as audit_reason, run_audit
+from .scene_clearance import (drop_samples, host_probes, playback_path, rejection_reason as clearance_reason,
+                              support_height, sweep, sweep_samples)
 from .trajectory_analysis import save_json
 from .trajectory_stats import distribution
 
@@ -84,7 +87,8 @@ def proposals(scene, summary, row, arrays, geometry, settings, workspace):
 
     Directions rotate with the initial target. Tau is a fraction of that
     phase's observed duration, bounded by available time and geometric space.
-    A slide anchors the physical finger surface, not a hand-centre proxy.
+    A slide anchors the physical finger surface, not a hand-centre proxy. ``settings["follow_through"]``
+    maps a family to its D19 exit mode (``pass`` / ``retract``); a family not listed gets none (a fall).
     """
     dt = scene["control_dt_s"]
     min_tau = settings["minimum_lead_control_steps"] * dt
@@ -150,6 +154,8 @@ def proposals(scene, summary, row, arrays, geometry, settings, workspace):
                             intensity["approach_speed_mps"] = speed
                         if family == "intrusion.reach":
                             params["speed_profile"] = "min_jerk"
+                        if family in settings["follow_through"]:
+                            params["follow_through"] = settings["follow_through"][family]
                         spec = {"spec_version": "1", "id": ident, "family": family, "agent": scene["agent"],
                             "motion": {"primitive": {"intrusion.fall": "free_fall", "intrusion.slide": "slide",
                                                        "intrusion.reach": "reach"}[family], "params": params},
@@ -184,7 +190,8 @@ def proposals(scene, summary, row, arrays, geometry, settings, workspace):
 
 
 def visibility_probe(host, instance, states, times, settings):
-    """Exact geometry/segmentation from saved PHYSICAL replay states; no dynamics."""
+    """Exact geometry/segmentation from saved PHYSICAL replay states; no dynamics. Only ``[onset, t_hit)`` is
+    probed, so the path is the instance's ``keyframes`` (an exit path starts at the release, ``t_hit``)."""
     handle = host.alloc_hazard(0, instance.agent)
     mem = handle.native
     path = SampledPath.from_pose_sequence(instance.keyframes)
@@ -228,6 +235,72 @@ def visibility_probe(host, instance, states, times, settings):
         host.free_hazard(handle)
 
 
+def sweep_candidate(host, instance, states, times, settings, surfaces, supports):
+    """Geometric scene-clearance sweep of one instance (module ``scene_clearance``): needs no dynamics."""
+    handle = host.alloc_hazard(0, instance.agent)
+    try:
+        probes = host_probes(host, handle, states, instance.onset_time_s, supports)
+        spacing = settings["scene_clearance_spacing_half_extent_fraction"] * min(instance.agent.half_extents_m)
+        if instance.family == "intrusion.fall":
+            release = instance.keyframes.pos[0]
+            rest_z = support_height(surfaces, release[:2]) + instance.agent.half_extents_m[2]
+            samples = drop_samples(release, rest_z, abs(float(host.m.opt.gravity[2])),
+                                   instance.keyframes.time_s[0], spacing, t_after=float(times[-1]))
+        else:
+            path = playback_path(instance)
+            samples = sweep_samples(path, instance.onset_time_s, path.t_end_s, host.control_dt, spacing)
+        result = sweep(samples, probes, settings["scene_clearance_tol_m"])
+        result["n_samples"] = len(samples)
+        return result
+    finally:
+        host.free_hazard(handle)
+
+
+def select_admitted(shortlisted, check, budget):
+    """First candidate (in the given order) that ``check(instance, item)`` admits. ``check`` returns
+    ``(attempted, admitted)``; only an attempted candidate (a physical episode ran) uses the ``budget``.
+    Candidates never reached are marked ``not_evaluated``. Returns ``(chosen entry or None, attempts)``."""
+    attempts, chosen = 0, None
+    for position, entry in enumerate(shortlisted):
+        _, instance, item = entry
+        attempted, admitted = check(instance, item)
+        attempts += bool(attempted)
+        if admitted:
+            chosen = entry
+            reached = position + 1
+            break
+        if attempts >= budget:
+            reached = position + 1
+            break
+    else:
+        reached = len(shortlisted)
+    for _, _, item in shortlisted[reached:]:
+        item["not_evaluated"] = "selected_earlier" if chosen is not None else "attempt_budget"
+    return chosen, attempts
+
+
+def certify(instance, g1_passed):
+    label = "wait_solvable" if g1_passed else "uncertified"
+    instance.certificate = Certificate.from_dict({"g0": True, "g1": g1_passed, "g2": None, "label": label,
+        "notes": "all-50 scene-conditioned pilot, D19: admitted by validity (scene clearance, nominal hit, "
+                 "robot-absent audit); G1 stop-wait-resume is a diagnostic only; G2 unavailable"})
+    return label
+
+
+CHOSEN_KEYS = ("spec", "evidence", "scene_clearance", "visibility_probe", "nominal_hit", "scene_audit", "g1")
+
+
+def family_result(ledger, chosen_item, instance):
+    chosen = None
+    if chosen_item is not None:
+        chosen = {"instance": instance.to_dict(), **{k: chosen_item[k] for k in CHOSEN_KEYS}}
+    return {"n_candidates": len(ledger),
+            "n_scene_clear": sum(p.get("scene_clearance", {}).get("passed", False) for p in ledger),
+            "n_visible": sum(p.get("visibility_probe", {}).get("passed", False) for p in ledger),
+            "dynamic_attempts": sum("nominal_hit" in p for p in ledger), "selected": chosen,
+            "status": "no_admitted_candidate" if chosen is None else chosen["instance"]["certificate"]["label"]}
+
+
 def validate(root, settings, demos=None):
     root = Path(root)
     scene = json.loads((root / "scene.json").read_text())
@@ -245,6 +318,10 @@ def validate(root, settings, demos=None):
     reference = DemoReplay(host)
     gate_settings, instance_settings = GateSettings.load(config), InstantiateSettings.load(config)
     geometry = {k: v.tolist() for k, v in np.load(root / "robot_geometry.npz").items()}
+    supports = set(host.config["support_bodies"])
+    # Timing bound is inherited from the shared C13 tolerance.
+    from hazardlib.config import load_config
+    tolerance = load_config("conformance", config_dir=config)["c13_nominal_hit"]["hit_time_abs_tol_s"]
     try:
         for row in coverage["demonstrations"]:
             if demos is not None and row["demo"] not in demos:
@@ -317,26 +394,20 @@ def validate(root, settings, demos=None):
                     if results[family]["selected"]:
                         records.append(results[family]["selected"]["instance"])
                     continue
-                # Recover an interrupted run's completed family without repeating
-                # physical checks. The complete per-candidate evidence is retained.
+                # Recover an interrupted run's completed family without repeating physical checks. The ledger
+                # is written once the family is complete (G1 diagnostic included); the selected candidate is
+                # the item flagged ``selected``. The complete per-candidate evidence is retained.
                 if ledger_path.exists():
                     prior = json.loads(ledger_path.read_text())
-                    good = [p for p in prior if "g1" in p]
-                    chosen = None
-                    if good:
-                        picked = next((p for p in good if p["g1"]["passed"]), good[0])
+                    picked = next((p for p in prior if p.get("selected")), None)
+                    instance = None
+                    if picked is not None:
                         instance = instantiate(HazardSpec.from_dict(picked["spec"]), tc, settings["seed"],
                                                host.describe(), instance_settings)
-                        label = "wait_solvable" if picked["g1"]["passed"] else "uncertified"
-                        instance.certificate = Certificate.from_dict({"g0": True, "g1": picked["g1"]["passed"],
-                            "g2": None, "label": label, "notes": "all-50 scene-conditioned pilot; G2 unavailable"})
-                        chosen = {"instance": instance.to_dict(), **{k: picked[k] for k in
-                            ("spec", "evidence", "nominal_hit", "visibility_probe", "g1")}}
-                        records.append(chosen["instance"])
-                    results[family] = {"n_candidates": len(prior),
-                        "n_visible": sum(p.get("visibility_probe", {}).get("passed", False) for p in prior),
-                        "dynamic_attempts": sum("nominal_hit" in p for p in prior), "selected": chosen,
-                        "status": chosen["instance"]["certificate"]["label"] if chosen else "no_admitted_candidate"}
+                        certify(instance, picked["g1"]["passed"])
+                    results[family] = family_result(prior, picked, instance)
+                    if picked is not None:
+                        records.append(results[family]["selected"]["instance"])
                     save_json(family_path, results[family])
                     continue
                 ledger = []
@@ -356,50 +427,70 @@ def validate(root, settings, demos=None):
                     except InstanceRejected as exc:
                         item["rejection"] = str(exc)
                         continue
+                    clearance = sweep_candidate(host, instance, states, arrays["time_s"], settings,
+                                                scene["support_surfaces"], supports)
+                    item["scene_clearance"] = clearance
+                    if not clearance["passed"]:
+                        item["rejection"] = clearance_reason(clearance)
+                        continue
                     probe = visibility_probe(host, instance, states, arrays["time_s"], settings)
                     item["visibility_probe"] = probe
                     if probe["passed"]:
                         shortlisted.append((probe["lead_s"], instance, item))
+                    else:
+                        item["rejection"] = "visibility:" + probe["reason"]
                 shortlisted.sort(key=lambda x: -x[0])
-                chosen = None
-                dynamic_attempts = 0
-                for _, instance, item in shortlisted:
+
+                def physical(instance, item):
                     print("G0 " + instance.spec_id, flush=True)
                     g0 = run_g0(instance, tc, host.describe(), gate_settings.g0)
                     item["g0"] = g0.to_dict()
                     if not g0.passed:
-                        continue
+                        item["rejection"] = "g0:" + ",".join(g0.reasons)
+                        return False, False
                     nominal = run_nominal_hit(session, instance, reference, tc, gate_settings, settings["seed"], 0)
+                    info = session.runtime.episode_info(0)
+                    nominal["release_kind"] = None if info["release"] is None else info["release"]["kind"]
+                    nominal["exit_t_s"] = info["exit_t_s"]
                     print("NOMINAL " + json.dumps(nominal), flush=True)
                     item["nominal_hit"] = nominal
-                    dynamic_attempts += 1
-                    # Timing bound is inherited from the shared C13 tolerance.
-                    from hazardlib.config import load_config
-                    tolerance = load_config("conformance", config_dir=config)["c13_nominal_hit"]["hit_time_abs_tol_s"]
-                    if (not nominal["contact"] or abs(nominal["hit_time_error_s"]) > tolerance or
-                            nominal["tau_vis_s"] + 32*np.finfo(float).eps <
-                            settings["minimum_lead_control_steps"] * scene["control_dt_s"]):
-                        item["rejection"] = "physical_nominal_hit_or_visibility"
-                    else:
-                        g1 = run_g1(session, instance, reference, tc, gate_settings, settings["seed"], 0)
-                        item["g1"] = g1.to_dict()
-                        label = "wait_solvable" if g1.passed else "uncertified"
-                        instance.certificate = Certificate.from_dict({"g0": True, "g1": g1.passed,
-                            "g2": None, "label": label, "notes": "all-50 scene-conditioned pilot; G2 unavailable"})
-                        if chosen is None or g1.passed:
-                            chosen = {"instance": instance.to_dict(), "spec": item["spec"], "evidence": item["evidence"],
-                                      "nominal_hit": nominal, "visibility_probe": item["visibility_probe"], "g1": item["g1"]}
-                        if g1.passed:
-                            break
-                    if dynamic_attempts >= settings["max_dynamic_attempts_per_family_layout"]:
-                        break
+                    failure = None
+                    if not nominal["contact"]:
+                        failure = "no_contact"
+                    elif abs(nominal["hit_time_error_s"]) > tolerance:
+                        failure = "hit_time"
+                    elif nominal["tau_vis_s"] + 32*np.finfo(float).eps < \
+                            settings["minimum_lead_control_steps"] * scene["control_dt_s"]:
+                        failure = "tau_vis"
+                    if failure:
+                        item["rejection"] = "physical_nominal_hit_or_visibility:" + failure
+                        return True, False
+                    audit = run_audit(session, instance, reference, tc, gate_settings, settings["seed"], supports,
+                                      settings["object_moved_tolerance_m"])
+                    print("AUDIT " + json.dumps({k: audit[k] for k in ("reasons", "release_kind", "exited",
+                                                                       "hold_complete", "success")}), flush=True)
+                    item["scene_audit"] = audit
+                    if not audit["admitted"]:
+                        item["rejection"] = audit_reason(audit["reasons"])
+                        return True, False
+                    return True, True
+
+                entry, dynamic_attempts = select_admitted(shortlisted, physical,
+                                                          settings["max_dynamic_attempts_per_family_layout"])
+                instance = None
+                if entry is not None:
+                    _, instance, item = entry
+                    # Diagnostic only: a failed stop-wait-resume does not reject an admitted candidate.
+                    print("G1 " + instance.spec_id, flush=True)
+                    g1 = run_g1(session, instance, reference, tc, gate_settings, settings["seed"], 0)
+                    item["g1"] = g1.to_dict()
+                    certify(instance, g1.passed)
+                    item["selected"] = True
                 save_json(folder / (family + "_candidates.json"), ledger)
-                results[family] = {"n_candidates": len(ledger), "n_visible": len(shortlisted),
-                                  "dynamic_attempts": dynamic_attempts, "selected": chosen,
-                                  "status": "no_admitted_candidate" if chosen is None else chosen["instance"]["certificate"]["label"]}
+                results[family] = family_result(ledger, None if entry is None else item, instance)
                 save_json(family_path, results[family])
-                if chosen:
-                    records.append(chosen["instance"])
+                if results[family]["selected"]:
+                    records.append(results[family]["selected"]["instance"])
                 print("FAMILY " + json.dumps({"demo": row["demo"], "family": family,
                                               **{k: v for k, v in results[family].items() if k != "selected"}}), flush=True)
             # The context references shared geometry in the development bundle;
@@ -417,15 +508,74 @@ def validate(root, settings, demos=None):
         host.close()
 
 
+def rejection_keys(reason):
+    """``(category, [category:detail, ...])`` of a ledger rejection string; details are the partners or
+    reasons after the first colon (separated by commas or semicolons)."""
+    category, _, rest = reason.partition(":")
+    details = [d.strip() for d in rest.replace(";", ",").split(",") if d.strip()]
+    return category, ([category + ":" + d for d in details] if category in DETAILED else [])
+
+
+DETAILED = ("scene_clearance", "scene_audit", "g0", "physical_nominal_hit_or_visibility", "visibility")
+
+
+def ledger_statistics(ledgers):
+    """Counts over the candidate ledgers of one family (one list of items per layout): rejection reasons by
+    category and by detail, candidates not evaluated, the release kind of every physical nominal-hit episode,
+    the audit outcomes and the same for the selected candidates (with the G1 diagnostic)."""
+    def count(items):
+        out = {}
+        for value in items:
+            out[value] = out.get(value, 0) + 1
+        return dict(sorted(out.items(), key=lambda kv: (-kv[1], str(kv[0]))))
+    category, detail, not_evaluated = [], [], []
+    nominal_kinds, audits, selected = [], [], []
+    for ledger in ledgers:
+        for item in ledger:
+            if "rejection" in item:
+                c, d = rejection_keys(item["rejection"])
+                category.append(c)
+                detail.extend(d)
+            if "not_evaluated" in item:
+                not_evaluated.append(item["not_evaluated"])
+            if "nominal_hit" in item:
+                nominal_kinds.append(str(item["nominal_hit"].get("release_kind")))
+            if "scene_audit" in item:
+                audits.append(item["scene_audit"])
+            if item.get("selected"):
+                selected.append(item)
+    def audit_counts(records):
+        return {"n": len(records), "exited": sum(a["exited"] for a in records),
+                "released": sum(a["released"] for a in records),
+                "release_kinds": count([str(a["release_kind"]) for a in records]),
+                "hold_incomplete": sum(not a["hold_complete"] for a in records),
+                "task_success": sum(bool(a["success"]) for a in records),
+                "admitted": sum(a["admitted"] for a in records)}
+    return {"rejections_by_category": count(category), "rejections_by_detail": count(detail),
+            "not_evaluated": count(not_evaluated),
+            "nominal_release_kinds_all_attempts": count(nominal_kinds),
+            "nominal_release_kinds_selected": count([str(i["nominal_hit"].get("release_kind")) for i in selected]),
+            "audit_all_attempts": audit_counts(audits),
+            "audit_selected": audit_counts([i["scene_audit"] for i in selected]),
+            "g1_diagnostic_selected": {"n": len(selected),
+                                       "passed": sum(bool(i["g1"]["passed"]) for i in selected)}}
+
+
 def report(root, settings):
     root = Path(root)
     coverage = json.loads((root / "coverage.json").read_text())
     rows = coverage["demonstrations"]
     validations = [json.loads((root / "trajectories" / r["demo"] / "validation.json").read_text())
                    for r in rows if (root / "trajectories" / r["demo"] / "validation.json").exists()]
-    results = {f: {"wait_solvable": 0, "uncertified": 0, "no_admitted_candidate": 0,
+    results = {f: {"admitted": 0, "wait_solvable": 0, "uncertified": 0, "no_admitted_candidate": 0,
                    "parameters": {"tau_s": [], "speed_mps": [], "hit_time_s": [], "visible_lead_s": []}}
                for f in settings["families"]}
+    ledgers = {f: [] for f in settings["families"]}
+    for row in rows:
+        for family in settings["families"]:
+            path = root / "trajectories" / row["demo"] / (family + "_candidates.json")
+            if path.exists():
+                ledgers[family].append(json.loads(path.read_text()))
     csvrows = []
     for row in rows:
         validation = next((v for v in validations if v["demo"] == row["demo"]), None)
@@ -439,6 +589,7 @@ def report(root, settings):
                 results[family][status] += 1
                 chosen = record["selected"]
                 if chosen:
+                    results[family]["admitted"] += 1
                     results[family]["parameters"]["tau_s"].append(chosen["spec"]["intensity"]["tau_s"])
                     speed = chosen["spec"]["intensity"].get("approach_speed_mps")
                     if speed is not None:
@@ -449,6 +600,8 @@ def report(root, settings):
     for family in results:
         results[family]["parameters"] = {k: distribution(v, settings["quantiles"])
                                           for k, v in results[family]["parameters"].items()}
+        results[family]["layouts_with_ledger"] = len(ledgers[family])
+        results[family].update(ledger_statistics(ledgers[family]))
     write_yaml(root / "validated_summary.yaml", {"n_processed": len(validations), "families": results})
     with (root / "coverage.csv").open("w") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(csvrows[0]))

@@ -23,11 +23,11 @@ import math
 
 import numpy as np
 
-from hazardlib.kinematics.path import SampledPath
 from hazardlib.runtime import KINEMATIC
 
 from .geometry import group_points, mat_to_quat, quat_to_mat
 from .policies import DemoReplay
+from .scene_clearance import playback_path
 
 
 class GoalRecorder(DemoReplay):
@@ -142,7 +142,7 @@ class NominalPathAvoider(object):
 
     def arm(self, instance):
         self.instance = instance
-        self.path = SampledPath.from_pose_sequence(instance.keyframes)
+        self.path = playback_path(instance)  # keyframes + exit_keyframes (D19), the junction counted once
         self.radius = float(np.linalg.norm(instance.agent.half_extents_m)) + self.settings["clearance_margin_m"]
 
     def reset(self):
@@ -162,7 +162,10 @@ class NominalPathAvoider(object):
         if self.phase() == KINEMATIC:
             self.slow = 0
             release = inst.release_time_s
-            before = horizon[t + horizon <= release]
+            # A follow-through hazard stays on its path to the end unless the robot is met at the release,
+            # so the path to its end and the ballistic flight after the release are both kept out.
+            limit = release if inst.exit_keyframes is None else self.path.t_end_s
+            before = horizon[t + horizon <= limit]
             centres = [pos[None, :], self.path.pos(t + before)]
             after = horizon[t + horizon > release] + t - release
             if len(after):

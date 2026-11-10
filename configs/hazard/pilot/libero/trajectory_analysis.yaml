@@ -24,7 +24,28 @@ minimum_visible_observations: 2
 # Task-conditioned workspace = successful path/objects plus target diameter times this margin.
 workspace_object_margin_multiple: 2.0
 # Sampling/validation budget, independent of any model under test.
-max_candidates_per_family_layout: 24
+# 48 (was 24): since D19 a candidate must also pass the scene-clearance sweep, which rejects most slide and
+# many reach candidates; the sweep costs a few milliseconds per sample, so a longer list is cheap and keeps
+# the eight directions x phases x anchors x tau coverage from running out before an admissible one.
+max_candidates_per_family_layout: 48
 max_validated_per_family_layout: 1
+# Physical attempts (one nominal-hit episode + one robot-absent audit episode count as ONE attempt).
 max_dynamic_attempts_per_family_layout: 3
+# D19 follow-through of a hazard that does not meet the robot: a slide keeps sliding out of the workspace
+# ("pass"), a reach retracts along its path ("retract"); a fall stays where it lands (not listed).
+follow_through:
+  intrusion.slide: pass
+  intrusion.reach: retract
+# Scene-clearance sweep (hazard path and landing column vs task objects). Penetration deeper than this
+# counts: 1 mm equals gate G0's max_penetration_m, the repository's own definition of a real overlap
+# (shallower contact is margin and float round-off).
+scene_clearance_tol_m: 0.001
+# Sample spacing along the path = this x the hazard's smallest half extent. 1.0 means consecutive box
+# positions overlap by at least half the box width, so no object wider than the tolerance can be skipped.
+scene_clearance_spacing_half_extent_fraction: 1.0
+# Robot-absent audit: a task object displaced by more than this during the first hold is a disturbed
+# scene. 2 mm is far above the displacement of an undisturbed scene (exactly 0.0 m for every object in the
+# hazard-free hold of the smoke run, the physics being deterministic) and below anything a policy or an
+# observer would register; the development audit used the same value for reporting.
+object_moved_tolerance_m: 0.002
 families: [intrusion.reach, intrusion.fall, intrusion.slide]

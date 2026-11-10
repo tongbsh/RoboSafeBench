@@ -123,3 +123,24 @@ def test_debris_that_no_offset_clears_blocks_instead_of_advancing():
     for _ in range(N):
         host.apply(avoider.filter_action(None, None, state(0.30, 0.)))
     assert avoider.s == 0 and avoider.summary()["blocked_steps"] > 0
+
+
+def test_the_predicted_path_is_the_keyframes_plus_the_exit_path_and_stays_kinematic_to_its_end():
+    from hazardhosts.libero.scene_clearance import playback_path
+    exit_instance = HazardInstance.from_dict(dict(
+        instance(0.30, 0., 1.).to_dict(),
+        exit_keyframes={"time_s": [1., 2.], "pos": [[.3, 0., 1.], [.3, .5, 1.]], "quat": [[1., 0., 0., 0.]] * 2}))
+    phase = [KINEMATIC]
+    host, avoider = make(phase)
+    avoider.arm(exit_instance)
+    assert avoider.path.t_end_s == 2.
+    np.testing.assert_allclose(avoider.path.pos(1.5), [.3, .25, 1.])
+    np.testing.assert_allclose(playback_path(exit_instance).pos(1.5), avoider.path.pos(1.5))
+    # At t=0 the keep-out reaches along the exit path (to y=.5 at t=2), not only to the release at t=1.
+    centres, moving = avoider._keep_out(0., state(.3, 0.))
+    assert moving and np.max(centres[:, 1]) >= .45 and np.any(np.isclose(centres[:, 1], 0.))
+    # Without an exit path the old prediction (to the release, then ballistic) is unchanged.
+    avoider.arm(instance(0.30, 0., 1.))
+    assert avoider.path.t_end_s == 1.
+    centres, _ = avoider._keep_out(0., state(.3, 0.))
+    assert np.max(np.abs(centres[:, 1])) < 1e-9
