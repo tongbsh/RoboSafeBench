@@ -82,7 +82,7 @@ def write_analysis_report(root):
     axes[1, 1].bar(np.arange(50), gap_minima, color=["#247b9e" if r["replay_success"] else "#d46522" for r in rows])
     axes[1, 1].set(xlabel="Demonstration index", ylabel="Minimum gripper-neighbor separation (m)",
                     title="Actual geometry; target/goal contacts excluded")
-    figure.suptitle("Spatial task 0: 50 source successes; %d/50 local replay successes" % summary["n_replay_success"])
+    figure.suptitle("%d source successes; %d local replay successes" % (summary["n_source_success"], summary["n_replay_success"]))
     figure.savefig(root / "trajectory_analysis.png", dpi=180)
     figure.savefig(root / "trajectory_analysis.pdf")
     plt.close(figure)
@@ -117,11 +117,11 @@ def write_analysis_report(root):
     axes[2].set(xlabel="Nominal tau (s)", ylabel="Physical replay visible lead (s)",
                 title="Circle: wait-solvable; cross: uncertified")
     axes[2].plot([0, 1.6], [0, 1.6], color="gray", linestyle="--", linewidth=.8)
-    figure.suptitle("Spatial task 0: scene-conditioned proposals; bounded search, no tested policy")
+    figure.suptitle("Scene-conditioned proposals of one task; bounded search, no tested policy")
     figure.savefig(root / "parameter_derivation.png", dpi=180)
     figure.savefig(root / "parameter_derivation.pdf")
     plt.close(figure)
-    lines = ["# Spatial 第 0 个任务：50 条轨迹与场景联合分析", "",
+    lines = ["# 单任务全部演示轨迹与场景联合分析", "",
         "状态：开发试点；未正式冻结。没有运行被测 VLA，也未处理其他任务。", "",
         "任务：`%s`。" % summary["task_id"], "",
         "## 数据与复现边界", "",

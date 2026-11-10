@@ -148,6 +148,38 @@ def test_g2_without_an_implementation_is_not_evaluated():
                W.task_context("pick"), W.gate_settings(), 0, 0)
 
 
+class CountingAvoider:
+    """Optional avoider hooks: ``reset`` once per episode, ``summary`` stored with the episode."""
+
+    def __init__(self):
+        self.resets, self.calls = 0, 0
+
+    def reset(self):
+        self.resets += 1
+        self.calls = 0
+
+    def filter_action(self, action, robot_state, hazard_state):
+        self.calls += 1
+        return action
+
+    def summary(self):
+        return {"calls": self.calls}
+
+
+def test_g2_resets_the_avoider_every_episode_and_keeps_its_summary():
+    host = W.make_host()
+    avoider = CountingAvoider()
+    settings = W.gate_settings()
+    run = run_g2(W.session(host), W.build(W.fall_spec(), "pick"), W.PathFollower(host), avoider,
+                 W.task_context("pick"), settings, 0, 0)
+    assert avoider.resets == settings.g2.repeats
+    assert len(run.episodes) == settings.g2.repeats
+    for episode in run.episodes:
+        assert episode["controller"]["controller"] == "privileged_avoider"
+        assert episode["controller"]["avoider_summary"] == {"calls": avoider.calls}
+        assert avoider.calls > 0
+
+
 # ------------------------------------------------------------------ privileged hazard state (D13 d)
 
 class TruthHost(W.GripperHost):

@@ -30,7 +30,9 @@ from .settings import EpisodeGateSettings, GateSettings
 @runtime_checkable
 class PrivilegedAvoider(Protocol):
     """G2 controller with ground-truth hazard state (00 §8). ``hazard_state`` is ``None`` while no hazard is
-    moving. Returns the benchmark-native action to execute instead of ``action``."""
+    moving. Returns the benchmark-native action to execute instead of ``action``. Optional: ``reset()`` is
+    called at the start of every episode, ``summary()`` (a dict) is stored with the episode's controller
+    summary."""
 
     def filter_action(self, action: Any, robot_state: Any, hazard_state: Any) -> Any:
         ...
@@ -101,7 +103,9 @@ class AvoiderController:
         self.avoider = avoider
 
     def reset(self) -> None:
-        pass
+        reset = getattr(self.avoider, "reset", None)
+        if callable(reset):
+            reset()
 
     def decide(self, session: EpisodeSession, env: int, t_s: float, observation: Dict[str, Any], policy: Any,
                control_dt_s: float) -> Any:
@@ -110,7 +114,11 @@ class AvoiderController:
         return self.avoider.filter_action(action, session.host.robot_state(env), hazard)
 
     def summary(self) -> Dict[str, Any]:
-        return {"controller": "privileged_avoider", "avoider": type(self.avoider).__name__}
+        out = {"controller": "privileged_avoider", "avoider": type(self.avoider).__name__}  # type: Dict[str, Any]
+        summary = getattr(self.avoider, "summary", None)
+        if callable(summary):
+            out["avoider_summary"] = summary()
+        return out
 
 
 def _episode_summary(result: EpisodeResult, seed: int) -> Dict[str, Any]:
