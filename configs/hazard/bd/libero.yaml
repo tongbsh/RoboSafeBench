@@ -1,0 +1,63 @@
+# Development BD: declarations must be checked by H3 probes and C1-C13 before certification.
+name: libero
+bd_version: '1.0'
+benchmark:
+  repo: Lifelong-Robot-Learning/LIBERO
+  commits:
+    libero: 8f1084e
+    robosuite: 1.4.0
+  license: MIT
+python:
+  required: '3.10'
+  env_name: dynisafety-libero
+engine:
+  name: mujoco
+  version: 3.6.0
+timebase:
+  physics_dt_s: 0.002
+  control_dt_s: 0.05
+  substeps_per_action: 25
+gravity_mps2: 9.81
+hazard_ccd: false
+parallel:
+  num_envs: 1
+  batched: false
+loop_owner: user_script
+hook_point: LiberoHost wraps MjSim.step around each mj_step
+spawn_mode: preload_xml
+kinematic_pose_set: true
+release_with_velocity: true
+contact_tier: A
+distance: geometric
+robot_contact_bodies:
+  include:
+  - prefix:robot0_
+  - prefix:gripper0_
+  - held_object
+  exclude: []
+eef_contact_radius_m: 0.02
+state_access:
+  eef: true
+  gripper: true
+  base: true
+  objects: true
+  fixtures: true
+  support_surfaces: true
+task_entity_source: bddl_goal
+success_oracle:
+  kind: original_bddl_predicates
+  readonly: true
+snapshot_restore: false
+determinism:
+  same_seed_repro: exact
+invalid_sample_mapping:
+  setup_invalid: runtime rollback failure; configuration and state mapping errors
+    raise
+  sim_unstable: finite state, speed and MuJoCo warning checks at physics steps
+observation_isolation:
+  hazard_visible_in_rgb: true
+  hazard_in_state_vectors: false
+policy_interface:
+  kind: libero_delta_ee_7d
+  notes: primary/wrist uint8, state float32[8], BDDL instruction
+robot_point_spacing_m: 0.005

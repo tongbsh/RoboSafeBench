@@ -3,6 +3,7 @@ import ast
 import importlib
 import re
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -165,7 +166,11 @@ def test_module_level_numeric_constants_are_the_documented_ones():
 @pytest.mark.parametrize("bench", BENCH_PACKAGES)
 def test_bench_adapter_packages_exist_and_are_empty(bench):
     module = importlib.import_module("hazardhosts." + bench)
-    public = [n for n in vars(module) if not n.startswith("_")]
+    # Importing an adapter submodule attaches it to its parent package. That
+    # does not mean __init__.py eagerly imports or exports simulator objects.
+    public = [n for n, value in vars(module).items() if not n.startswith("_")
+              and not (isinstance(value, types.ModuleType)
+                       and value.__name__.startswith(module.__name__ + "."))]
     assert public == [], "hazardhosts.%s should be empty in T01, has %s" % (bench, public)
     assert (SRC / "hazardhosts" / bench / "__init__.py").read_text() == ""
 

@@ -1,0 +1,30 @@
+# Development protocol for ONE task, ALL official demonstrations. Not preregistered.
+# Statistical choices below are analysis policy; measured values are written to derived.yaml.
+suite: libero_spatial
+task_index: 0
+expected_demonstrations: 50
+seed: 0
+quantiles: [0.1, 0.25, 0.5, 0.75, 0.9]
+# Three successive samples avoid declaring a grasp/lift from a single contact.
+event_consecutive_samples: 3
+# Lift detection = this many robot-geometry sampling intervals above initial object height.
+lift_spacing_multiple: 2.0
+# Candidate anchors: these quantiles of observed low-clearance samples within each phase.
+anchor_quantiles: [0.25, 0.5, 0.75]
+# Hazard speed levels derive from the distribution of moving EEF speeds, not these fractions themselves.
+speed_quantiles: [0.25, 0.5, 0.75]
+# Fraction of each observed phase duration available for an intrusion, subject to geometry limits.
+tau_phase_fractions: [0.25, 0.5]
+# Eight approach directions are expressed in the initial target object's frame.
+direction_count: 8
+minimum_lead_control_steps: 2
+# A small projected patch for >= two control observations, rather than a single visible pixel.
+minimum_visible_pixels: 16
+minimum_visible_observations: 2
+# Task-conditioned workspace = successful path/objects plus target diameter times this margin.
+workspace_object_margin_multiple: 2.0
+# Sampling/validation budget, independent of any model under test.
+max_candidates_per_family_layout: 24
+max_validated_per_family_layout: 1
+max_dynamic_attempts_per_family_layout: 3
+families: [intrusion.reach, intrusion.fall, intrusion.slide]

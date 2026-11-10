@@ -42,7 +42,7 @@ from .._records import is_unknown
 from ..instantiate.builder import support_radius_m
 from ..kinematics.hit import FAMILY_FALL, FAMILY_SLIDE
 from ..kinematics.path import SampledPath
-from ..kinematics.standoff import BodyPosePaths, RobotGeometry, penetration_depths, robot_points_at
+from ..kinematics.standoff import BodyPosePaths, RobotGeometry, penetration_depths, quat_matrix
 from ..kinematics.subdivide import hook_times, needs_substeps
 from ..spec.benchmark_descriptor import BenchmarkDescriptor
 from ..spec.instance import HazardInstance
@@ -92,6 +92,42 @@ def _held_points(held: Any, nominal_times: np.ndarray, t: float) -> Tuple[np.nda
     return np.zeros((0, 3)), []
 
 
+def _max_body_penetration(agent: Any, centre: np.ndarray, geometry: RobotGeometry,
+                          poses: Any, bounds: Any) -> Tuple[float, str]:
+    """Same maximum as transforming every sample, with conservative AABB pruning.
+
+    A body's world AABB bounds its possible penetration from above. Bodies
+    unable to improve the current maximum need no point transformations. All
+    actual surface samples, tolerances, and tie ordering remain unchanged.
+    """
+    pos, quats = poses
+    candidates = []
+    c = np.asarray(centre, dtype=float)
+    for name in sorted(pos):
+        rotation = quat_matrix(quats[name])
+        midpoint, half = bounds[name]
+        world_mid = rotation.dot(midpoint) + pos[name]
+        world_half = np.abs(rotation).dot(half)
+        # Outward rounding keeps the bound conservative in floating arithmetic.
+        world_half = world_half + 32 * np.finfo(float).eps * np.maximum(1.0, np.abs(world_mid))
+        gap = np.maximum(np.abs(c - world_mid) - world_half, 0.)
+        if agent.shape == "box":
+            upper = float(np.min(np.asarray(agent.half_extents_m) - gap))
+        else:
+            upper = float(agent.half_extents_m[0] - np.linalg.norm(gap))
+        candidates.append((upper, name, rotation))
+    candidates.sort(key=lambda item: (-item[0], item[1]))
+    best = None
+    for upper, name, rotation in candidates:
+        if best is not None and (upper < best[0] or (upper == best[0] and name >= best[1])):
+            continue
+        points = geometry.points[name].dot(rotation.T) + pos[name]
+        value = float(np.max(penetration_depths(agent, c, points)))
+        if best is None or value > best[0] or (value == best[0] and name < best[1]):
+            best = (value, name)
+    return best
+
+
 def _early_contact_geometry(instance: HazardInstance, task_context: TaskContext, nominal: SampledPath,
                             hazard: np.ndarray, probe_t: np.ndarray, tol: float) -> Dict[str, Any]:
     prov = task_context.provenance
@@ -105,17 +141,20 @@ def _early_contact_geometry(instance: HazardInstance, task_context: TaskContext,
     held = prov.get("held_object_path")
     worst = None  # type: Any
     n_points = 0
+    bounds = {name: ((points.min(axis=0) + points.max(axis=0))/2,
+                     (points.max(axis=0) - points.min(axis=0))/2) for name, points in geometry.points.items()}
+    robot_count = sum(len(points) for points in geometry.points.values())
     for t, centre in zip(probe_t, hazard):
-        points, names = robot_points_at(geometry, poses, float(t))
+        depth, body = _max_body_penetration(instance.agent, centre, geometry, poses.at(float(t)), bounds)
         held_pts, held_names = _held_points(held, nominal.times_s, float(t))
         if held_names:
-            points = np.concatenate([points, held_pts])
-            names = names + held_names
-        n_points = max(n_points, len(names))
-        depths = penetration_depths(instance.agent, centre, points)
-        k = int(np.argmax(depths))
-        if worst is None or depths[k] > worst[0]:
-            worst = (float(depths[k]), names[k], float(t))
+            depths = penetration_depths(instance.agent, centre, held_pts)
+            k = int(np.argmax(depths))
+            if depths[k] > depth:
+                depth, body = float(depths[k]), held_names[k]
+        n_points = max(n_points, robot_count + len(held_names))
+        if worst is None or depth > worst[0]:
+            worst = (depth, body, float(t))
     return {"max_penetration_m": worst[0], "body": worst[1], "time_s": worst[2], "tol_m": tol,
             "samples": int(probe_t.size), "points": n_points, "held_object_points": bool(held),
             "robot_point_spacing_m": geometry.spacing_m}

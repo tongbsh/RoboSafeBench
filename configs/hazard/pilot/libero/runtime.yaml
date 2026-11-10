@@ -1,0 +1,7 @@
+# PILOT ONLY, not pre-registered: initial development values borrowed from
+# pilot/calvin and conformance probe settings; LIBERO sensitivity remains to measure.
+# min_source_kinds=1 is the explicit D14 pilot deviation; probes are official demos only.
+max_step_ratio: 0.5
+release_velocity_window_s: 0.05
+keyframe_dt_s: 0.01
+keyframe_interp_tol_m: 0.001

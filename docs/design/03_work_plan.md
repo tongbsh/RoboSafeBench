@@ -23,14 +23,14 @@
 | **E00** | 基准环境搭建（按基准参数化） | 无 | 是 | `docs/design/env_notes/<bench>.md`，基准自带最小评测跑通 | 视基准 |
 | **H1** | CALVIN 适配器 | T01–T06（含 T05-F、T06-F）、E00(calvin) | 是 | 适配器、BD、一致性测试通过、特权运行、成本账本 | 中 |
 | **H2** | RoboCasa365 适配器 | T01–T06（含 T05-F、T06-F）、T07、E00(robocasa) | 是 | 同上 | 中 |
-| **H3** | LIBERO（SafeLIBERO）适配器（D16 a：布局 = 演示初始状态） | T01–T06（含 T05-F、T06-F）、**T07**、E00(libero) | 是 | 同上 | 中 |
+| **H3** | 原始 LIBERO 适配器（D18；D16 a：布局 = 演示初始状态） | T01–T06（含 T05-F、T06-F）、**T07**、E00(libero) | 是 | 同上 | 中 |
 | **H4** | SimplerEnv 适配器 | T01–T06（含 T05-F、T06-F）、E00(simplerenv) | 是 | 同上 | 中 |
 | **H5** | RoboTwin 适配器 | T01–T06（含 T05-F、T06-F）、E00(robotwin) | 是 | 同上 | 中到大 |
 | **H6** | RoboDojo 适配器（含 E1–E8 引擎探针） | T01–T06（含 T05-F、T06-F）、E00(robodojo) | 是 | 探针报告 + 适配器 | 大 |
 | **X1** | 策略矩阵与服务 | E00 | 是 | `policy_matrix.md`、每基准至多两个策略的服务脚本 | 中 |
 | **R1** | Run 阶段核心（D16 c）：`hazardctl run` / `report`、对照回合、汇总表、视频帧记录接口，见 `prompts/R1_run.md` | T06（可与 T07 并行，不碰 T07 改的文件） | 否 | FakeHost 上端到端 | 中 |
 | **R1-F** | R1 收尾（D17 a、b）：`run.yaml` / `report.yaml` 拆分、`run.yaml` 进 `config_hashes`、冻结目录带 TaskContext 与 BD | R1 | 否 | 小提交 | 小 |
-| **R1-L** | LIBERO 端到端：策略桥接（复用 `src/dynisafety/policies`）、视频编码、spatial 4 任务 × 1–2 个策略的试点运行（prompt 在 H3 后写） | R1、H3、X1(libero) 或既有服务脚本 | 是 | 视频、成功率与安全指标表（试点） | 中 |
+| **R1-L** | LIBERO 端到端：策略桥接（复用 `src/dynisafety/policies`）、视频编码、spatial 4 任务 × 1–2 个策略的试点运行（原始 LIBERO，D18） | R1、H3、X1(libero) 或既有服务脚本 | 是 | 视频、成功率与安全指标表（试点） | 中 |
 
 **阶段与并行。**
 - 阶段 A（无需仿真器，可立刻开始）：T01 先做（约一两个小时的量）；T01 合并后 T02、T03 并行（T02 后跟一个小收尾 T02-F；**T04 在 T02-F 与 T03（含 T03-F）都合并后才放行**）；T04 之后 T05、T06 并行；两者合并后 T05-F、T06-F 并行（D13）。

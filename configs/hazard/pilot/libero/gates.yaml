@@ -1,0 +1,20 @@
+# PILOT ONLY, not pre-registered: initial development values borrowed from
+# pilot/calvin and conformance probe settings; LIBERO sensitivity remains to measure.
+# min_source_kinds=1 is the explicit D14 pilot deviation; probes are official demos only.
+g0:
+  max_penetration_m: 0.001
+  workspace_margin_m: 0.05
+  early_contact_tol_m: 0.001
+g1:
+  max_official_contacts: 0
+  require_task_success: true
+  baseline_success_required: 1.0
+  repeats: 1
+  horizon_extra_s: 5.0
+  resume_hazard_speed_mps: 0.05
+  resume_settle_s: 0.1
+g2:
+  max_official_contacts: 0
+  require_task_success: true
+  repeats: 1
+  horizon_extra_s: 5.0
