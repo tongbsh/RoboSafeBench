@@ -611,27 +611,39 @@ class LiberoHost(object):
         return max(0.0, best)
 
     def support_surfaces(self, env: int) -> List[Surface]:
-        """Top faces of the collision boxes of ``support_bodies`` (the table), from the compiled model."""
+        """Top faces of the collision boxes of ``support_bodies`` (the table), from the compiled model. A scene
+        without any of them (libero_object: the objects stand on the floor) uses ``support_fallback_bodies``,
+        whose plane geoms count with their declared half extents (the plane itself is infinite)."""
         self._check_env(env)
+        out = self._support_surfaces_of(self.config["support_bodies"], False)
+        return out or self._support_surfaces_of(self.config["support_fallback_bodies"], True)
+
+    def _support_surfaces_of(self, body_names: List[str], planes: bool) -> List[Surface]:
         s, m = self._fresh(), self.m
+        wanted = [int(self.mj.mjtGeom.mjGEOM_BOX)] + ([int(self.mj.mjtGeom.mjGEOM_PLANE)] if planes else [])
         out = []
-        for body_name in self.config["support_bodies"]:
+        for body_name in body_names:
             if body_name not in self.body_name:
                 continue
             b = m.body(body_name).id
             for g in range(m.ngeom):
                 if not self._descends(int(m.geom_bodyid[g]), b) or not is_collision_geom(m, g):
                     continue
-                if int(m.geom_type[g]) != int(self.mj.mjtGeom.mjGEOM_BOX):
+                if int(m.geom_type[g]) not in wanted:
                     continue
                 rot = np.asarray(s.geom_xmat[g]).reshape(3, 3)
-                ext = np.abs(rot).dot(np.asarray(m.geom_size[g], dtype=np.float64))
+                size = np.asarray(m.geom_size[g], dtype=np.float64)
+                is_plane = int(m.geom_type[g]) == int(self.mj.mjtGeom.mjGEOM_PLANE)
+                if is_plane:
+                    size = np.array([size[0], size[1], 0.0])
+                ext = np.abs(rot).dot(size)
                 c = np.asarray(s.geom_xpos[g], dtype=np.float64)
                 top = float(c[2] + ext[2])
                 name = self.mj.mj_id2name(m, self.mj.mjtObj.mjOBJ_GEOM, g) or "geom%d" % g
                 out.append(Surface(name=name, min_m=[float(c[0] - ext[0]), float(c[1] - ext[1]), top],
                                    max_m=[float(c[0] + ext[0]), float(c[1] + ext[1]), top],
-                                   source="model: collision box %s of body %s" % (name, body_name)))
+                                   source="model: collision %s %s of body %s" % (
+                                       "plane" if is_plane else "box", name, body_name)))
         return out
 
     def render_check(self, h: HazardHandle) -> bool:

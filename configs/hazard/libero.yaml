@@ -30,6 +30,9 @@ support_bodies:
 - kitchen_table
 - living_room_table
 - study_table
+# Used only when a scene has none of the above: libero_object's objects stand on the floor (a plane geom).
+support_fallback_bodies:
+- floor
 contacts:
   touch_distance_m: 0.0
 min_distance_search_m: 10.0

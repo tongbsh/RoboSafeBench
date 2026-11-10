@@ -1,0 +1,30 @@
+# Task-agnostic interaction segmentation (trajectory_segments.py). Development protocol, not preregistered.
+# One position / joint step is the change between two control samples (50 ms).
+# An object counts as moving when it travels more than this per control step: 1 mm/step = 2 cm/s is above
+# every stationary-object step measured on libero_spatial task 0 (0.07-0.38 mm in 50 demonstrations, physics
+# settling) and below a carried or pushed object (2-13 mm/step).
+entity_step_motion_m: 0.001
+# Articulated-joint motion per step: a slide joint (drawer) in metres, a hinge (door, knob) in radians.
+# Single-step jitter of a stationary drawer reaches 1.7 mm (libero_goal task 0: gripper brushing, settling),
+# so the per-step threshold alone is not enough: an activity run must also last event_consecutive_samples and
+# the joint must change by articulation_min_change below. The hinge step threshold (0.002 rad = 0.1 deg per
+# step) is the same rule of thumb, not yet measured on a knob.
+articulation_step_motion:
+  slide: 0.0005
+  hinge: 0.002
+# A free object that is not held must be displaced at least this far (peak distance from where the run
+# began) to count as pushed. 3 cm exceeds the largest incidental displacement of a placement target
+# (the plate, 19.5 mm over 50 libero_spatial demonstrations, bumped by the released bowl) and is small
+# against a deliberate transport (the plate of libero_goal "push the plate to the front of the stove" moves
+# 0.17-0.25 m, although the demonstrators hold it with the gripper: an un-held push has not been observed).
+interaction_min_displacement_m: 0.03
+# An articulated entity counts as operated when a joint changes by at least this much within the run:
+# 2 cm of drawer travel (slide, m) and 0.1 rad = 5.7 degrees of door / knob rotation (hinge, rad).
+articulation_min_change:
+  slide: 0.02
+  hinge: 0.1
+# Activity runs of one entity separated by at most this many control samples are one interaction.
+# 20 samples = 1 s: a regrasp after a slipped grasp (libero_10 task 0: gaps of 17-20 samples between the two
+# grasps of one object) is one interaction, a drawer pulled in two strokes (libero_goal task 0: gaps of
+# ~35 samples) or a bowl nudged, left alone for 1.5 s and then grasped (libero_spatial task 0, gaps 21-40) is two.
+interaction_gap_fill_samples: 20
