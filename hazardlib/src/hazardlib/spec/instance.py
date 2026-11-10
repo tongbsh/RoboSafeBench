@@ -8,6 +8,10 @@ from .certificate import Certificate
 from .hazard_spec import AgentSpec
 from .pose_sequence import PoseSequence
 
+#: Families that are played back kinematically and may therefore carry an exit path (the string values of
+#: ``kinematics.hit.FAMILY_SLIDE`` / ``FAMILY_REACH``; ``spec`` does not import the kinematics package).
+EXIT_FAMILIES = ("intrusion.slide", "intrusion.reach")
+
 
 @dataclasses.dataclass
 class ReleaseVelocity(Record):
@@ -46,6 +50,13 @@ class HazardInstance(Record):
     release_velocity: Optional[ReleaseVelocity] = None
     certificate: Optional[Certificate] = None
     provenance: Dict[str, Any] = dataclasses.field(default_factory=dict)
+    exit_keyframes: Optional[PoseSequence] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        out = super().to_dict()
+        if out["exit_keyframes"] is None:
+            del out["exit_keyframes"]  # instances without an exit path keep their pre-D19 serialisation and hash
+        return out
 
     def validate(self) -> None:
         check_nonempty_str("instance_id", self.instance_id)
@@ -61,3 +72,17 @@ class HazardInstance(Record):
                 "release_time_s and release_velocity must be both set or both None")
         if self.release_time_s is not None:
             check_finite("release_time_s", self.release_time_s)
+        if self.exit_keyframes is not None:
+            require(self.family in EXIT_FAMILIES,
+                    "exit_keyframes need a kinematic family (%s), got %r" % (", ".join(EXIT_FAMILIES), self.family))
+            require(self.release_time_s is not None, "exit_keyframes need release_time_s")
+            exit_ = self.exit_keyframes
+            require(len(exit_) >= 2, "exit_keyframes need at least 2 samples, got %d" % len(exit_))
+            require(self.keyframes.time_s[-1] == self.release_time_s,
+                    "with exit_keyframes the last keyframe time %r must equal release_time_s=%r"
+                    % (self.keyframes.time_s[-1], self.release_time_s))
+            require(exit_.time_s[0] == self.release_time_s,
+                    "exit_keyframes.time_s[0]=%r must equal release_time_s=%r" % (exit_.time_s[0], self.release_time_s))
+            require(list(exit_.pos[0]) == list(self.keyframes.pos[-1])
+                    and list(exit_.quat[0]) == list(self.keyframes.quat[-1]),
+                    "the first exit pose must equal the last keyframe pose (continuity, exact)")

@@ -28,7 +28,9 @@ every reason that applies (``G0Result.reasons``). Positions are hazard centroids
                                      kinematic phase moves the hazard more than ``max_step_ratio`` x its
                                      smallest half extent (``needs_substeps`` at the BD physics step), or the
                                      predicted dynamic speed (fall ``g tau``, slide / reach the release speed)
-                                     times the physics step does.
+                                     times the physics step does. An instance with ``exit_keyframes`` (D19) has its
+                                     exit segment held to the same kinematic rule (``exit_kinematic_exceeds``);
+                                     every other check stops at the nominal hit.
 
 The parking pose is the host's (checked by conformance C2), not by G0. ``tau_vis`` needs the host and is
 measured by the gate stage (record only, D5).
@@ -270,12 +272,18 @@ def _finish(instance: HazardInstance, bd: BenchmarkDescriptor, settings: G0Setti
             raise ValueError("BD %r: the R1 check needs timebase.physics_dt_s" % (bd.name,))
         limit = settings.max_step_ratio * min(instance.agent.half_extents_m)
         kinematic = False
+        exit_exceeds = False
         if instance.family != FAMILY_FALL and instance.release_time_s > onset:
             release = instance.release_time_s
             sub_t = np.unique(np.concatenate([frames.times_s[np.logical_and(frames.times_s >= onset,
                                                                             frames.times_s <= release)],
                                               [onset, release]]))
             kinematic = needs_substeps(SampledPath(sub_t, frames.pos(sub_t), None), limit, dt)
+            if instance.exit_keyframes is not None:
+                # D19: the follow-through is played back kinematically too, so it obeys the same R1 rule.
+                exit_ = instance.exit_keyframes
+                exit_exceeds = needs_substeps(SampledPath(exit_.time_s, exit_.pos, None), limit, dt)
+                kinematic = kinematic or exit_exceeds
         if instance.family == FAMILY_FALL:
             dynamic_speed = float(bd.gravity_mps2) * (t_hit - onset)
         else:
@@ -283,6 +291,8 @@ def _finish(instance: HazardInstance, bd: BenchmarkDescriptor, settings: G0Setti
         dynamic = dynamic_speed * dt > limit
         checks["r1_check"] = {"limit_m": limit, "hook_dt_s": dt, "kinematic_exceeds": bool(kinematic),
                               "dynamic_speed_mps": dynamic_speed, "dynamic_step_m": dynamic_speed * dt}
+        if instance.exit_keyframes is not None:
+            checks["r1_check"]["exit_kinematic_exceeds"] = bool(exit_exceeds)
         if kinematic or dynamic:
             reasons.append("r1_step_ratio")
     return G0Result(passed=not reasons, reasons=reasons, checks=checks)

@@ -40,7 +40,22 @@ Steps:
    release time (``insert_instants``: a grid point within round-off of either gives way); the largest linear-interpolation error at interior points must be <= ``keyframe_interp_tol_m``
    (else rejected ``keyframe_interp_error``). Orientation: the identity for every keyframe (``AgentSpec``
    has no orientation field yet; recorded as ``hazard_quat_source``).
-6. **Rejections** raise :class:`InstanceRejected` with a reason in :data:`REJECT_REASONS`; a malformed spec or
+6. **Follow-through (D19, optional).** ``motion.params.follow_through`` is ``"pass"`` or ``"retract"`` (slide and
+   reach only; absent = no exit path, the instance is then exactly the pre-D19 one). The instance gets
+   ``exit_keyframes`` and its ``keyframes`` are cut at ``release_time_s`` (the part of a reach path beyond the
+   hit moves into the exit path), so the playback path is ``keyframes + exit_keyframes`` with one shared junction
+   sample. Nothing else changes: onset, nominal hit, release time and velocity, standoff and the random stream
+   (the key leaves ``follow_through`` out of the spec hash) are those of the same spec without it; only
+   ``provenance.spec_hash`` and ``provenance.follow_through`` (and the keyframe ``count``) differ.
+   ``"pass"``: from the release pose on, a straight line at the (constant) release velocity with a constant
+   orientation, until the centre is strictly outside the TaskContext workspace box widened by the hazard's
+   bounding-sphere radius (no ``g0`` margin); the end is the first sample of the keyframe grid (every
+   ``keyframe_dt_s`` from the release) that is outside. ``"retract"``: the analytic primitive path is followed on
+   to its own end if it continues past the hit (a reach with ``overshoot_m > 0``), then retraced time-reversed back
+   to its start pose (a path without continuation is retraced from the hit pose). The exit is sampled every
+   ``keyframe_dt_s`` (plus the turning instant) and held to ``keyframe_interp_tol_m`` like the approach; both
+   modes record their duration in ``provenance.follow_through``.
+7. **Rejections** raise :class:`InstanceRejected` with a reason in :data:`REJECT_REASONS`; a malformed spec or
    context raises ``ValueError`` instead. Geometric validity (workspace, penetration, first contact, R1) is
    gate G0's job.
 """
@@ -53,6 +68,7 @@ import numpy as np
 from .._numeric import finite_float, unit_vec3
 from .._records import is_unknown
 from ..hashing import sha256_hex
+from ..kinematics.exit import RetractPath, bounding_radius_m, straight_exit_steps
 from ..kinematics.hit import FAMILY_FALL, FAMILY_REACH, FAMILY_SLIDE, build_hit_path
 from ..kinematics.path import SampledPath
 from ..kinematics.standoff import (BodyPosePaths, RobotGeometry, first_contact_along_normal, point_standoffs,
@@ -65,11 +81,12 @@ from ..spec.task_context import TaskContext
 from .mapping import ZeroOvershootError, fall_release_height_m, reach_geometry, slide_start_distance_m
 from .settings import FAMILY_AXES, InstantiateSettings
 
+FOLLOW_THROUGH_MODES = ("pass", "retract")
 REJECT_REASONS = ("no_support_surface", "reach_zero_overshoot", "hit_path_invalid", "keyframe_interp_error",
-                  "no_robot_contact_along_normal", "slide_normal_unsolved")
+                  "no_robot_contact_along_normal", "slide_normal_unsolved", "exit_path_invalid")
 PRIMITIVES = {FAMILY_FALL: ("free_fall", (), ()),
-              FAMILY_SLIDE: ("slide", (), ("direction",)),
-              FAMILY_REACH: ("reach", ("speed_profile",), ("direction",))}
+              FAMILY_SLIDE: ("slide", (), ("direction", "follow_through")),
+              FAMILY_REACH: ("reach", ("speed_profile",), ("direction", "follow_through"))}
 IDENTITY_QUAT = (1.0, 0.0, 0.0, 0.0)
 _UP = (0.0, 0.0, 1.0)
 
@@ -155,6 +172,13 @@ def _motion_params(spec: HazardSpec) -> Mapping[str, Any]:
         raise ValueError("spec %r: family %s needs motion.primitive %r, got %r"
                          % (spec.id, spec.family, primitive, spec.motion.primitive))
     params = spec.motion.params
+    if "follow_through" in params:
+        if spec.family == FAMILY_FALL:
+            raise ValueError("spec %r: motion.params.follow_through is not supported for %s (a fall is dynamic "
+                             "from its onset and has no exit path)" % (spec.id, FAMILY_FALL))
+        if params["follow_through"] not in FOLLOW_THROUGH_MODES:
+            raise ValueError("spec %r: motion.params.follow_through must be one of %s, got %r"
+                             % (spec.id, list(FOLLOW_THROUGH_MODES), params["follow_through"]))
     missing = [k for k in required if k not in params]
     unknown = sorted(set(params) - set(required + optional))
     if missing or unknown:
@@ -202,6 +226,25 @@ def _slide_normal(agent: AgentSpec, direction: np.ndarray, dz: float, r_eef: flo
         else:
             hi = mid
     return at(0.5 * (lo + hi))
+
+
+def _stream_spec_hash(spec: HazardSpec) -> str:
+    """The spec hash that keys the random stream: ``follow_through`` only adds an exit path, it must not
+    change the directions or intensity choices drawn for the instance."""
+    if "follow_through" not in spec.motion.params:
+        return spec.hash()
+    data = spec.to_dict()
+    del data["motion"]["params"]["follow_through"]
+    return HazardSpec.from_dict(data).hash()
+
+
+def _interp_error_m(path: Any, times: np.ndarray, positions: np.ndarray) -> float:
+    """Largest linear-interpolation error of the keyframes ``(times, positions)`` against ``path`` at the
+    interior points of every interval."""
+    replay = SampledPath(times, positions, None)
+    fractions = np.linspace(0.0, 1.0, 9)[1:-1]
+    probes = (times[:-1, None] + fractions[None, :] * np.diff(times)[:, None]).ravel()
+    return float(np.max(np.linalg.norm(replay.pos(probes) - path.pos(probes), axis=1)))
 
 
 class _RobotAt:
@@ -270,6 +313,56 @@ def _geometric_slide_normal(agent: AgentSpec, direction: np.ndarray, dz: float, 
     return normal_at(phi), contact_at(phi)
 
 
+def _follow_through(mode: str, plan: Any, path: Any, times: np.ndarray, positions: np.ndarray,
+                    task_context: TaskContext, agent: AgentSpec,
+                    settings: InstantiateSettings) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any], Dict[str, Any]]:
+    """Module docstring, step 6: ``(keyframe times, positions)`` cut at the release, the ``exit_keyframes`` data
+    and the ``provenance.follow_through`` record."""
+    t_release = plan.release_time_s
+    kept = times <= t_release
+    times, positions = times[kept], positions[kept]
+    if times[-1] != t_release:
+        raise ValueError("internal: the release time %r is not a keyframe time (last kept: %r)"
+                         % (t_release, times[-1]))
+    p_release = positions[-1].copy()
+    dt = settings.keyframe_dt_s
+    record = {"mode": mode, "keyframe_dt_s": dt}  # type: Dict[str, Any]
+    if mode == "pass":
+        velocity = np.array(plan.release_velocity, dtype=np.float64)
+        ws = task_context.workspace_bounds
+        radius = bounding_radius_m(agent.shape, agent.half_extents_m)
+        lo, hi = np.array(ws.min_m) - radius, np.array(ws.max_m) + radius
+        try:
+            steps = straight_exit_steps(p_release, velocity, lo, hi, dt)
+        except ValueError as exc:
+            raise InstanceRejected("exit_path_invalid", str(exc)) from None
+        while True:
+            exit_times = hook_times(t_release, t_release + steps * dt, dt)
+            exit_pos = p_release + np.outer(exit_times - t_release, velocity)
+            if np.any(exit_pos[-1] < lo) or np.any(exit_pos[-1] > hi):
+                break
+            steps += 1
+        record.update(release_velocity_mps=velocity.tolist(), workspace_widened_by_m=radius,
+                      max_interp_error_m=0.0)
+    else:
+        retract = RetractPath(path, t_release)
+        exit_times = insert_instants(hook_times(retract.t_start_s, retract.t_end_s, dt), [retract.t_turn_s], dt)
+        exit_pos = retract.pos(exit_times)
+        exit_pos[0] = p_release
+        error = _interp_error_m(retract, exit_times, exit_pos)
+        if error > settings.keyframe_interp_tol_m:
+            raise InstanceRejected("keyframe_interp_error",
+                                   "exit keyframes every %r s miss the analytic retraction by %r m > "
+                                   "keyframe_interp_tol_m=%r" % (dt, error, settings.keyframe_interp_tol_m))
+        record.update(continuation_s=retract.t_turn_s - t_release, retrace_s=retract.t_turn_s - path.t_start_s,
+                      max_interp_error_m=error)
+    record.update(exit_duration_s=float(exit_times[-1] - t_release), exit_end_s=float(exit_times[-1]),
+                  exit_keyframe_count=int(exit_times.size), keyframe_count=int(times.size))
+    exit_data = {"time_s": exit_times.tolist(), "pos": exit_pos.tolist(),
+                 "quat": [list(IDENTITY_QUAT)] * exit_times.size}
+    return times, positions, exit_data, record
+
+
 def instantiate(spec: HazardSpec, task_context: TaskContext, seed: int, bd: BenchmarkDescriptor,
                 settings: InstantiateSettings) -> HazardInstance:
     """See the module docstring."""
@@ -304,7 +397,7 @@ def instantiate(spec: HazardSpec, task_context: TaskContext, seed: int, bd: Benc
     agent = spec.agent
     window = settings.release_velocity_window_s
     tc_hash = task_context.hash()
-    stream = _Stream(sha256_hex({"spec": spec.hash(), "task_context": tc_hash, "task_id": task_context.task_id,
+    stream = _Stream(sha256_hex({"spec": _stream_spec_hash(spec), "task_context": tc_hash, "task_id": task_context.task_id,
                                  "layout_id": task_context.layout_id, "seed": seed}))
     intensity = _intensity(spec, settings, stream)
     motion = _motion_params(spec)
@@ -397,9 +490,7 @@ def instantiate(spec: HazardSpec, task_context: TaskContext, seed: int, bd: Benc
     times = insert_instants(grid, [plan.nominal_hit_time_s, plan.release_time_s], settings.keyframe_dt_s)
     positions = path.pos(times)
     replay = SampledPath(times, positions, None)
-    fractions = np.linspace(0.0, 1.0, 9)[1:-1]
-    probes = (times[:-1, None] + fractions[None, :] * np.diff(times)[:, None]).ravel()
-    interp_error = float(np.max(np.linalg.norm(replay.pos(probes) - path.pos(probes), axis=1)))
+    interp_error = _interp_error_m(path, times, positions)
     if interp_error > settings.keyframe_interp_tol_m:
         raise InstanceRejected("keyframe_interp_error",
                                "keyframes every %r s miss the analytic path by %r m > keyframe_interp_tol_m=%r"
@@ -407,6 +498,11 @@ def instantiate(spec: HazardSpec, task_context: TaskContext, seed: int, bd: Benc
     if family != FAMILY_FALL:
         extra["keyframe_release_velocity_mps"] = replay.finite_difference_velocity(plan.release_time_s, window).tolist()
         extra["release_window_s"] = window
+
+    exit_keyframes = None  # type: Optional[Dict[str, Any]]
+    if "follow_through" in motion:
+        times, positions, exit_keyframes, extra["follow_through"] = _follow_through(
+            motion["follow_through"], plan, path, times, positions, task_context, agent, settings)
 
     instance_id = "%s.%s.%s.s%d" % (spec.id, task_context.task_id, task_context.layout_id, seed)
     provenance = {
@@ -442,4 +538,6 @@ def instantiate(spec: HazardSpec, task_context: TaskContext, seed: int, bd: Benc
         "release_velocity": {"lin_mps": plan.release_velocity.tolist(), "ang_radps": [0.0, 0.0, 0.0]},
         "certificate": None, "provenance": provenance,
     }
+    if exit_keyframes is not None:
+        data["exit_keyframes"] = exit_keyframes
     return HazardInstance.from_dict(data)

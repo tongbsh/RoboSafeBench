@@ -33,6 +33,16 @@ Families (D11 b, dispatched on ``instance.family`` only):
   ``release_velocity_window_s`` ending at ``t_rb`` (R7, D4; no floor, independent of the hook step). If
   there is no such pose, or the window does not fit before ``t_rb``, the instance is ``setup_invalid`` and
   the hazard is parked again.
+* Follow-through (D19), only for an instance with ``exit_keyframes``: the playback path is ``keyframes``
+  followed by ``exit_keyframes`` and the nominal release happens at the same step as above **only if the
+  robot is engaged**: the latest sampled hazard-to-robot separation (``host.min_distance``, the true
+  geometric distance, sampled by the previous ``post_step``) is ``<= max_step_ratio`` x the hazard's smallest
+  half extent, the R1 per-hook displacement limit. The decision is taken once, at that step. If the robot is
+  not engaged the hazard stays ``KINEMATIC`` along the exit path (overlap detection and the rollback release
+  keep working; the rollback velocity window may straddle the junction) and, when the exit path ends, is
+  parked (``set_hazard_visible(False)``) in phase ``EXITED``: ``pre_step`` does nothing for it and
+  ``post_step`` only drains ``hazard_contacts``. Such an instance needs ``bd.distance == "geometric"``
+  (``CapabilityError`` at ``arm``). An instance without ``exit_keyframes`` takes the old path unchanged.
 * anything else raises ``CapabilityError`` at ``arm``.
 
 Contacts. The runtime re-classifies every contact with ``classify_partner`` and the BD's
@@ -97,6 +107,7 @@ PARKED = "parked"
 KINEMATIC = "kinematic"
 RELEASED = "released"
 SETUP_FAILED = "setup_failed"
+EXITED = "exited"
 
 _ROBOT_SIDE = (PartnerClass.ROBOT_LINK, PartnerClass.HELD_OBJECT)
 
@@ -208,9 +219,17 @@ class _Episode:
         self.t_start = t_start
         self.handle = handle
         self.path = None  # type: Optional[SampledPath]
+        self.follow_through = False  # True once the nominal release step passed with the robot not engaged
+        self.exit_t = None  # type: Optional[float]
         if arm.instance is not None:
             frames = arm.instance.keyframes
-            self.path = SampledPath(frames.time_s, frames.pos, frames.quat)
+            times, pos, quat = list(frames.time_s), list(frames.pos), list(frames.quat)
+            exit_ = arm.instance.exit_keyframes
+            if exit_ is not None:  # the junction sample (validated equal) is counted once
+                times += list(exit_.time_s[1:])
+                pos += list(exit_.pos[1:])
+                quat += list(exit_.quat[1:])
+            self.path = SampledPath(times, pos, quat)
         self.phase = PARKED
         self.onset_t = None  # type: Optional[float]
         self.released_t = None  # type: Optional[float]
@@ -347,6 +366,9 @@ class HazardRuntime:
             raise CapabilityError("instance %r: family %r is not supported by the runtime (supported: %s)"
                                   % (inst.instance_id, inst.family, ", ".join(SUPPORTED_FAMILIES)))
         where = "instance %r (%s)" % (inst.instance_id, inst.family)
+        if inst.exit_keyframes is not None and not self._geometric:
+            raise CapabilityError("%s has exit_keyframes: the follow-through decision needs a true geometric "
+                                  "distance, but BD %r declares distance=%r" % (where, self.bd.name, self.bd.distance))
         if inst.release_time_s is None:
             raise CapabilityError("%s has no release; the Tier-A runtime releases every hazard" % where)
         if inst.onset_time_s < 0:
@@ -432,12 +454,15 @@ class HazardRuntime:
                 ep.phase = KINEMATIC
                 ep.prev_pos = None
         elif ep.phase == KINEMATIC:
-            if t1 >= inst.release_time_s - half:
-                velocity = inst.release_velocity
-                self._release(ep, t0, velocity.lin_mps, velocity.ang_radps, "nominal", None)
+            if inst.exit_keyframes is None:
+                if t1 >= inst.release_time_s - half:
+                    velocity = inst.release_velocity
+                    self._release(ep, t0, velocity.lin_mps, velocity.ang_radps, "nominal", None)
+                else:
+                    pos, quat = ep.pose(t1)
+                    self.host.set_hazard_pose(h, pos, quat)
             else:
-                pos, quat = ep.pose(t1)
-                self.host.set_hazard_pose(h, pos, quat)
+                self._follow_through_step(ep, t0, t1, half)
 
     def post_step(self, env: int) -> None:
         ep = self._running.get(_env_index(env))
@@ -452,7 +477,7 @@ class HazardRuntime:
         if ep.instance is None:
             return
         h = ep.handle
-        if ep.phase in (PARKED, SETUP_FAILED):
+        if ep.phase in (PARKED, SETUP_FAILED, EXITED):
             self.host.hazard_contacts(h)  # drained: a parked hazard must not interact (checked by C2)
             return
         hazard = self.host.hazard_state(h)
@@ -536,13 +561,15 @@ class HazardRuntime:
     def episode_info(self, env: int) -> Optional[Dict[str, Any]]:
         """Diagnostics of the running (else last finished) episode: release details (``kind`` is ``onset``,
         ``nominal`` or ``rollback``; ``readback_lin_vel_mps`` is ``hazard_state`` right after the release),
-        setup failure, the instability report and the episode start time on the host clock."""
+        setup failure, the instability report and the episode start time on the host clock. ``exit_t_s`` is the
+        time at which a follow-through hazard finished its exit path and was parked (``None``: it did not exit)."""
         ep = self._episode(env)
         if ep is None:
             return None
         release = None if ep.release_info is None else dict(ep.release_info)
         return {"instance_id": ep.log_id, "family": None if ep.instance is None else ep.instance.family,
-                "phase": ep.phase, "t_start_s": ep.t_start, "release": release, "setup_failed": ep.setup_failed,
+                "phase": ep.phase, "t_start_s": ep.t_start, "release": release, "exit_t_s": ep.exit_t,
+                "setup_failed": ep.setup_failed,
                 "setup_reason": ep.setup_reason, "r1_violation_count": ep.r1_violations,
                 "instability": None if ep.instability is None else dict(ep.instability),
                 "log": ep.log}
@@ -587,6 +614,30 @@ class HazardRuntime:
         ep.prev_pos = hazard.pos.copy()
         ep.release_info = {"kind": kind, "time_s": t, "rollback_t_s": rollback_t, "lin_vel_mps": lin,
                            "ang_vel_radps": ang, "readback_lin_vel_mps": hazard.lin_vel_mps.copy()}
+
+    def _follow_through_step(self, ep: _Episode, t0: float, t1: float, half: float) -> None:
+        """One ``pre_step`` of a KINEMATIC hazard that has ``exit_keyframes`` (module docstring, follow-through)."""
+        inst = ep.instance
+        if not ep.follow_through and t1 >= inst.release_time_s - half:
+            if self._engaged(ep):
+                velocity = inst.release_velocity
+                self._release(ep, t0, velocity.lin_mps, velocity.ang_radps, "nominal", None)
+                return
+            ep.follow_through = True
+        if ep.follow_through and t1 >= ep.path.t_end_s - half:
+            self.host.set_hazard_visible(ep.handle, False)
+            ep.phase = EXITED
+            ep.exit_t = t1
+            return
+        pos, quat = ep.pose(t1)
+        self.host.set_hazard_pose(ep.handle, pos, quat)
+
+    def _engaged(self, ep: _Episode) -> bool:
+        """The robot is engaged when the latest sampled separation is within the R1 per-hook displacement limit
+        of the hazard (a body that close can reach it within one hook). No sample yet: not engaged."""
+        if not ep.trace_distance:
+            return False
+        return ep.trace_distance[-1] <= self.cfg.max_step_ratio * min(ep.instance.agent.half_extents_m)
 
     def _roll_back(self, ep: _Episode, t1: float) -> None:
         window = self.cfg.release_velocity_window_s
