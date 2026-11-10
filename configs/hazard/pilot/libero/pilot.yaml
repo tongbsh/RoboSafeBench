@@ -1,0 +1,41 @@
+# PILOT ONLY. First four canonical spatial tasks, first 10 demos each.
+# Workspace encloses measured table and Panda; max z admits fall releases.
+# Orange box is a geometry proxy for all three motion families, not a human hand.
+suite: libero_spatial
+task_indices:
+- 0
+- 1
+- 2
+- 3
+probe_episodes: 10
+seed: 0
+workspace:
+  min_m:
+  - -0.85
+  - -0.65
+  - 0.9
+  max_m:
+  - 0.6
+  - 0.65
+  - 2.2
+video:
+  fps: 20
+  crf: 18
+  preset: fast
+specs:
+  phase_fracs:
+  - 0.5
+  - 0.8
+  tau_s:
+  - 0.15
+  - 0.3
+  families:
+  - intrusion.fall
+  - intrusion.slide
+  - intrusion.reach
+  direction:
+  - 0.0
+  - 1.0
+  - 0.0
+  approach_speed_mps: 0.5
+  reach_speed_profile: min_jerk

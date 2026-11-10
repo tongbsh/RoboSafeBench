@@ -1,0 +1,12 @@
+# PILOT ONLY, not pre-registered: initial development values borrowed from
+# pilot/calvin and conformance probe settings; LIBERO sensitivity remains to measure.
+# min_source_kinds=1 is the explicit D14 pilot deviation; probes are official demos only.
+min_source_kinds: 1
+gripper_closed_below: 0.65
+gripper_open_above: 0.9
+min_consistent_runs: 1
+path_samples_per_phase: 50
+moved_object_min_displacement_m: 0.003
+entity_min_run_fraction: 0.5
+moving_speed_min_mps: 0.0172
+surface_below_object_m: 0.02

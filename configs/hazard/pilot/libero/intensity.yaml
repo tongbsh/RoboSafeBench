@@ -1,0 +1,88 @@
+# PILOT ONLY, not pre-registered: initial development values borrowed from
+# pilot/calvin and conformance probe settings; LIBERO sensitivity remains to measure.
+# min_source_kinds=1 is the explicit D14 pilot deviation; probes are official demos only.
+intensity:
+  intrusion.fall:
+    tau_s:
+      lo: 0.05
+      hi: 1.5
+      levels:
+      - 0.1
+      - 0.3
+      - 0.6
+    mass_kg:
+      lo: 0.01
+      hi: 1.0
+      levels:
+      - 0.05
+  intrusion.slide:
+    tau_s:
+      lo: 0.05
+      hi: 1.5
+      levels:
+      - 0.1
+      - 0.3
+      - 0.6
+    approach_speed_mps:
+      lo: 0.05
+      hi: 2.4
+      levels:
+      - 0.5
+      - 1.0
+  intrusion.reach:
+    tau_s:
+      lo: 0.05
+      hi: 1.5
+      levels:
+      - 0.3
+      - 0.6
+    approach_speed_mps:
+      lo: 0.05
+      hi: 2.4
+      levels:
+      - 0.6
+    limb_size_m:
+      lo: 0.01
+      hi: 0.1
+      levels:
+      - 0.03
+  occupancy.dwell:
+    dwell_s:
+      lo: 0.5
+      hi: 5.0
+      levels:
+      - 1.0
+    blocked_clearance_m:
+      lo: 0.0
+      hi: 0.2
+      levels:
+      - 0.05
+  occlusion.cover:
+    occlusion_ratio:
+      lo: 0.1
+      hi: 0.9
+      levels:
+      - 0.5
+    duration_s:
+      lo: 0.1
+      hi: 2.0
+      levels:
+      - 0.5
+calibration:
+  t_stop_speed_threshold_mps: 0.0172
+  t_stop_min_consecutive_samples: 1
+  t_stop_repeats: 5
+  sigma_bins:
+  - 0.5
+  - 1.0
+  - 2.0
+  staircase:
+    step_s: 0.05
+    tau_min_s: 0.05
+    tau_max_s: 1.0
+t_stop_protocol:
+  trigger_speed_fraction: 0.8
+  record_s: 1.5
+mapping:
+  intrusion.reach:
+    overshoot_fraction: 0.333

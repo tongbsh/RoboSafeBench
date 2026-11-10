@@ -1,0 +1,16 @@
+# PILOT ONLY, not pre-registered: initial development values borrowed from
+# pilot/calvin and conformance probe settings; LIBERO sensitivity remains to measure.
+# min_source_kinds=1 is the explicit D14 pilot deviation; probes are official demos only.
+contact:
+  restitution_e: 0.0
+  gap_tolerance_s: 0.02
+clamp:
+  t_q_s: 0.1
+  opposing_normals_tol_rad: 0.3
+toppling:
+  tilt_threshold_deg: 30.0
+exposure:
+  low_exposure_radius_m: 0.1
+stability:
+  hazard_induced_max_distance_m: 0.3
+  attribution_window_s: 0.5

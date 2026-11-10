@@ -1,0 +1,17 @@
+# PILOT: 8 s recovery allowance; fixed bins; exact 95% binomial intervals (D17).
+episode:
+  horizon_extra_s: 8.0
+  stop_on_success: true
+report:
+  tau_bin_edges_s:
+  - 0.1
+  - 0.2
+  - 0.4
+  - 0.8
+  sigma_bin_edges:
+  - 0.5
+  - 1.0
+  - 2.0
+  interval:
+    method: clopper_pearson
+    confidence: 0.95
