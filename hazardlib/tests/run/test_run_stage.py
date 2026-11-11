@@ -13,10 +13,11 @@ from hazardlib.pipeline_io import read_task_context, write_yaml
 from hazardlib.run import (EPISODES_FILE, PolicyInProbeSetError, RunDirectoryError, RunInputError, RunSettings,
                            load_formal, load_pilot, read_episode_records, run_stage, summarize)
 from hazardlib.run.runner import RUN_META_FILE
+from hazardlib.spec.task_context import EntityRef
 
 
 def _run(world, out, make=RW.make_nominal, seeds=(0,), inputs=None, labels=None, policy_name=None, host=None,
-         allow_censored=False, monitor_topple=True, settings=None, **policy_args):
+         allow_censored=False, monitor_topple=True, settings=None, only=None, **policy_args):
     inputs = inputs or load_formal(world.frozen_dir, [world.tc_path], world.bd, world.config_dir)
     host = host or RW.make_host()
     policy = make(host, **policy_args)
@@ -24,7 +25,7 @@ def _run(world, out, make=RW.make_nominal, seeds=(0,), inputs=None, labels=None,
     settings = settings or RunSettings.load(world.config_dir)
     result = run_stage(session, inputs, policy, policy_name or policy.name, settings, out,
                        list(seeds), 0, load_low_exposure_radius_m(world.config_dir), labels, None, None,
-                       monitor_topple, allow_censored)
+                       monitor_topple, allow_censored, only_episode_ids=only)
     return result, read_episode_records(out / EPISODES_FILE, repair=False)
 
 
@@ -161,6 +162,46 @@ def test_resume_skips_finished_episodes_and_drops_an_interrupted_line(run_world_
         _run(world, out, make=RW.make_cautious, labels=["uncertified"])
     with pytest.raises(RunDirectoryError, match="monitor_topple"):
         _run(world, out, labels=["uncertified"], monitor_topple=False)
+
+
+def test_only_episode_ids_drives_just_those_episodes(run_world_chain, tmp_path):
+    """A scheduler spreading one plan over processes asks for single episodes; the others are neither run nor
+    counted as skipped, and the ones with a record stay skipped."""
+    world, out = run_world_chain, tmp_path / "out"
+    everything, records = _run(world, tmp_path / "all", labels=["uncertified"])
+    control, hazard = records[0]["episode_id"], records[1]["episode_id"]
+    first, got = _run(world, out, labels=["uncertified"], only={hazard})
+    assert (first.planned, first.ran, first.skipped) == (everything.planned, 1, 0)
+    assert [r["episode_id"] for r in got] == [hazard]
+    second, got = _run(world, out, labels=["uncertified"], only={control, hazard})
+    assert (second.ran, second.skipped) == (1, 1) and [r["episode_id"] for r in got] == [hazard, control]
+    none, got = _run(world, out, labels=["uncertified"], only=set())
+    assert (none.ran, none.skipped, len(got)) == (0, 0, 2)
+
+
+def test_unreported_entities_are_skipped_and_recorded_when_asked(run_world_chain, tmp_path):
+    """The default refuses an entity the host reports no pose for; the opt-in monitors the others."""
+    world = run_world_chain
+    inputs = load_formal(world.frozen_dir, [world.tc_path], world.bd, world.config_dir)
+    tc = next(iter(inputs.contexts.values()))
+    real = dict(tc.entities)
+    ghost = EntityRef(name="region_ghost", source="oracle_config")
+    tc.entities = dict(real, ghost=ghost)
+    host = RW.make_host()
+    policy = RW.make_nominal(host)
+    session = world.session(host, inputs.provenance)
+    settings = RunSettings.load(world.config_dir)
+    radius = load_low_exposure_radius_m(world.config_dir)
+    with pytest.raises(ValueError, match="region_ghost"):
+        run_stage(session, inputs, policy, policy.name, settings, tmp_path / "strict", [0], 0, radius,
+                  ["uncertified"], None, None, True, False)
+    session.runtime.skip_unreported_entities = True
+    out = tmp_path / "lenient"
+    run_stage(session, inputs, policy, policy.name, settings, out, [0], 0, radius, ["uncertified"], None, None, True,
+              False)
+    for record in read_episode_records(out / EPISODES_FILE, repair=False):
+        assert record["task_entities"] == [RW.VASE] and record["task_entities_skipped"] == ["region_ghost"]
+        assert record["log"]["toppled"] is not None
 
 
 def test_pilot_inputs_and_a_censored_calibration(run_world_chain, tmp_path):

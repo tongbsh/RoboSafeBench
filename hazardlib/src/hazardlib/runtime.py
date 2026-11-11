@@ -210,11 +210,13 @@ class _Arm:
 class _Episode:
     """Mutable state of one running (or just finished) episode of one environment."""
 
-    def __init__(self, env: int, arm: _Arm, t_start: float, handle: Optional[HazardHandle]) -> None:
+    def __init__(self, env: int, arm: _Arm, t_start: float, handle: Optional[HazardHandle],
+                 skipped: Sequence[str] = ()) -> None:
         self.env = env
         self.instance = arm.instance
         self.control_id = arm.control_id
         self.task_entities = arm.task_entities
+        self.task_entities_skipped = list(skipped)
         self.onset_s = arm.control_onset_s if arm.instance is None else arm.instance.onset_time_s
         self.t_start = t_start
         self.handle = handle
@@ -329,6 +331,7 @@ class HazardRuntime:
         self.provenance = provenance
         self._include = list(bodies.include)
         self._exclude = list(bodies.exclude)
+        self.skip_unreported_entities = False
         self._armed = {}  # type: Dict[int, _Arm]
         self._running = {}  # type: Dict[int, _Episode]
         self._finished = {}  # type: Dict[int, _Episode]
@@ -404,19 +407,23 @@ class HazardRuntime:
         if arm is None:
             raise RuntimeError("env %d: begin_episode without arm(); arm the next instance (or a control) "
                                "before the reset" % env)
+        missing = []  # type: List[str]
         if arm.task_entities is not None:
             poses = self.host.object_poses(env)
             missing = [n for n in arm.task_entities if n not in poses]
-            if missing:
+            if missing and not self.skip_unreported_entities:
                 raise ValueError("env %d: task_entities %s are not in object_poses (known: %s)"
                                  % (env, missing, sorted(poses)))
+            if missing:      # opt-in: monitor the entities the host reports, remember the others
+                kept = [n for n in arm.task_entities if n in poses]
+                arm = dataclasses.replace(arm, task_entities=kept or None)
         t_start = self.host.time_state(env).sim_time_s
         handle = None
         if arm.instance is not None:
             handle = self.host.alloc_hazard(env, arm.instance.agent)
             self.host.set_hazard_visible(handle, False)
         self._finished.pop(env, None)
-        self._running[env] = _Episode(env, arm, t_start, handle)
+        self._running[env] = _Episode(env, arm, t_start, handle, missing)
 
     # -------------------------------------------------------------------------------------------- hooks
 
@@ -569,7 +576,7 @@ class HazardRuntime:
         release = None if ep.release_info is None else dict(ep.release_info)
         return {"instance_id": ep.log_id, "family": None if ep.instance is None else ep.instance.family,
                 "phase": ep.phase, "t_start_s": ep.t_start, "release": release, "exit_t_s": ep.exit_t,
-                "setup_failed": ep.setup_failed,
+                "setup_failed": ep.setup_failed, "task_entities_skipped": list(ep.task_entities_skipped),
                 "setup_reason": ep.setup_reason, "r1_violation_count": ep.r1_violations,
                 "instability": None if ep.instability is None else dict(ep.instability),
                 "log": ep.log}

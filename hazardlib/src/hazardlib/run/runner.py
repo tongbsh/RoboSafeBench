@@ -23,13 +23,16 @@ Each episode goes through ``EpisodeSession.run_episode`` (synchronous: the simul
 policy computes its action). Hazard episodes are annotated with ``exposure_low`` (``annotate_exposure``, radius
 ``semantics.yaml: exposure.low_exposure_radius_m``). Topple is monitored on every TaskContext entity (D10 h)
 unless ``monitor_topple`` is false; a control passes ``control_onset_s`` = its instance's nominal onset (D12 a).
+With ``session.runtime.skip_unreported_entities`` the entities the host does not report a pose for (e.g. a
+region of an articulated fixture) are left out of the monitoring instead of refusing the episode; the record's
+``task_entities`` then holds the monitored names and ``task_entities_skipped`` the others.
 The wall-clock time of every ``act`` is recorded (``TimedPolicy``); only its summary is stored, as a diagnostic.
 """
 import dataclasses
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Collection, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import yaml
 
@@ -166,9 +169,10 @@ class RunResult:
 def run_stage(session: Any, inputs: RunInputs, policy: Any, policy_name: str, settings: RunSettings, out_dir: Any,
               seeds: Sequence[int], env: int, exposure_radius_m: float, labels: Optional[Sequence[str]],
               frame_sink: Optional[Any], frame_keys: Optional[Sequence[str]], monitor_topple: bool,
-              allow_censored_t_stop: bool) -> RunResult:
+              allow_censored_t_stop: bool, only_episode_ids: Optional[Collection[str]] = None) -> RunResult:
     """Run every planned episode that has no record yet (module docstring). ``frame_sink`` and ``frame_keys`` go
-    together (both or neither)."""
+    together (both or neither). ``only_episode_ids``: drive just the planned episodes with these ids (the others
+    are neither run nor counted as skipped); a scheduler that spreads one plan over several processes uses it."""
     if not isinstance(policy_name, str) or not policy_name:
         raise ValueError("a run needs the policy name (--policy-name), got %r" % (policy_name,))
     info = describe_policy(policy)
@@ -202,6 +206,8 @@ def run_stage(session: Any, inputs: RunInputs, policy: Any, policy_name: str, se
     ran = {HAZARD: 0, CONTROL: 0}
     skipped = 0
     for planned in plan:
+        if only_episode_ids is not None and planned.episode_id not in only_episode_ids:
+            continue
         if (planned.episode_id, policy_name, planned.seed) in done:
             skipped += 1
             continue
@@ -230,6 +236,9 @@ def _run_one(session: Any, inputs: RunInputs, planned: PlannedEpisode, driver: A
                                  measure_visibility=planned.kind == HAZARD, task_entities=entities or None,
                                  control_onset_s=planned.control_onset_s)
     frames = None if recorder is None else _relative(recorder.end(), out)
+    info_run = session.runtime.episode_info(env)
+    skipped = [] if info_run is None else list(info_run.get("task_entities_skipped") or [])
+    monitored = [name for name in entities if name not in skipped]
     log = result.log
     instance = planned.instance
     hazard_fields = {"instance_id": None, "spec_id": None, "family": None, "tau_s": None, "sigma": None,
@@ -251,7 +260,8 @@ def _run_one(session: Any, inputs: RunInputs, planned: PlannedEpisode, driver: A
     record.update({"horizon_s": planned.horizon_s, "stop_on_success": settings.episode.stop_on_success,
                    "n_control_steps": int(len(result.times_s) - 1), "success_t_s": result.success_t_s,
                    "official_contact_count": result.official_contact_count,
-                   "first_visible_t_s": result.first_visible_t_s, "task_entities": entities or None,
+                   "first_visible_t_s": result.first_visible_t_s, "task_entities": monitored or None,
+                   "task_entities_skipped": skipped or None,
                    "policy_name": policy_name, "policy": dict(info), "inference_time_s": _inference_summary(timed),
                    "frames": frames, "pilot": inputs.pilot, "manifest_hash": inputs.manifest_hash,
                    "run_config_hash": settings.config_hash, "log": log.to_dict()})

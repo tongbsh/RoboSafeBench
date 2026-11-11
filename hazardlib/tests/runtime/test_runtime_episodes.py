@@ -86,6 +86,19 @@ def test_unknown_task_entity_fails_at_the_reset():
         host.reset_episode(0, "static", "objects", 0)
 
 
+def test_unreported_task_entities_can_be_skipped_and_are_recorded():
+    host, runtime = W.make()
+    runtime.skip_unreported_entities = True            # opt-in: monitor what the host reports, remember the rest
+    log = W.run_episode(host, runtime, W.slide_instance(host), 1.0, layout="objects",
+                        task_entities=["cup", "drawer_region"])
+    assert log.toppled is False                          # "cup" is monitored
+    assert runtime.episode_info(0)["task_entities_skipped"] == ["drawer_region"]
+    log = W.run_episode(host, runtime, W.slide_instance(host), 1.0, layout="objects", task_entities=["region_a"])
+    assert log.toppled is None and runtime.episode_info(0)["task_entities_skipped"] == ["region_a"]
+    log = W.run_episode(host, runtime, W.slide_instance(host), 1.0, layout="objects", task_entities=["cup"])
+    assert runtime.episode_info(0)["task_entities_skipped"] == []
+
+
 def test_control_episode_logs_no_hazard_quantity():
     host, runtime = W.make(provenance=W.provenance())
     log = W.run_episode(host, runtime, None, 1.0, task="to_goal", layout="objects", control_id="ctl_7",
