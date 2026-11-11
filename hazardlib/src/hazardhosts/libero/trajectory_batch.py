@@ -1,13 +1,17 @@
 """Batch launcher of the LIBERO generation run: many tasks, one global queue of (task, demo) jobs over GPU slots.
 
     python -m hazardhosts.libero.trajectory_batch --root <batch dir> --source <_logs/libero40> \\
-        --tasks libero_spatial:0,libero_10:2 | all --max-demos N --slots 0:10,2:10 [--retries 1]
+        --tasks libero_spatial:0,libero_10:2 | all --max-demos N --slots 0:10,2:10 [--retries 1] \\
+        [--hazard-scale S|M|L]
 
 Run it from an environment with ``PYTHONPATH``, ``LIBERO_CONFIG_PATH``, ``MUJOCO_GL`` ... set (children inherit it);
 the launcher sets ``CUDA_VISIBLE_DEVICES`` / ``MUJOCO_EGL_DEVICE_ID`` per job from the slot.
 
 1. *prepare* (per task, in the queue): hard-link ``<source>/<suite>_task<k>`` (collect / derive outputs) into
-   ``<root>`` if missing, assemble ``config/`` once, run ``export`` for the first N usable demonstrations;
+   ``<root>`` if missing, assemble ``config/`` once (and, for a hazard scale other than the default, give the
+   root's ``scene.json`` the level's agent: ``hazard_scale.prepare_root``; the source tree is not modified),
+   run ``export`` for the first N usable demonstrations. The root identifies the D21 hazard scale level: use one
+   root per level (``_logs/libero40_gen20_M``), all built from the same collect / derive outputs;
 2. *validate jobs*: one process per (task, demo) over ``trajectory_analysis validate --demos <demo>``, started
    as soon as a slot is free and the task's export is done, so no slot idles while any task has work left. A
    crashed job is retried (``--retries``, default once; validate resumes from the completed cells);
@@ -114,6 +118,8 @@ def main(argv=None):
     parser.add_argument("--tasks", required=True, help="<suite>:<k>,... or all")
     parser.add_argument("--max-demos", type=int, required=True, help="first N usable demonstrations per task")
     parser.add_argument("--slots", required=True, help="gpu:count,... simulator processes per GPU, e.g. 0:10,2:10")
+    parser.add_argument("--hazard-scale", default=None, help="D21 hazard scale level S / M / L (default: the "
+                        "default level of configs/hazard/pilot/hazard_scale.yaml, the original 4 cm / 0.05 kg box)")
     parser.add_argument("--retries", type=int, default=1, help="retries of a crashed job (default 1)")
     parser.add_argument("--sample-s", type=float, default=5.0, help="GPU memory sampling period")
     args = parser.parse_args(argv)
@@ -129,7 +135,8 @@ def main(argv=None):
 
     tasks = parse_tasks(args.tasks)
     names = {t: "%s_task%d" % t for t in tasks}
-    from .pilot import assemble_config
+    from .hazard_scale import level_spec, prepare_root
+    level = level_spec(args.hazard_scale)[0]
     queue = []
     state = {}      # task -> {"demos": [...], "left": set, "ready": bool}
     for t in tasks:
@@ -139,8 +146,7 @@ def main(argv=None):
                 raise SystemExit("%s has no collect / derive outputs (coverage.json)" % (source / names[t]))
             subprocess.check_call(["cp", "-al", str(source / names[t]), str(d)])
             say("PREPARE %s linked from %s" % (names[t], source))
-        if not (d / "config").exists():
-            assemble_config(d / "config")      # once per task, before any process of it starts
+        prepare_root(d, level)      # config/ and scene.json agent of the level, before any child process
         demos = usable_demos(d, args.max_demos)
         done = [x for x in demos if (d / "trajectories" / x / "validation.json").exists()]
         state[t] = {"demos": demos, "left": set(demos) - set(done), "ready": exported(d, demos), "failed": set()}
@@ -162,7 +168,7 @@ def main(argv=None):
         suite, k = job.task
         d = root / names[job.task]
         base = [sys.executable, "-u", "-m", MODULE]
-        common = ["--out", str(d), "--suite", suite, "--task-index", str(k)]
+        common = ["--out", str(d), "--suite", suite, "--task-index", str(k), "--hazard-scale", level]
         if job.kind == "export":
             return base + ["export"] + common + ["--max-demos", str(args.max_demos)]
         if job.kind == "report":

@@ -434,6 +434,10 @@ def main():
     parser.add_argument("--workers", type=int, help="validate only: number of parallel simulator processes")
     parser.add_argument("--max-demos", type=int, help="export / validate: only the first N usable demonstrations in "
                         "coverage order (a budgeted run; the coverage scoring then uses these N)")
+    parser.add_argument("--hazard-scale", help="D21 hazard scale level (configs/hazard/pilot/hazard_scale.yaml; "
+                        "default S) of export / validate / report: selects the root's config/ and the agent of its "
+                        "scene.json (hazard_scale.prepare_root) and the level's generator settings. Without the "
+                        "flag the level of an existing <out>/config is used (S for the legacy ones)")
     args = parser.parse_args()
     config_dir = Path(__file__).resolve().parents[4] / "configs/hazard/pilot/libero"
     settings = load_config("trajectory_analysis", strict=True, config_dir=config_dir)
@@ -442,6 +446,16 @@ def main():
         settings = dict(settings, suite=args.suite)
     if args.task_index is not None:
         settings = dict(settings, task_index=args.task_index)
+    if args.stage in ("export", "validate", "report"):
+        from .hazard_scale import config_level, prepare_root, settings_for
+        if args.hazard_scale is not None:
+            level = prepare_root(args.out, args.hazard_scale)
+        else:
+            level = config_level(Path(args.out) / "config") if (Path(args.out) / "config").exists() else None
+        if level is not None:
+            settings = settings_for(settings, level)
+    elif args.hazard_scale is not None:
+        parser.error("--hazard-scale applies to export / validate / report (collect is level-independent)")
     if args.stage == "collect":
         collect(args.out, settings)
     elif args.stage == "derive":

@@ -28,8 +28,11 @@ from .policies import DemoReplay, DyniPolicyBridge
 from .video import Mp4FrameSink
 
 
-def assemble_config(directory):
+def assemble_config(directory, scale=None, levels_path=None):
+    """The pilot config directory of a run. ``scale``: the D21 hazard scale level (``hazard_scale``); ``None`` and
+    the default level give the legacy directory."""
     from hazardlib.config import default_config_dir
+    from .hazard_scale import apply_to_config_dir
     source = default_config_dir()
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
@@ -38,6 +41,7 @@ def assemble_config(directory):
     shutil.copytree(source / "bd", directory / "bd", dirs_exist_ok=True)
     for item in (source / "pilot/libero").glob("*.yaml"):
         shutil.copy2(item, directory / item.name)
+    apply_to_config_dir(directory, scale, levels_path)
     return directory
 
 

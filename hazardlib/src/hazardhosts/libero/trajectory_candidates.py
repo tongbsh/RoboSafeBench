@@ -21,6 +21,7 @@ from hazardlib.gates.settings import GateSettings
 from hazardlib.generate import (GenerateSettings, TrajectorySet, cell_id, cell_statistics,
                                 generation_table, layout_probes, propose, select_admitted, target_key)
 from hazardlib.generate.propose import CoverageIndex
+from hazardlib.generate.stats import distribution
 from hazardlib.generate.select import ledger_statistics, rejection_keys, t_stop_statistics  # noqa: F401  (re-exported)
 from hazardlib.instantiate import InstantiateSettings, instantiate, reach_geometry, slide_support_rule
 from hazardlib.instantiate.builder import InstanceRejected
@@ -356,6 +357,78 @@ def reach_stroke_m(instance_settings):
     return length
 
 
+CONSEQUENCE_FIELDS = ("task_success", "first_scene_contact_t_s", "v_rel_normal_mps", "impulse_analytic_ns",
+                      "hazard_mass_kg", "contact_duration_s", "constraint_state")
+
+
+def consequence_record(log):
+    """D21 diagnostic (never an admission rule) of the physical nominal-hit episode, whose policy is the
+    non-reacting reference replay: whether the task still succeeded after the hit, and what the log knows of the
+    hit (analytic impulse ``m (1 + e) v_n`` and normal speed of the first robot-side contact, hazard mass, the
+    time the hazard first touched a task / scene body). ``engine_peak_force_n`` is not measured by the runtime."""
+    record = {}
+    for key in CONSEQUENCE_FIELDS:
+        value = getattr(log, key, None)
+        record[key] = getattr(value, "value", value)
+    return record
+
+
+def consequence_statistics(entries, quantiles):
+    """D21 diagnostic of one cell over its layouts (``entries`` as in ``cell_statistics``): over the admitted
+    instances, how often the non-reacting reference replay of the physical nominal-hit episode fails the task
+    (``reference_task_failed`` / ``n_admitted``), and the distribution of the analytic impulse of the hit where
+    the ledger has it (ledgers of runs before D21 only have ``nominal_hit.success``). No admission rule."""
+    rows = []
+    for _, ledger in entries:
+        item = next((p for p in ledger if p.get("selected")), None)
+        if item is None or "nominal_hit" not in item:
+            continue
+        c = item.get("consequence") or {}
+        rows.append({"failed": not bool(item["nominal_hit"]["success"]),
+                     "impulse_ns": c.get("impulse_analytic_ns"), "v_rel_normal_mps": c.get("v_rel_normal_mps"),
+                     "scene_contact": c.get("first_scene_contact_t_s") is not None})
+    failed = sum(r["failed"] for r in rows)
+    return {"n_admitted": len(rows), "reference_task_failed": failed,
+            "failure_rate": None if not rows else failed / len(rows),
+            "n_scene_contact": sum(r["scene_contact"] for r in rows),
+            "impulse_ns": distribution([r["impulse_ns"] for r in rows if r["impulse_ns"] is not None], quantiles),
+            "v_rel_normal_mps": distribution([r["v_rel_normal_mps"] for r in rows
+                                              if r["v_rel_normal_mps"] is not None], quantiles)}
+
+
+def consequence_by_family(cells):
+    """Roll-up of ``consequence_statistics`` over cells: ``{family: {n_admitted, reference_task_failed,
+    failure_rate}}`` plus ``all``. ``cells``: ``{cell id: {sigma key: consequence statistics}}``."""
+    out = {}
+    for cid, targets in cells.items():
+        for key in ("all", cid.partition("@")[0]):
+            row = out.setdefault(key, {"n_admitted": 0, "reference_task_failed": 0})
+            for c in targets.values():
+                row["n_admitted"] += c["n_admitted"]
+                row["reference_task_failed"] += c["reference_task_failed"]
+    for row in out.values():
+        row["failure_rate"] = None if not row["n_admitted"] else row["reference_task_failed"] / row["n_admitted"]
+    return out
+
+
+def consequence_table(cells, by_family):
+    def rate(c):
+        return "-" if not c["n_admitted"] else "%d/%d (%.0f%%)" % (
+            c["reference_task_failed"], c["n_admitted"], 100.0 * c["failure_rate"])
+
+    def impulse(c):
+        q = c["impulse_ns"]
+        return "-" if not q["n"] else "%.3f" % q["quantiles"]["0.5"]
+    lines = ["| cell | Sigma | admitted | reference replay fails the task after the hit | median impulse (N s) |",
+             "|---|---:|---:|---|---:|"]
+    for cid, targets in cells.items():
+        for key, c in targets.items():
+            lines.append("| %s | %s | %d | %s | %s |" % (cid, key, c["n_admitted"], rate(c), impulse(c)))
+    lines += ["", "| family | admitted | reference replay fails the task after the hit |", "|---|---:|---|"]
+    lines += ["| %s | %d | %s |" % (name, c["n_admitted"], rate(c)) for name, c in sorted(by_family.items())]
+    return "\n".join(lines) + "\n"
+
+
 def certify(instance, g1_passed):
     label = "wait_solvable" if g1_passed else "uncertified"
     instance.certificate = Certificate.from_dict({"g0": True, "g1": g1_passed, "g2": None, "label": label,
@@ -487,6 +560,10 @@ def validate(root, settings, demos=None, max_demos=None):
             # before using them.
             arrays = dict(np.load(folder / "replay.npz"))
             states = rebuild_states(host, scene, row, folder, arrays, settings)
+            if host.pool[0].agent.to_dict() != scene["agent"]:      # the pool exists once an episode was reset
+                raise ValueError("scene.json agent %s is not the host pool agent %s of %s: the root belongs to "
+                                 "another hazard scale (hazard_scale.prepare_root)"
+                                 % (scene["agent"], host.pool[0].agent.to_dict(), config))
             host.install_hooks(session.runtime)
             supports = host.support_labels()      # primary supports if the scene has one, else the fallback (floor)
             extent = scene_extent(host, scene)
@@ -592,6 +669,7 @@ def validate(root, settings, demos=None, max_demos=None):
                     nominal["exit_t_s"] = info_["exit_t_s"]
                     print("NOMINAL " + json.dumps(nominal), flush=True)
                     item["nominal_hit"] = nominal
+                    item["consequence"] = consequence_record(info_["log"])
                     failure = None
                     if not nominal["contact"]:
                         failure = "no_contact"
@@ -665,6 +743,11 @@ def cell_ids(settings):
     return [(cell_id(f, e), f) for f in generate.families for e in generate.elevations(f)]
 
 
+def scene_agent(root):
+    path = Path(root) / "scene.json"
+    return json.loads(path.read_text())["agent"] if path.exists() else None
+
+
 def report(root, settings):
     root = Path(root)
     coverage = json.loads((root / "coverage.json").read_text())
@@ -694,8 +777,14 @@ def report(root, settings):
         csvrows.append(cr)
     quantiles = settings["quantiles"]
     families = {cid: {"targets": {k: cell_statistics(results[cid][k], quantiles) for k in keys}} for cid, _ in cells}
+    consequence = {cid: {k: consequence_statistics(results[cid][k], quantiles) for k in keys} for cid, _ in cells}
+    by_family = consequence_by_family(consequence)
+    from .hazard_scale import config_level
     summary = {"n_processed": len(validations), "n_baseline_unusable": len(validations) - len(processed),
-               "sigma_targets": settings["sigma_targets"],
+               "hazard_scale": config_level(root / "config") if (root / "config").exists() else None,
+               "hazard_agent": scene_agent(root),
+               "sigma_targets": settings["sigma_targets"], "consequence": consequence,
+               "consequence_by_family": by_family,
                "t_stop": t_stop_statistics([v["t_stop"] for v in processed]), "families": families}
     write_yaml(root / "validated_summary.yaml", summary)
     with (root / "coverage.csv").open("w") as handle:
@@ -706,8 +795,11 @@ def report(root, settings):
                    for k, v in d["targets"].items()} for f, d in families.items()}
     (root / "generation_report.md").write_text(
         "# Generation report\n\nDemonstrations processed: %d (baseline unusable: %d). One row per cell "
-        "(family x entry-direction class x Sigma target); `admitted` counts demonstrations (layouts).\n\n%s" % (
-            len(processed), summary["n_baseline_unusable"], generation_table(families)))
+        "(family x entry-direction class x Sigma target); `admitted` counts demonstrations (layouts).\n\n%s\n"
+        "## Physical consequence of the nominal hit (D21, diagnostic only)\n\nHazard scale %s, agent %s. The "
+        "reference replay does not react to the hazard; task failure is a physical outcome, not an admission rule.\n\n%s" % (
+            len(processed), summary["n_baseline_unusable"], generation_table(families),
+            summary["hazard_scale"], summary["hazard_agent"], consequence_table(consequence, by_family)))
     print("REPORT " + json.dumps({"processed": len(validations), "t_stop": summary["t_stop"], "families": compact}))
     from .trajectory_report import write_analysis_report
     write_analysis_report(root)
