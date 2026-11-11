@@ -26,6 +26,11 @@ fall is vertical and has no direction. Per cell:
   own initial ``e`` frame during that segment. It is recorded in the evidence; with ``coverage_ordering`` the
   candidates of a bucket (direction x segment) are ordered by coverage first, and the budgeted list is stably
   re-sorted by coverage (the shortlist of the host sorts by it too).
+* **Approach speed** of a slide / reach (``speed_source``): ``demo`` is the median of the per-segment demo speed
+  levels (a benchmark-derived intensity); ``paradigm`` is ``paradigm_approach_speed_mps[family]``, the same for
+  every benchmark (D20: the hazard's physical intensity is not read from the demonstrations). Tau stays
+  ``Sigma * T_stop``, so the stroke ``speed * tau`` grows with the speed; a reach whose start leaves the
+  workspace is dropped, a slide's start is judged by G0 (``out_of_workspace``) and the scene sweep.
 * **Budget**: round-robin over (azimuth, segment) buckets, then ``max_candidates_per_family_layout``.
 """
 import collections
@@ -261,7 +266,10 @@ def propose(trajectory: Trajectory, trajectory_set: TrajectorySet, settings: Gen
             lows = None if lows is None else lows[keep]
             positions = sorted(set(int(math.floor(q * (len(indices) - 1))) for q in settings.anchor_quantiles))
             levels = levels_by_name[segment.name]
-            speed = float(np.median(levels)) if len(levels) else 0.0
+            if settings.speed_source == "paradigm" and family != FAMILY_FALL:
+                speed = settings.paradigm_approach_speed_mps[family]
+            else:
+                speed = float(np.median(levels)) if len(levels) else 0.0
             for position in positions:
                 anchor = int(indices[position])
                 offset = np.zeros(3)
@@ -340,7 +348,8 @@ def propose(trajectory: Trajectory, trajectory_set: TrajectorySet, settings: Gen
                         evidence = {"phase": segment.name, "segment_entity": segment.entity, "anchor_step": anchor,
                                     "source": "all-demo segment speed quantiles + individual low-clearance "
                                               "replay samples",
-                                    "speed_levels_mps": list(levels), "sigma_target": sigma, "t_stop_s": t_stop_s,
+                                    "speed_levels_mps": list(levels), "speed_source": settings.speed_source,
+                                    "sigma_target": sigma, "t_stop_s": t_stop_s,
                                     "tau_s": tau, "available_before_hit_s": t_hit - segment.t_start_s,
                                     "risk_clearance_m": float(risk_array()[anchor]),
                                     "finger_table_gap_m": float(gap_array()[anchor]),

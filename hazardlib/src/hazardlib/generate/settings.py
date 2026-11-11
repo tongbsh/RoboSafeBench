@@ -15,6 +15,7 @@ from ..kinematics.hit import FAMILY_FALL, FAMILY_REACH, FAMILY_SLIDE
 FAMILIES = (FAMILY_REACH, FAMILY_FALL, FAMILY_SLIDE)
 DIRECTION_FRAMES = ("segment_entity", "demo_first_entity")
 PREFILTER_MODES = ("reject", "record", "off")
+SPEED_SOURCES = ("demo", "paradigm")
 OWNER = "GenerateSettings"
 
 
@@ -34,6 +35,8 @@ class GenerateSettings:
     step_tolerance_fraction: float
     anchor_quantiles: Tuple[float, ...]
     speed_quantiles: Tuple[float, ...]
+    speed_source: str
+    paradigm_approach_speed_mps: Mapping[str, float]
     max_candidates_per_family_layout: int
     follow_through: Mapping[str, str]
     entry_directions: Mapping[str, EntrySettings]
@@ -55,6 +58,14 @@ class GenerateSettings:
                 raise ValueError("unknown family %r" % family)
         if self.direction_frame not in DIRECTION_FRAMES:
             raise ValueError("direction_frame %r is not one of %s" % (self.direction_frame, list(DIRECTION_FRAMES)))
+        if self.speed_source not in SPEED_SOURCES:
+            raise ValueError("speed_source %r is not one of %s" % (self.speed_source, list(SPEED_SOURCES)))
+        for family in self.families:
+            if family == FAMILY_FALL:
+                continue
+            if family not in self.paradigm_approach_speed_mps:
+                raise ValueError("paradigm_approach_speed_mps has no entry for %s" % family)
+            positive_float("paradigm_approach_speed_mps.%s" % family, self.paradigm_approach_speed_mps[family])
         if self.layout_prefilter not in PREFILTER_MODES:
             raise ValueError("layout_prefilter %r is not one of %s" % (self.layout_prefilter, list(PREFILTER_MODES)))
         for name in ("step_tolerance_fraction", "coverage_radius_m", "thinned_point_spacing_m", "risk_search_m",
@@ -79,7 +90,8 @@ class GenerateSettings:
     def from_mapping(cls, data: Mapping[str, Any], file_name: str = "trajectory_analysis") -> "GenerateSettings":
         reader = ValueReader(OWNER)
         keys = ("families", "sigma_targets", "minimum_lead_control_steps", "step_tolerance_fraction",
-                "anchor_quantiles", "speed_quantiles", "max_candidates_per_family_layout", "follow_through",
+                "anchor_quantiles", "speed_quantiles", "speed_source", "paradigm_approach_speed_mps",
+                "max_candidates_per_family_layout", "follow_through",
                 "direction_frame", "coverage_radius_m", "coverage_ordering", "thinned_point_spacing_m",
                 "gripper_body_prefixes", "risk_search_m", "scene_clearance_tol_m",
                 "scene_clearance_spacing_half_extent_fraction", "layout_prefilter", "layout_prefilter_slack_m",
@@ -100,6 +112,9 @@ class GenerateSettings:
             values[key] = tuple(finite_float(key, v) for v in values[key])
         values["entry_directions"] = entry
         values["follow_through"] = dict(values["follow_through"])
+        values["paradigm_approach_speed_mps"] = {
+            str(k): finite_float("paradigm_approach_speed_mps.%s" % k, v)
+            for k, v in dict(values["paradigm_approach_speed_mps"]).items()}
         try:
             return cls(**values)
         except ValueError as exc:

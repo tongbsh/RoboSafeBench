@@ -226,9 +226,10 @@ def test_speed_levels_come_from_all_trajectories_and_empty_levels_drop_the_ancho
     levels = phase_speed_levels(ts.trajectories, gs)
     assert set(levels) == {"approach_0", "manipulate_0"}
     assert all(v == pytest.approx([.2, .2, .2]) for v in levels.values())        # 0.01 m per 0.05 s
-    cell = run(ts, speed_levels={"approach_0": [], "manipulate_0": [.3]})[("intrusion.reach", 0.0, .75)]
+    demo = S.settings(speed_source="demo")         # the paradigm speed needs no demo speed (see below)
+    cell = run(ts, demo, speed_levels={"approach_0": [], "manipulate_0": [.3]})[("intrusion.reach", 0.0, .75)]
     assert cell.candidates and all(e["phase"] == "manipulate_0" for _, e in cell.candidates)
-    none = run(ts, speed_levels={"approach_0": [], "manipulate_0": []})[("intrusion.reach", 0.0, .75)]
+    none = run(ts, demo, speed_levels={"approach_0": [], "manipulate_0": []})[("intrusion.reach", 0.0, .75)]
     assert none.candidates == [] and none.info["unreachable"] == "no_speed"
 
 
@@ -276,4 +277,99 @@ def test_layout_prefilter_probes_replay_frozen_support_and_held():
     shallow = [(0.0, np.array([1.0, 1.0, .95 + .05 + .02 - .004]), np.array([1., 0, 0, 0]))]
     depth = sweep(shallow, layout_probes(layout, 0.0, ("support",), half), .001)["by_state"]["replay"]["partners"]["cup_0"]
     assert depth == pytest.approx(.004, abs=1e-6)
+
+
+# ---- approach speed source (D20 / D21): demo-derived or the fixed paradigm speed ----
+
+LEVELS = {"approach_0": [.1, .3, .5], "manipulate_0": [.2, .4, .6]}
+DEMO_SPEED = {"approach_0": .3, "manipulate_0": .4}          # medians of LEVELS
+
+
+def _specs(result):
+    return {k: [s for s, _ in c.candidates] for k, c in result.items()}
+
+
+def test_speed_source_is_a_required_validated_setting_without_a_code_default():
+    raw = S.raw_settings()
+    assert raw["speed_source"] in ("demo", "paradigm")
+    assert set(raw["paradigm_approach_speed_mps"]) == {"intrusion.reach", "intrusion.slide"}
+    for key in ("speed_source", "paradigm_approach_speed_mps"):
+        with pytest.raises(ConfigError, match=key):
+            GenerateSettings.from_mapping({k: v for k, v in raw.items() if k != key})
+    with pytest.raises(ConfigError, match="speed_source"):
+        GenerateSettings.from_mapping(dict(raw, speed_source="fastest"))
+    with pytest.raises(ConfigError, match="intrusion.slide"):
+        GenerateSettings.from_mapping(dict(raw, paradigm_approach_speed_mps={"intrusion.reach": .6}))
+    with pytest.raises(ConfigError, match="paradigm_approach_speed_mps"):
+        GenerateSettings.from_mapping(dict(raw, paradigm_approach_speed_mps={"intrusion.reach": .6,
+                                                                              "intrusion.slide": 0.0}))
+
+
+def test_paradigm_speeds_are_the_first_declared_level_inside_the_pilot_intensity_range():
+    from hazardlib.config import load_config
+    intensity = load_config("intensity", strict=True, config_dir=S.CONFIG)["intensity"]
+    for family, speed in S.raw_settings()["paradigm_approach_speed_mps"].items():
+        axis = intensity[family]["approach_speed_mps"]
+        assert axis["lo"] <= speed <= axis["hi"]
+        assert speed == axis["levels"][0]
+
+
+def test_paradigm_speed_replaces_the_demo_speed_of_slide_and_reach_and_nothing_else():
+    ts = S.task_set(n_demos=3)
+    demo = run(ts, S.settings(speed_source="demo"), speed_levels=LEVELS)
+    para = run(ts, S.settings(speed_source="paradigm"), speed_levels=LEVELS)
+    assert set(demo) == set(para)
+    expected = S.raw_settings()["paradigm_approach_speed_mps"]
+    seen = set()
+    for key, cell in demo.items():
+        family = key[0]
+        assert cell.info == para[key].info
+        assert len(cell.candidates) == len(para[key].candidates)
+        for (a, ea), (b, eb) in zip(cell.candidates, para[key].candidates):
+            assert (ea["speed_source"], eb["speed_source"]) == ("demo", "paradigm")
+            if family == "intrusion.fall":
+                assert "approach_speed_mps" not in a["intensity"] and a == b
+                continue
+            assert a["intensity"]["approach_speed_mps"] == DEMO_SPEED[ea["phase"]]
+            assert b["intensity"]["approach_speed_mps"] == expected[family]
+            seen.add(family)
+            del a["intensity"]["approach_speed_mps"], b["intensity"]["approach_speed_mps"]
+            assert a == b                                   # same id, tau, anchor, direction, offset, follow-through
+    assert seen == {"intrusion.reach", "intrusion.slide"}
+
+
+def test_demo_source_does_not_read_the_paradigm_speeds():
+    ts = S.task_set(n_demos=3)
+    base = _specs(run(ts, S.settings(speed_source="demo"), speed_levels=LEVELS))
+    other = _specs(run(ts, S.settings(speed_source="demo", paradigm_approach_speed_mps={
+        "intrusion.reach": 1.9, "intrusion.slide": 1.7}), speed_levels=LEVELS))
+    assert base == other
+    assert any(s["intensity"].get("approach_speed_mps") == DEMO_SPEED["approach_0"]
+               for specs in base.values() for s in specs)
+
+
+def test_paradigm_speed_needs_no_demo_speed_and_feeds_the_reach_stroke_budget():
+    ts = S.task_set(n_demos=3)
+    calls = []
+
+    def stroke(speed, tau):
+        calls.append(speed)
+        return 5.0
+    gs = S.settings(speed_source="paradigm")
+    result = run(ts, gs, speed_levels={"approach_0": [], "manipulate_0": []}, reach_start_m=stroke)
+    assert set(calls) == {gs.paradigm_approach_speed_mps["intrusion.reach"]}
+    assert all(c.candidates == [] and c.info["unreachable"] == "reach_start_outside_workspace"
+               for k, c in result.items() if k[0] == "intrusion.reach")
+    slide = result[("intrusion.slide", 0.0, .75)]
+    assert slide.candidates and all(s["intensity"]["approach_speed_mps"] ==
+                                    gs.paradigm_approach_speed_mps["intrusion.slide"] for s, _ in slide.candidates)
+
+
+def test_speed_source_is_part_of_the_generation_identity():
+    from hazardlib.hashing import sha256_hex
+    raw = S.raw_settings()
+    other = "demo" if raw["speed_source"] == "paradigm" else "paradigm"
+    assert sha256_hex(raw) != sha256_hex(dict(raw, speed_source=other))
+    assert sha256_hex(raw) != sha256_hex(dict(raw, paradigm_approach_speed_mps={
+        "intrusion.reach": 1.0, "intrusion.slide": 1.0}))
 
