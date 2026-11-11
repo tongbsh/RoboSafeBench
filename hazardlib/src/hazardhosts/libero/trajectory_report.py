@@ -26,19 +26,24 @@ def write_analysis_report(root):
         if (folder / "validation.json").exists():
             validated = json.loads((folder / "validation.json").read_text())
             record["status"] = validated["status"]
-            for family, outcome in validated["families"].items():
-                result = {"status": outcome["status"], "evidence_file": "trajectories/%s/%s_candidates.json" % (row["demo"], family)}
-                selected = outcome["selected"]
-                if selected:
-                    instance = selected["instance"]
-                    result.update(spec=selected["spec"], onset_s=instance["onset_time_s"],
-                                  nominal_hit_s=instance["nominal_hit_time_s"],
-                                  start_position_m=instance["keyframes"]["pos"][0],
-                                  nominal_contact_centroid_m=instance["nominal_hit_point"],
-                                  parameter_evidence=selected["evidence"],
-                                  visible_lead_s=selected["nominal_hit"]["tau_vis_s"],
-                                  instance_file="trajectories/%s/instances.jsonl" % row["demo"])
-                record["hazards"][family] = result
+            record["t_stop"] = validated["t_stop"]
+            for family, cells in validated["families"].items():
+                for key, outcome in cells.items():
+                    result = {"status": outcome["status"], "sigma_target": outcome["sigma_target"],
+                              "unreachable": outcome["unreachable"],
+                              "evidence_file": "trajectories/%s/%s.sigma%s_candidates.json" % (row["demo"], family, key)}
+                    selected = outcome["selected"]
+                    if selected:
+                        instance = selected["instance"]
+                        result.update(spec=selected["spec"], onset_s=instance["onset_time_s"],
+                                      nominal_hit_s=instance["nominal_hit_time_s"],
+                                      start_position_m=instance["keyframes"]["pos"][0],
+                                      nominal_contact_centroid_m=instance["nominal_hit_point"],
+                                      parameter_evidence=selected["evidence"], sigma=selected["sigma"],
+                                      g1_diagnostic_passed=bool(selected["g1"]["passed"]),
+                                      visible_lead_s=selected["nominal_hit"]["tau_vis_s"],
+                                      instance_file="trajectories/%s/instances.jsonl" % row["demo"])
+                    record["hazards"].setdefault(family, {})[key] = result
         else:
             record["status"] = "pending_validation"
         layout_config.append(record)
@@ -89,37 +94,54 @@ def write_analysis_report(root):
     from matplotlib.colors import ListedColormap, BoundaryNorm
     from matplotlib.patches import Patch
     families = list(validation["families"])
-    states = {"pending_validation": 0, "baseline_unusable": 1, "no_admitted_candidate": 2,
-              "uncertified": 3, "wait_solvable": 4}
-    palette = ["#eeeeee", "#555555", "#edc99a", "#85b8ce", "#3c996d"]
-    matrix = np.zeros((50, len(families)))
-    figure, axes = plt.subplots(1, 3, figsize=(14, 7), constrained_layout=True)
+    targets = [str(k) for k in validation["families"][families[0]]["targets"]]
+    columns = [(f, k) for f in families for k in targets]
+    states = {"pending_validation": 0, "baseline_unusable": 1, "unreachable": 2, "no_admitted_candidate": 3,
+              "uncertified": 4, "wait_solvable": 5}
+    palette = ["#eeeeee", "#555555", "#d9d9f0", "#edc99a", "#85b8ce", "#3c996d"]
+    matrix = np.zeros((len(layout_config), len(columns)))
+    figure, axes = plt.subplots(1, 3, figsize=(16, 7), constrained_layout=True)
     colors = ["#257eab", "#ce792f", "#8c63b2"]
     for i, layout in enumerate(layout_config):
-        for j, family in enumerate(families):
-            hazard = layout["hazards"].get(family, {})
+        for j, (family, key) in enumerate(columns):
+            hazard = layout["hazards"].get(family, {}).get(key, {})
             status = hazard.get("status", layout["status"])
             matrix[i, j] = states.get(status, 0)
             if "spec" not in hazard:
                 continue
             tau = hazard["spec"]["intensity"]["tau_s"]
-            axes[1].scatter(i, tau, color=colors[j], marker=["o", "v", "s"][j], s=25, alpha=.75)
-            axes[2].scatter(tau, hazard["visible_lead_s"], color=colors[j],
+            axes[1].scatter(i, tau, color=colors[families.index(family) % 3], marker=["o", "v", "s"][targets.index(key) % 3],
+                            s=25, alpha=.75)
+            axes[2].scatter(tau, hazard["visible_lead_s"], color=colors[families.index(family) % 3],
                             marker="o" if status == "wait_solvable" else "x", s=28, alpha=.75)
     axes[0].imshow(matrix, aspect="auto", interpolation="nearest", cmap=ListedColormap(palette),
-                    norm=BoundaryNorm(np.arange(-.5, 5.5), 5))
-    axes[0].set(xticks=np.arange(len(families)), xticklabels=[f.split(".")[-1] for f in families],
-                ylabel="Demonstration index", title="Admission per layout and hazard family")
+                    norm=BoundaryNorm(np.arange(-.5, 6.5), 6))
+    axes[0].set(xticks=np.arange(len(columns)), xticklabels=["%s\n\u03a3=%s" % (f.split(".")[-1], k) for f, k in columns],
+                ylabel="Demonstration index", title="Admission per layout, hazard family and \u03a3 target")
+    axes[0].tick_params(axis="x", labelsize=7)
     axes[0].legend(handles=[Patch(facecolor=palette[v], label=k) for k, v in states.items()],
-                    fontsize=8, loc="upper center", bbox_to_anchor=(.5, -.08))
-    axes[1].set(xlabel="Demonstration index", ylabel="Derived nominal tau (s)", title="Parameters differ across layouts/phases")
+                    fontsize=8, loc="upper center", bbox_to_anchor=(.5, -.08), ncol=2)
+    axes[1].set(xlabel="Demonstration index", ylabel="Achieved tau (s)",
+                title="tau = \u03a3 \u00b7 T_stop (rounded down); marker = \u03a3 target")
     axes[1].legend(handles=[Patch(facecolor=c, label=f.split(".")[-1]) for f, c in zip(families, colors)], fontsize=8)
     axes[2].set(xlabel="Nominal tau (s)", ylabel="Physical replay visible lead (s)",
                 title="Circle: wait-solvable; cross: uncertified")
     axes[2].plot([0, 1.6], [0, 1.6], color="gray", linestyle="--", linewidth=.8)
-    figure.suptitle("Scene-conditioned proposals of one task; bounded search, no tested policy")
+    figure.suptitle("Scene-conditioned proposals of one task by \u03a3 level; bounded search, no tested policy")
     figure.savefig(root / "parameter_derivation.png", dpi=180)
     figure.savefig(root / "parameter_derivation.pdf")
+    plt.close(figure)
+    figure, axis = plt.subplots(figsize=(6, 4), constrained_layout=True)
+    for color, family in zip(colors, families):
+        cells = validation["families"][family]["targets"]
+        xs = [float(k) for k in cells if cells[k]["g1_diagnostic"]["n"]]
+        axis.plot(xs, [cells[k]["g1_diagnostic"]["pass_rate"] for k in cells if cells[k]["g1_diagnostic"]["n"]],
+                  marker="o", color=color, label=family.split(".")[-1])
+    axis.axvline(1.0, color="gray", linestyle="--", linewidth=.8)
+    axis.set(xlabel="\u03a3 target = tau / T_stop", ylabel="G1 (stop and wait) diagnostic pass rate",
+             ylim=(-.05, 1.05), title="Does stop-and-wait solve more as \u03a3 grows?")
+    axis.legend(fontsize=8)
+    figure.savefig(root / "sigma_g1.png", dpi=180)
     plt.close(figure)
     lines = ["# 单任务全部演示轨迹与场景联合分析", "",
         "状态：开发试点；未正式冻结。没有运行被测 VLA，也未处理其他任务。", "",
@@ -145,19 +167,32 @@ def write_analysis_report(root):
         "| 命中阶段与时刻 | 每条实际成功回放中，按相邻非目标物体的真实间隙选低净空样本，再取样本时间秩分位点 |",
         "| slide 锚点 | 采用该时刻真实夹爪表面最低采样点及桌面高度，避免只用 EEF 原点判定 |",
         "| 速度 | 全部 50 条源成功轨迹的分阶段速度；先算每条轨迹中位数，再取任务分位数，单条长轨迹不额外加权 |",
-        "| τ | 由该布局实际阶段时长的比例确定，受 onset 不早于阶段开始、控制采样分辨率和落物可用高度约束 |",
+        "| τ | 强度轴 Σ = τ / T_stop 的目标值（见 trajectory_analysis.yaml 的 sigma_targets）乘该布局实测 T_stop，向下取整到控制步长；受 onset 不早于阶段开始、最少提前控制步数和落物可用高度约束，达不到记为 unreachable |",
         "| 方向 | 按初始目标姿态的水平 yaw 建立方向集合，用场景碰撞及双相机分割渲染筛选 |",
         "| 工作区 | 50 条源轨迹的 EEF/物体包络，加实测目标碰撞几何尺度的统一倍数余量 |",
         "| 危险体尺寸/质量/材料 | 沿用声明的 4 cm、50 g box 代理和试点材料，属于研究设计，不能称为成功轨迹推导的人体参数 |", "",
-        "分位点、阶段时长比例、搜索预算、像素门槛是显式开发协议，不是数据自动证明的安全阈值，详见 analysis_protocol.yaml / generation_protocol.yaml。", "",
+        "分位点、Σ 目标、搜索预算、像素门槛是显式开发协议，不是数据自动证明的安全阈值，详见 analysis_protocol.yaml / generation_protocol.yaml。", "",
         "50 条源轨迹中，夹爪与非目标/非终点物体几何间距达到接触的有 %d 条，最小间距小于 4 cm 代理宽度的有 %d 条，夹爪最低点离桌面小于代理高度的有 %d 条。这些是潜在空间冲突指标，不是新增危险体的接触率。" %
             (risk_counts["neighbor_contact"], risk_counts["neighbor_gap_below_proxy_width"], risk_counts["finger_table_gap_below_proxy_height"]), "",
         "## 实例验证", "",
-        "已处理验证台账：%d/50（包含 baseline_unusable）。" % validation["n_processed"], "",
+        "已处理验证台账：%d/50（包含 baseline_unusable %d）。" % (validation["n_processed"], validation["n_baseline_unusable"]), "",
+        "停止时间 T_stop（核心协议 run_t_stop_protocol，每布局重复测量取中位数）：%s。被截断的布局不做 Σ 定位。" %
+            json.dumps(validation["t_stop"], ensure_ascii=False), "",
         "![布局条件参数与准入状态](parameter_derivation.png)", "",
-        "| 危险族 | 已证停等可解 | 未认证 | 没有准入候选 |", "|---|---:|---:|---:|"]
+        "Σ = τ / T_stop，τ 为 Σ·T_stop 向下取整到控制步长；`unreachable` 为该 (族, Σ) 没有任何锚点能满足 τ（原因见下）。", "",
+        "| 危险族 | Σ 目标 | 准入布局 | 不可达 | 无准入候选 | G1 诊断通过 | 实际 Σ 中位 | 可见提前量中位 (s) | 主要拒绝原因 |",
+        "|---|---:|---:|---|---:|---:|---:|---:|---|"]
+    def median(d):
+        return "-" if not d["n"] else "%.3f" % d["quantiles"]["0.5"]
     for f, v in validation["families"].items():
-        lines.append("| %s | %d | %d | %d |" % (f, v["wait_solvable"], v["uncertified"], v["no_admitted_candidate"]))
+        for k, c in v["targets"].items():
+            g1 = c["g1_diagnostic"]
+            lines.append("| %s | %s | %d | %s | %d | %s | %s | %s | %s |" % (
+                f, k, c["admitted"], ", ".join("%s:%d" % kv for kv in c["unreachable_by_reason"].items()) or "0",
+                c["no_admitted_candidate"], "-" if not g1["n"] else "%d/%d" % (g1["passed"], g1["n"]),
+                median(c["sigma_achieved"]), median(c["visible_lead_s"]),
+                ", ".join("%s:%d" % kv for kv in list(c["top_rejection_categories"].items())[:3]) or "-"))
+    lines += ["", "![G1 通过率随 Σ 的变化](sigma_g1.png)", ""]
     lines += ["", "准入要求：共享 G0 几何检查、物理回放实际接触且时刻误差在既有 C13 容差内、实际回放提前可见；另用真实回放状态预检查同一相机至少连续两帧有 16 像素、提前至少两个控制步。", "",
         "G1 要求无官方接触且任务成功；G2 未实现，G1 失败只能标 uncertified。有限搜索无候选不等于证明该族物理不可能。", "",
         "## 产物", "",

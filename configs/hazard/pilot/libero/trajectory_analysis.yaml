@@ -13,8 +13,16 @@ lift_spacing_multiple: 2.0
 anchor_quantiles: [0.25, 0.5, 0.75]
 # Hazard speed levels derive from the distribution of moving EEF speeds, not these fractions themselves.
 speed_quantiles: [0.25, 0.5, 0.75]
-# Fraction of each observed phase duration available for an intrusion, subject to geometry limits.
-tau_phase_fractions: [0.25, 0.5]
+# Intensity axis Sigma = tau / T_stop (00_paradigm 5-7; D6/D13 f): tau is the onset-to-hit lead, T_stop the
+# robot's stopping time measured per layout with the core protocol (run_t_stop_protocol, intensity.yaml
+# t_stop_protocol). Pilot values, NOT preregistered. Below 1 the hit is physically unavoidable by stopping for
+# this embodiment; about 1.5 stopping just suffices; 3 is easy. tau of a target = Sigma * T_stop rounded DOWN to
+# the control step (the achieved Sigma is recorded), at least minimum_lead_control_steps steps, and not longer
+# than the time before the hit inside its phase nor (fall) the free-fall height budget. A target no anchor can
+# serve is recorded as `unreachable:<why>`, never clamped to another Sigma. This replaces the former
+# tau_phase_fractions (a fraction of the phase duration, median ~1.2 s against T_stop ~0.3 s: no discrimination);
+# it is not kept as an upper bound, because the available-time bound already limits tau to the phase.
+sigma_targets: [0.75, 1.5, 3.0]
 # Eight approach directions are expressed in the initial target object's frame.
 direction_count: 8
 minimum_lead_control_steps: 2
@@ -23,13 +31,14 @@ minimum_visible_pixels: 16
 minimum_visible_observations: 2
 # Task-conditioned workspace = successful path/objects plus target diameter times this margin.
 workspace_object_margin_multiple: 2.0
-# Sampling/validation budget, independent of any model under test.
+# Sampling/validation budget, independent of any model under test. Per family, layout AND Sigma target.
 # 48 (was 24): since D19 a candidate must also pass the scene-clearance sweep, which rejects most slide and
 # many reach candidates; the sweep costs a few milliseconds per sample, so a longer list is cheap and keeps
 # the eight directions x phases x anchors x tau coverage from running out before an admissible one.
 max_candidates_per_family_layout: 48
-max_validated_per_family_layout: 1
-# Physical attempts (one nominal-hit episode + one robot-absent audit episode count as ONE attempt).
+# At most one admitted instance per (family, layout, Sigma target): must equal len(sigma_targets).
+max_validated_per_family_layout: 3
+# Physical attempts, per family, layout and Sigma target (one nominal-hit episode + one robot-absent audit episode count as ONE attempt).
 max_dynamic_attempts_per_family_layout: 3
 # D19 follow-through of a hazard that does not meet the robot: a slide keeps sliding out of the workspace
 # ("pass"), a reach retracts along its path ("retract"); a fall stays where it lands (not listed).
