@@ -291,3 +291,22 @@ def test_exposure_low_is_decided_by_t03(monkeypatch):
     assert far.log.exposure_low is None                       # the runtime leaves it open
     assert calls == [(inst.provenance["anchor_point"], inst.onset_time_s, inst.nominal_hit_time_s, radius)] * 2
     assert exposure_low(inst, far.eef_pos, far.times_s, radius) is True
+
+
+def test_exposure_low_when_the_episode_ended_before_the_onset():
+    host = W.make_host()
+    sess = W.session(host)
+    inst = W.build(W.fall_spec(), "pick")
+    radius = load_low_exposure_radius_m(W.FIXTURE_CONFIG_DIR)
+    run = sess.run_episode(0, inst, W.PathFollower(host, name="robot_under_test", under_test=True), "pick", "L0", 0,
+                           2.0)
+    early = run.times_s < inst.onset_time_s
+    assert early.sum() >= 1
+    # Task finished (stop_on_success) before the hazard started: never exposed, no window sample needed.
+    assert exposure_low(inst, run.eef_pos[early], run.times_s[early], radius) is True
+    log = annotate_exposure(run.log, inst, run.eef_pos[early], run.times_s[early], radius)
+    assert log.exposure_low is True
+    # A window that is merely empty while the episode goes on past the onset is still an error.
+    late = run.times_s > inst.nominal_hit_time_s
+    with pytest.raises(ValueError, match="no end-effector sample"):
+        exposure_low(inst, run.eef_pos[early | late][-1:], run.times_s[late][-1:], radius)
