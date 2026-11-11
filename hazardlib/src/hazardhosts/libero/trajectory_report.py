@@ -21,7 +21,7 @@ def write_analysis_report(root):
             risk_counts["neighbor_contact"] += bool(a["neighbor_clearance"].min() <= 0)
             risk_counts["neighbor_gap_below_proxy_width"] += bool(a["neighbor_clearance"].min() < proxy_width)
             risk_counts["finger_table_gap_below_proxy_height"] += bool((a["gripper_low_z"] - a["surface_z"]).min() < proxy_width)
-        record = {"layout_id": "libero_spatial/" + row["demo"], "source_success": row["source_success"],
+        record = {"layout_id": scene["suite"] + "/" + row["demo"], "source_success": row["source_success"],
                   "replay_success": row["replay_success"], "hazards": {}}
         if (folder / "validation.json").exists():
             validated = json.loads((folder / "validation.json").read_text())
@@ -102,6 +102,7 @@ def write_analysis_report(root):
     matrix = np.zeros((len(layout_config), len(columns)))
     figure, axes = plt.subplots(1, 3, figsize=(16, 7), constrained_layout=True)
     colors = ["#257eab", "#ce792f", "#8c63b2"]
+    bases = sorted(set(f.split("@")[0] for f in families))
     for i, layout in enumerate(layout_config):
         for j, (family, key) in enumerate(columns):
             hazard = layout["hazards"].get(family, {}).get(key, {})
@@ -110,9 +111,9 @@ def write_analysis_report(root):
             if "spec" not in hazard:
                 continue
             tau = hazard["spec"]["intensity"]["tau_s"]
-            axes[1].scatter(i, tau, color=colors[families.index(family) % 3], marker=["o", "v", "s"][targets.index(key) % 3],
+            axes[1].scatter(i, tau, color=colors[bases.index(family.split("@")[0])], marker=["o", "v", "s"][targets.index(key) % 3],
                             s=25, alpha=.75)
-            axes[2].scatter(tau, hazard["visible_lead_s"], color=colors[families.index(family) % 3],
+            axes[2].scatter(tau, hazard["visible_lead_s"], color=colors[bases.index(family.split("@")[0])],
                             marker="o" if status == "wait_solvable" else "x", s=28, alpha=.75)
     axes[0].imshow(matrix, aspect="auto", interpolation="nearest", cmap=ListedColormap(palette),
                     norm=BoundaryNorm(np.arange(-.5, 6.5), 6))
@@ -123,7 +124,7 @@ def write_analysis_report(root):
                     fontsize=8, loc="upper center", bbox_to_anchor=(.5, -.08), ncol=2)
     axes[1].set(xlabel="Demonstration index", ylabel="Achieved tau (s)",
                 title="tau = \u03a3 \u00b7 T_stop (rounded down); marker = \u03a3 target")
-    axes[1].legend(handles=[Patch(facecolor=c, label=f.split(".")[-1]) for f, c in zip(families, colors)], fontsize=8)
+    axes[1].legend(handles=[Patch(facecolor=c, label=f.split(".")[-1]) for f, c in zip(bases, colors)], fontsize=8)
     axes[2].set(xlabel="Nominal tau (s)", ylabel="Physical replay visible lead (s)",
                 title="Circle: wait-solvable; cross: uncertified")
     axes[2].plot([0, 1.6], [0, 1.6], color="gray", linestyle="--", linewidth=.8)
@@ -132,15 +133,16 @@ def write_analysis_report(root):
     figure.savefig(root / "parameter_derivation.pdf")
     plt.close(figure)
     figure, axis = plt.subplots(figsize=(6, 4), constrained_layout=True)
-    for color, family in zip(colors, families):
+    for family in families:
+        color = colors[bases.index(family.split("@")[0])]
         cells = validation["families"][family]["targets"]
         xs = [float(k) for k in cells if cells[k]["g1_diagnostic"]["n"]]
         axis.plot(xs, [cells[k]["g1_diagnostic"]["pass_rate"] for k in cells if cells[k]["g1_diagnostic"]["n"]],
-                  marker="o", color=color, label=family.split(".")[-1])
+                  marker="o", color=color, label=family.split(".")[-1], alpha=.8)
     axis.axvline(1.0, color="gray", linestyle="--", linewidth=.8)
     axis.set(xlabel="\u03a3 target = tau / T_stop", ylabel="G1 (stop and wait) diagnostic pass rate",
              ylim=(-.05, 1.05), title="Does stop-and-wait solve more as \u03a3 grows?")
-    axis.legend(fontsize=8)
+    axis.legend(fontsize=5)
     figure.savefig(root / "sigma_g1.png", dpi=180)
     plt.close(figure)
     lines = ["# 单任务全部演示轨迹与场景联合分析", "",

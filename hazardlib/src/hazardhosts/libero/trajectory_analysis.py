@@ -1,6 +1,8 @@
 """All-demonstration, scene-conditioned analysis (development, not a benchmark release).
 
 collect: forward recorded states for geometry, then independently replay actions.
+export: the generator's two input variables (V1 trajectories, V2 scene layouts) from the collected replays.
+validate: hazardlib.generate proposals, scene-clearance prefilter + exact checks, physical admission.
 Saved-state reconstruction is NEVER used as a dynamic hazard validation.
 Every source trajectory, including local replay failures, remains in the ledger.
 """
@@ -381,13 +383,21 @@ def derive(root, settings):
     print("DERIVED " + json.dumps({k: summary[k] for k in ("n_demonstrations", "n_source_success", "n_replay_success")}))
 
 
-def validate_in_workers(out, task_index, workers, suite=None):
-    """Split the demonstrations round-robin over ``workers`` processes of the ``validate`` stage (each
-    has its own simulator); logs go to ``<out>/worker_<k>.log``. Returns the worst return code."""
+def validate_in_workers(out, task_index, workers, suite=None, max_demos=None):
+    """Split the usable demonstrations round-robin over ``workers`` processes of the ``validate`` stage (each
+    has its own simulator); logs go to ``<out>/worker_<k>.log``. ``max_demos``: the first N usable
+    demonstrations in coverage order only (every worker loads the same N for the coverage scoring). The
+    ``config/`` directory is assembled here once, before any worker starts (concurrent assembly of it by the
+    workers crashed one of them). Returns the worst return code."""
     import subprocess
     import sys
+    from .pilot import assemble_config
     root = Path(out)
+    if not (root / "config").exists():
+        assemble_config(root / "config")
     rows = json.loads((root / "coverage.json").read_text())["demonstrations"]
+    if max_demos is not None:
+        rows = [r for r in rows if r["replay_success"]][:max_demos]
     processes = []
     for worker in range(workers):
         demos = [row["demo"] for i, row in enumerate(rows) if i % workers == worker]
@@ -395,6 +405,8 @@ def validate_in_workers(out, task_index, workers, suite=None):
             continue
         command = [sys.executable, "-u", "-m", "hazardhosts.libero.trajectory_analysis", "validate", "--out",
                    str(root), "--demos", ",".join(demos)]
+        if max_demos is not None:
+            command += ["--max-demos", str(max_demos)]
         if suite is not None:
             command += ["--suite", suite]
         if task_index is not None:
@@ -412,7 +424,7 @@ def validate_in_workers(out, task_index, workers, suite=None):
 
 def main():
     parser = argparse.ArgumentParser(__doc__)
-    parser.add_argument("stage", choices=["collect", "derive", "validate", "report"])
+    parser.add_argument("stage", choices=["collect", "derive", "export", "validate", "report"])
     parser.add_argument("--out", required=True)
     parser.add_argument("--demos", help="validation subset for debugging; omitted processes every demonstration")
     parser.add_argument("--suite", choices=SUITES, help="LIBERO suite instead of the protocol file's; with "
@@ -420,6 +432,8 @@ def main():
     parser.add_argument("--task-index", type=int, help="task of the suite instead of the protocol file's; "
                         "one output directory per task (the directory identity includes it)")
     parser.add_argument("--workers", type=int, help="validate only: number of parallel simulator processes")
+    parser.add_argument("--max-demos", type=int, help="export / validate: only the first N usable demonstrations in "
+                        "coverage order (a budgeted run; the coverage scoring then uses these N)")
     args = parser.parse_args()
     config_dir = Path(__file__).resolve().parents[4] / "configs/hazard/pilot/libero"
     settings = load_config("trajectory_analysis", strict=True, config_dir=config_dir)
@@ -432,12 +446,15 @@ def main():
         collect(args.out, settings)
     elif args.stage == "derive":
         derive(args.out, settings)
+    elif args.stage == "export":
+        from .trajectory_export import export
+        export(args.out, settings, args.max_demos)
     elif args.stage == "validate" and args.workers:
-        raise SystemExit(validate_in_workers(args.out, args.task_index, args.workers, args.suite))
+        raise SystemExit(validate_in_workers(args.out, args.task_index, args.workers, args.suite, args.max_demos))
     else:
         from .trajectory_candidates import validate, report
         if args.stage == "validate":
-            validate(args.out, settings, None if args.demos is None else args.demos.split(","))
+            validate(args.out, settings, None if args.demos is None else args.demos.split(","), args.max_demos)
         else:
             report(args.out, settings)
 

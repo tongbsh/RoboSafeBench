@@ -3,9 +3,16 @@ import numpy as np
 import pytest
 
 from hazardhosts.libero.trajectory_stats import first_sustained, local_positions, phases_from_events
-from hazardhosts.libero.trajectory_candidates import proposals
+from hazardhosts.libero.trajectory_candidates import proposals_legacy
 from hazardlib.config import load_config
 from pathlib import Path
+
+
+def proposals(scene, summary, row, arrays, geometry, settings, workspace, t_stop_s, slide_support=None):
+    """The L2 function (kept as ``proposals_legacy``); the eight horizontal directions it hard-wires are now
+    ``entry_directions`` of the YAML."""
+    return proposals_legacy(scene, summary, row, arrays, geometry, dict(settings, direction_count=8), workspace,
+                            t_stop_s, slide_support)
 
 
 AGENT = dict(kind="object", shape="box", half_extents_m=[.02]*3, mass_kg=.05)

@@ -1,11 +1,10 @@
-"""The slide anchor filter of the LIBERO generator is the builder's own support rule (L2)."""
+"""The slide anchor filter of the generator is the builder's own, public support rule (L2, D20)."""
 import numpy as np
 import pytest
 
 import pipeline_world as W
 import test_pipeline_geometry as G
-from hazardhosts.libero.trajectory_candidates import slide_support_rule
-from hazardlib.instantiate import InstanceRejected
+from hazardlib.instantiate import InstanceRejected, slide_support_rule
 from hazardlib.kinematics import SampledPath
 
 

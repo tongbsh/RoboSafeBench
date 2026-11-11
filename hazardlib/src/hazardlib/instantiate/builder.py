@@ -541,3 +541,38 @@ def instantiate(spec: HazardSpec, task_context: TaskContext, seed: int, bd: Benc
     if exit_keyframes is not None:
         data["exit_keyframes"] = exit_keyframes
     return HazardInstance.from_dict(data)
+
+
+def slide_support_rule(task_context: TaskContext, bd: BenchmarkDescriptor, agent: AgentSpec):
+    """The builder's own slide-support test (module docstring, step 4) as ``(p_ref, t_hit_s) -> bool``: can a
+    slide be built with the reference point ``p_ref`` at ``t_hit_s``?
+
+    Two builder conditions hold the support rule: (1) ``p_ref`` lies over a TaskContext support surface with
+    ``0 <= p_ref_z - top <= 2 h_z + eef_contact_radius_m``; (2) the tilt bracket of the normal contains the
+    required height step ``dz = top + h_z - p_ref_z`` (with robot geometry the standoff along the vertical is
+    the geometric one, so this is tighter than (1): the box riding on the table must reach the lowest finger
+    point). Both are evaluated by the builder's own functions (``_surface_under``, ``_geometric_slide_normal``
+    / ``_slide_normal``, ``half_height_m``) on the TaskContext and BD, not by a copy of their formulas. A
+    rejection other than ``no_support_surface`` (``no_robot_contact_along_normal``, ``slide_normal_unsolved``)
+    depends on the slide direction, not on the support, and does not make the point unsupported. Generators
+    use it to place slide anchors only where :func:`instantiate` can find a support."""
+    h_z = half_height_m(agent)
+    r_eef = _known(bd, "eef_contact_radius_m")
+    robot = _robot_geometry(task_context, bd)
+    direction = np.array([1., 0., 0.])    # the bracket (phi = +-pi/2) does not depend on the direction
+
+    def rule(point: Any, t_s: float) -> bool:
+        point = np.asarray(point, dtype=float)
+        surface = _surface_under(task_context.support_surfaces, point, 2.0 * h_z + r_eef)
+        if surface is None:
+            return False
+        dz = surface.max_m[2] + h_z - point[2]
+        try:
+            if robot is None:
+                _slide_normal(agent, direction, dz, r_eef)
+            else:
+                _geometric_slide_normal(agent, direction, dz, point, _RobotAt(robot[0], robot[1], float(t_s)))
+        except InstanceRejected as exc:
+            return exc.reason != "no_support_surface"
+        return True
+    return rule

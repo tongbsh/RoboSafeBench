@@ -18,7 +18,11 @@ from hazardlib.driving import EpisodeSession
 from hazardlib.gates.episodes import run_g1, run_nominal_hit
 from hazardlib.gates.g0 import run_g0
 from hazardlib.gates.settings import GateSettings
-from hazardlib.instantiate import InstantiateSettings, instantiate
+from hazardlib.generate import (GenerateSettings, TrajectorySet, cell_id, cell_statistics,
+                                generation_table, layout_probes, propose, select_admitted, target_key)
+from hazardlib.generate.propose import CoverageIndex
+from hazardlib.generate.select import ledger_statistics, rejection_keys, t_stop_statistics  # noqa: F401  (re-exported)
+from hazardlib.instantiate import InstantiateSettings, instantiate, reach_geometry, slide_support_rule
 from hazardlib.instantiate.builder import InstanceRejected
 from hazardlib.kinematics.path import SampledPath
 from hazardlib.pipeline_io import write_yaml
@@ -35,7 +39,7 @@ from .scene_audit import rejection_reason as audit_reason, run_audit
 from .scene_clearance import (drop_samples, host_probes, playback_path, rejection_reason as clearance_reason,
                               support_height, sweep, sweep_samples)
 from .trajectory_analysis import save_json
-from .trajectory_stats import distribution
+from .trajectory_export import rebuild_states
 
 
 class AnalysisContext(TaskContext):
@@ -52,7 +56,7 @@ def context(scene, row, arrays, geometry, workspace, identity):
     phase_list = [{k: p[k] for k in ("name", "t_start_s", "t_end_s")}
                   for p in row["replay_features"]["phases"]]
     return AnalysisContext.from_dict({
-        "task_id": scene["task_id"], "layout_id": "libero_spatial/" + row["demo"],
+        "task_id": scene["task_id"], "layout_id": scene["suite"] + "/" + row["demo"],
         "entities": {"interest_%d" % i: {"name": name, "source": "bddl_goal"}
                      for i, name in enumerate(scene["task_entities"])},
         "phases": phase_list,
@@ -70,10 +74,15 @@ def context(scene, row, arrays, geometry, workspace, identity):
             "eef_speed_median_mps": row["replay_features"]["speed_mps"]["quantiles"]["0.5"]}})
 
 
-def scene_extent(host, target):
+def scene_extent(host, scene):
+    """Collision-bounds size of the scene's target entity: the one collect measured for the entity (a free object,
+    or the moving part / site of an articulated fixture); the host's groups only when collect has none."""
+    size = scene.get("target_collision_bounds_size_m")
+    if size is not None:
+        return np.asarray(size, dtype=float)
     lo, hi = [], []
     for g in range(host.m.ngeom):
-        if host.label_of_body[int(host.m.geom_bodyid[g])] != target:
+        if host.label_of_body[int(host.m.geom_bodyid[g])] != scene["target"]:
             continue
         if not (host.m.geom_contype[g] or host.m.geom_conaffinity[g]):
             continue
@@ -83,15 +92,12 @@ def scene_extent(host, target):
         r = np.abs(rotation).dot(bounds[3:])
         lo.append(c - r)
         hi.append(c + r)
+    if not lo:
+        raise ValueError("no collision bounds for the target %r: collect again" % scene["target"])
     return np.max(hi, axis=0) - np.min(lo, axis=0)
 
 
 STEP_TOLERANCE = 1e-6   # fraction of a control step: float round-off of Sigma * T_stop / dt (0.45 / 0.05)
-
-
-def target_key(sigma):
-    """Text key of a Sigma target (``0.75``, ``1.5``, ``3``): JSON key, file-name tag, spec-id part."""
-    return "%g" % sigma
 
 
 def tau_for_sigma(sigma, t_stop_s, dt, minimum_steps):
@@ -102,42 +108,6 @@ def tau_for_sigma(sigma, t_stop_s, dt, minimum_steps):
     if steps < minimum_steps:
         return None, "below_minimum_lead"
     return steps * dt, None
-
-
-def slide_support_rule(tc, bd, agent):
-    """The builder's own slide-support test (``hazardlib.instantiate.builder``, step 4 of its docstring), as
-    ``(p_ref, t_hit_s) -> bool``: can a slide be built with the reference point ``p_ref`` at ``t_hit_s``?
-
-    Two builder conditions hold the support rule: (1) ``p_ref`` lies over a TaskContext support surface with
-    ``0 <= p_ref_z - top <= 2 h_z + eef_contact_radius_m``; (2) the tilt bracket of the normal contains the
-    required height step ``dz = top + h_z - p_ref_z`` (with robot geometry the standoff along the vertical is
-    the geometric one, so this is tighter than (1): the box riding on the table must reach the lowest finger
-    point). Both are evaluated by the builder's own functions (``_surface_under``, ``_geometric_slide_normal``
-    / ``_slide_normal``, ``half_height_m``) on the TaskContext and BD, not by a copy of their formulas. A
-    rejection other than ``no_support_surface`` (``no_robot_contact_along_normal``, ``slide_normal_unsolved``)
-    depends on the slide direction, not on the support, and does not make the point unsupported."""
-    from hazardlib.instantiate import builder
-    h_z = builder.half_height_m(agent)
-    r_eef = float(bd.eef_contact_radius_m)
-    robot = builder._robot_geometry(tc, bd)
-    direction = np.array([1., 0., 0.])    # the bracket (phi = +-pi/2) does not depend on the direction
-
-    def rule(point, t_s):
-        point = np.asarray(point, dtype=float)
-        surface = builder._surface_under(tc.support_surfaces, point, 2.0 * h_z + r_eef)
-        if surface is None:
-            return False
-        dz = surface.max_m[2] + h_z - point[2]
-        try:
-            if robot is None:
-                builder._slide_normal(agent, direction, dz, r_eef)
-            else:
-                builder._geometric_slide_normal(agent, direction, dz, point,
-                                                builder._RobotAt(robot[0], robot[1], float(t_s)))
-        except builder.InstanceRejected as exc:
-            return exc.reason != "no_support_surface"
-        return True
-    return rule
 
 
 def finger_low_points(scene, geometry, arrays, indices):
@@ -151,8 +121,11 @@ def finger_low_points(scene, geometry, arrays, indices):
     return np.asarray(out).reshape(-1, 3)
 
 
-def proposals(scene, summary, row, arrays, geometry, settings, workspace, t_stop_s, slide_support=None):
-    """Per family and Sigma target: ``(family, target, candidates, info)``; one Sigma target = one difficulty bin.
+def proposals_legacy(scene, summary, row, arrays, geometry, settings, workspace, t_stop_s, slide_support=None):
+    """The L2 proposal function, kept only as the reference of the regression against ``hazardlib.generate``
+    (``_logs/l4a/regression.py``); validate uses ``hazardlib.generate.propose``. Reads ``direction_count``.
+
+    Per family and Sigma target: ``(family, target, candidates, info)``; one Sigma target = one difficulty bin.
 
     Anchors are quantiles of low-clearance observations per phase (speeds from ALL 50 demos); directions rotate
     with the initial target. ``tau`` of a target is ``Sigma * T_stop`` rounded down to the control step
@@ -342,20 +315,23 @@ def visibility_probe(host, instance, states, times, settings):
         host.free_hazard(handle)
 
 
-def sweep_candidate(host, instance, states, times, settings, surfaces, supports):
-    """Geometric scene-clearance sweep of one instance (module ``scene_clearance``): needs no dynamics."""
+def candidate_samples(instance, t_end_s, settings, surfaces, gravity_mps2, control_dt_s):
+    """Sample poses ``[(t, pos, quat)]`` of the hazard's own trajectory for the scene-clearance sweep (a kinematic
+    path, or a fall's release pose dropped onto the support): pure geometry, no host."""
+    spacing = settings["scene_clearance_spacing_half_extent_fraction"] * min(instance.agent.half_extents_m)
+    if instance.family == "intrusion.fall":
+        release = instance.keyframes.pos[0]
+        rest_z = support_height(surfaces, release[:2]) + instance.agent.half_extents_m[2]
+        return drop_samples(release, rest_z, gravity_mps2, instance.keyframes.time_s[0], spacing, t_after=t_end_s)
+    path = playback_path(instance)
+    return sweep_samples(path, instance.onset_time_s, path.t_end_s, control_dt_s, spacing)
+
+
+def sweep_candidate(host, instance, states, samples, settings, supports):
+    """Exact scene-clearance sweep of one instance (module ``scene_clearance``, MuJoCo contacts): the authority."""
     handle = host.alloc_hazard(0, instance.agent)
     try:
         probes = host_probes(host, handle, states, instance.onset_time_s, supports)
-        spacing = settings["scene_clearance_spacing_half_extent_fraction"] * min(instance.agent.half_extents_m)
-        if instance.family == "intrusion.fall":
-            release = instance.keyframes.pos[0]
-            rest_z = support_height(surfaces, release[:2]) + instance.agent.half_extents_m[2]
-            samples = drop_samples(release, rest_z, abs(float(host.m.opt.gravity[2])),
-                                   instance.keyframes.time_s[0], spacing, t_after=float(times[-1]))
-        else:
-            path = playback_path(instance)
-            samples = sweep_samples(path, instance.onset_time_s, path.t_end_s, host.control_dt, spacing)
         result = sweep(samples, probes, settings["scene_clearance_tol_m"])
         result["n_samples"] = len(samples)
         return result
@@ -363,27 +339,21 @@ def sweep_candidate(host, instance, states, times, settings, surfaces, supports)
         host.free_hazard(handle)
 
 
-def select_admitted(shortlisted, check, budget):
-    """First candidate (in the given order) that ``check(instance, item)`` admits. ``check`` returns
-    ``(attempted, admitted)``; only an attempted candidate (a physical episode ran) uses the ``budget``.
-    Candidates never reached are marked ``not_evaluated``. Returns ``(chosen entry or None, attempts)``."""
-    attempts, chosen = 0, None
-    for position, entry in enumerate(shortlisted):
-        _, instance, item = entry
-        attempted, admitted = check(instance, item)
-        attempts += bool(attempted)
-        if admitted:
-            chosen = entry
-            reached = position + 1
-            break
-        if attempts >= budget:
-            reached = position + 1
-            break
-    else:
-        reached = len(shortlisted)
-    for _, _, item in shortlisted[reached:]:
-        item["not_evaluated"] = "selected_earlier" if chosen is not None else "attempt_budget"
-    return chosen, attempts
+def layout_prefilter(instance, samples, layout, held, settings):
+    """Geometric prefilter of the same sweep from the V2 layout (``hazardlib.generate.layout_probes``): the
+    support is ignored, an overlap counts when deeper than ``scene_clearance_tol_m + layout_prefilter_slack_m``
+    (the layout boxes are bounding boxes)."""
+    probes = layout_probes(layout, instance.onset_time_s, ("support",), instance.agent.half_extents_m, held)
+    result = sweep(samples, probes, settings["scene_clearance_tol_m"] + settings["layout_prefilter_slack_m"])
+    result["n_samples"] = len(samples)
+    return result
+
+
+def reach_stroke_m(instance_settings):
+    """Stroke length before the hit of a reach (speed, tau) -> m, from the builder's own mapping."""
+    def length(speed, tau):
+        return reach_geometry(speed, tau, instance_settings.reach_overshoot_fraction, "min_jerk").reach_distance_m
+    return length
 
 
 def certify(instance, g1_passed):
@@ -413,6 +383,8 @@ def family_result(ledger, chosen_item, instance, info, summary):
     if chosen_item is not None:
         chosen = {"instance": instance.to_dict(), **{k: chosen_item[k] for k in CHOSEN_KEYS},
                   "sigma": sigma_record(chosen_item, summary)}
+        if "layout_prefilter" in chosen_item:
+            chosen["layout_prefilter"] = chosen_item["layout_prefilter"]
     if info["unreachable"] is not None:
         status = "unreachable"
     else:
@@ -420,6 +392,7 @@ def family_result(ledger, chosen_item, instance, info, summary):
     return {"sigma_target": info["sigma_target"], "t_stop_s": info["t_stop_s"], "tau_target_s": info["tau_s"],
             "unreachable": info["unreachable"], "tau_dropped_anchors": info["dropped"],
             "n_proposed": info["n_proposed"], "n_candidates": len(ledger),
+            "n_prefilter_clear": sum(p.get("layout_prefilter", {}).get("passed", False) for p in ledger),
             "n_scene_clear": sum(p.get("scene_clearance", {}).get("passed", False) for p in ledger),
             "n_visible": sum(p.get("visibility_probe", {}).get("passed", False) for p in ledger),
             "dynamic_attempts": sum("nominal_hit" in p for p in ledger), "selected": chosen, "status": status}
@@ -457,7 +430,11 @@ def t_stop_calibration(folder, session, reference, tc, settings_dir, seed):
     return record, summary
 
 
-def validate(root, settings, demos=None):
+def validate(root, settings, demos=None, max_demos=None):
+    """Proposals, checks and selection per usable demonstration and cell (family x entry-direction class x Sigma).
+
+    ``max_demos``: only the first N usable demonstrations in coverage order (the V1 / V2 set of the coverage
+    scoring is the same N). Needs ``export`` first (``<root>/generation_inputs``)."""
     root = Path(root)
     scene = json.loads((root / "scene.json").read_text())
     coverage = json.loads((root / "coverage.json").read_text())
@@ -470,15 +447,21 @@ def validate(root, settings, demos=None):
     generation_hash = sha256_hex(settings)
     if settings["max_validated_per_family_layout"] != len(settings["sigma_targets"]):
         raise ValueError("max_validated_per_family_layout (%r) must equal the number of sigma_targets (%d): one "
-                         "admitted instance per family, layout and Sigma target"
+                         "admitted instance per cell (family, entry-direction class, Sigma target)"
                          % (settings["max_validated_per_family_layout"], len(settings["sigma_targets"])))
+    generate = GenerateSettings.from_mapping(settings)
+    inputs = root / "generation_inputs"
+    if not (inputs / "index.json").exists():
+        raise ValueError("%s has no generation_inputs: run the export stage first" % root)
+    task_set = TrajectorySet.load(inputs, max_demos)
+    trajectories = {t.demo: t for t in task_set.trajectories}
     write_yaml(root / "generation_protocol.yaml", settings)
     host = LiberoHost(config_dir=config)
     session = EpisodeSession(host, RuntimeConfig.load(config))
     reference = DemoReplay(host)
     gate_settings, instance_settings = GateSettings.load(config), InstantiateSettings.load(config)
-    geometry = {k: v.tolist() for k, v in np.load(root / "robot_geometry.npz").items()}
-    supports = set(host.config["support_bodies"])
+    reach_start = reach_stroke_m(instance_settings)
+    coverage_index = CoverageIndex(task_set, generate)
     # Timing bound is inherited from the shared C13 tolerance.
     from hazardlib.config import load_config
     tolerance = load_config("conformance", config_dir=config)["c13_nominal_hit"]["hit_time_abs_tol_s"]
@@ -486,6 +469,8 @@ def validate(root, settings, demos=None):
         for row in coverage["demonstrations"]:
             if demos is not None and row["demo"] not in demos:
                 continue
+            if row["replay_success"] and row["demo"] not in trajectories:
+                continue        # beyond --max-demos (or not exported)
             folder = root / "trajectories" / row["demo"]
             if (folder / "validation.json").exists():
                 prior = json.loads((folder / "validation.json").read_text())
@@ -497,72 +482,42 @@ def validate(root, settings, demos=None):
                 save_json(folder / "validation.json", {"demo": row["demo"], "status": "baseline_unusable",
                                                        "generation_hash": generation_hash, "families": {}})
                 continue
-            # Capture physical states for geometry/visibility probes, checked
-            # against the previous independent baseline before using them.
-            host.install_hooks(None)
-            host.reset_episode(0, scene["task_id"], settings["suite"] + "/" + row["demo"], settings["seed"])
+            trajectory, layout = trajectories[row["demo"]], task_set.layouts[row["demo"]]
+            # Physical states for geometry/visibility probes, checked against the previous independent baseline
+            # before using them.
             arrays = dict(np.load(folder / "replay.npz"))
-            cache_path = folder / "physical_states.npz"
-            if cache_path.exists():
-                states = np.load(cache_path)["states"]
-                if len(states) != len(arrays["time_s"]):
-                    raise ValueError("cached replay length mismatch")
-                for index in (0, len(states)//2, len(states)-1):
-                    host.sim.set_state_from_flattened(states[index])
-                    host.mj.mj_forward(host.m, host.d)
-                    host._fresh_at = -1
-                    if not np.allclose(host.robot_state(0).eef_pose.pos, arrays["eef_pos"][index], atol=1e-12, rtol=0):
-                        raise ValueError("cached replay geometry mismatch")
-                # mj_forward rebuilds contacts at the saved end state. The
-                # native evaluator read mj_step's pre-integration contacts;
-                # predicates on a touching boundary can differ. Preserve the
-                # goal event recorded during the real baseline, never certify
-                # a goal from state forcing.
-                if not bool(arrays["native_success"][-1]):
-                    raise ValueError("cached physical replay did not record native success")
-            else:
-                actions = host._demo(scene["task_id"], settings["suite"]).actions(row["demo"])
-                states = [host.sim.get_state().flatten()]
-                actual_path = [host.robot_state(0).eef_pose.pos]
-                for action in actions:
-                    host.step(0, action)
-                    states.append(host.sim.get_state().flatten())
-                    actual_path.append(host.robot_state(0).eef_pose.pos)
-                    if host.task_success(0):
-                        break
-                if len(states) != len(arrays["time_s"]) or not np.allclose(
-                        actual_path, arrays["eef_pos"], atol=1e-12, rtol=0):
-                    raise RuntimeError("baseline replay drifted for " + row["demo"])
-                if not host.task_success(0):
-                    raise RuntimeError("baseline replay no longer successful: " + row["demo"])
-                states = np.asarray(states)
-                np.savez_compressed(cache_path, states=states)
+            states = rebuild_states(host, scene, row, folder, arrays, settings)
             host.install_hooks(session.runtime)
-            extent = scene_extent(host, scene["target"])
+            supports = host.support_labels()      # primary supports if the scene has one, else the fallback (floor)
+            extent = scene_extent(host, scene)
             margin = float(max(extent[:2])) * settings["workspace_object_margin_multiple"]
             workspace = {"min_m": (np.asarray(summary["measured_workspace_m"]["min"]) - margin).tolist(),
                          "max_m": (np.asarray(summary["measured_workspace_m"]["max"]) + margin).tolist()}
-            tc = context(scene, row, arrays, geometry, workspace, identity)
+            tc = context(scene, row, arrays, geometry_of(root), workspace, identity)
             tc.hash()
             t_stop, summary_t = t_stop_calibration(folder, session, reference, tc, config, settings["seed"])
             print("T_STOP %s %s" % (row["demo"], json.dumps(t_stop)), flush=True)
             support = slide_support_rule(tc, host.describe(), AgentSpec.from_dict(scene["agent"]))
-            results = {family: {} for family in settings["families"]}
+            results = {}
             records = []
-            for family, sigma, candidates, info in proposals(
-                    scene, summary, row, arrays, geometry, settings, workspace,
-                    None if summary_t is None else summary_t.median_s, support):
-                stem = "%s.sigma%s" % (family, target_key(sigma))
+            for cell in propose(trajectory, task_set, generate, workspace,
+                                None if summary_t is None else summary_t.median_s, scene["agent"],
+                                scene["gravity_mps2"], slide_support=support, reach_start_m=reach_start,
+                                coverage=coverage_index):
+                family, sigma, candidates, info = cell.family, cell.sigma, cell.candidates, cell.info
+                cid = info["cell_id"]
+                cells = results.setdefault(cid, {})
+                stem = "%s.sigma%s" % (cid, target_key(sigma))
                 family_path = folder / (stem + "_result.json")
                 ledger_path = folder / (stem + "_candidates.json")
                 if family_path.exists():
-                    results[family][target_key(sigma)] = json.loads(family_path.read_text())
-                    if results[family][target_key(sigma)]["selected"]:
-                        records.append(results[family][target_key(sigma)]["selected"]["instance"])
+                    cells[target_key(sigma)] = json.loads(family_path.read_text())
+                    if cells[target_key(sigma)]["selected"]:
+                        records.append(cells[target_key(sigma)]["selected"]["instance"])
                     continue
-                # Recover an interrupted run's completed (family, target) without repeating physical checks. The
-                # ledger is written once the cell is complete (G1 diagnostic included); the selected candidate is
-                # the item flagged ``selected``. The complete per-candidate evidence is retained.
+                # Recover an interrupted run's completed cell without repeating physical checks. The ledger is
+                # written once the cell is complete (G1 diagnostic included); the selected candidate is the item
+                # flagged ``selected``. The complete per-candidate evidence is retained.
                 if ledger_path.exists():
                     prior = json.loads(ledger_path.read_text())
                     picked = next((p for p in prior if p.get("selected")), None)
@@ -572,7 +527,7 @@ def validate(root, settings, demos=None):
                                                host.describe(), instance_settings)
                         certify(instance, picked["g1"]["passed"])
                     result = family_result(prior, picked, instance, info, summary_t)
-                    results[family][target_key(sigma)] = result
+                    cells[target_key(sigma)] = result
                     if picked is not None:
                         records.append(result["selected"]["instance"])
                     save_json(family_path, result)
@@ -597,9 +552,20 @@ def validate(root, settings, demos=None):
                     except InstanceRejected as exc:
                         item["rejection"] = str(exc)
                         continue
-                    clearance = sweep_candidate(host, instance, states, arrays["time_s"], settings,
-                                                scene["support_surfaces"], supports)
+                    samples = candidate_samples(instance, float(arrays["time_s"][-1]), settings,
+                                                scene["support_surfaces"], abs(float(host.m.opt.gravity[2])),
+                                                host.control_dt)
+                    prefilter = None
+                    if settings["layout_prefilter"] != "off":
+                        prefilter = layout_prefilter(instance, samples, layout, trajectory.held, settings)
+                        item["layout_prefilter"] = prefilter
+                        if settings["layout_prefilter"] == "reject" and not prefilter["passed"]:
+                            item["rejection"] = "layout_prefilter:" + ",".join(prefilter["partners"])
+                            continue
+                    clearance = sweep_candidate(host, instance, states, samples, settings, supports)
                     item["scene_clearance"] = clearance
+                    if prefilter is not None:
+                        prefilter["agrees_with_exact"] = prefilter["passed"] == clearance["passed"]
                     if not clearance["passed"]:
                         item["rejection"] = clearance_reason(clearance)
                         continue
@@ -609,7 +575,9 @@ def validate(root, settings, demos=None):
                         shortlisted.append((probe["lead_s"], instance, item))
                     else:
                         item["rejection"] = "visibility:" + probe["reason"]
-                shortlisted.sort(key=lambda x: -x[0])
+                # Trajectory-intersection first (D20 b), then the longest visible lead.
+                shortlisted.sort(key=lambda x: ((-(x[2]["evidence"]["coverage"] or 0.0)
+                                                 if settings["coverage_ordering"] else 0.0), -x[0]))
 
                 def physical(instance, item):
                     print("G0 " + instance.spec_id, flush=True)
@@ -619,9 +587,9 @@ def validate(root, settings, demos=None):
                         item["rejection"] = "g0:" + ",".join(g0.reasons)
                         return False, False
                     nominal = run_nominal_hit(session, instance, reference, tc, gate_settings, settings["seed"], 0)
-                    info = session.runtime.episode_info(0)
-                    nominal["release_kind"] = None if info["release"] is None else info["release"]["kind"]
-                    nominal["exit_t_s"] = info["exit_t_s"]
+                    info_ = session.runtime.episode_info(0)
+                    nominal["release_kind"] = None if info_["release"] is None else info_["release"]["kind"]
+                    nominal["exit_t_s"] = info_["exit_t_s"]
                     print("NOMINAL " + json.dumps(nominal), flush=True)
                     item["nominal_hit"] = nominal
                     failure = None
@@ -658,11 +626,11 @@ def validate(root, settings, demos=None):
                     item["selected"] = True
                 save_json(ledger_path, ledger)
                 result = family_result(ledger, None if entry is None else item, instance, info, summary_t)
-                results[family][target_key(sigma)] = result
+                cells[target_key(sigma)] = result
                 save_json(family_path, result)
                 if result["selected"]:
                     records.append(result["selected"]["instance"])
-                print("FAMILY " + json.dumps({"demo": row["demo"], "family": family, "sigma_target": sigma,
+                print("FAMILY " + json.dumps({"demo": row["demo"], "cell": cid, "sigma_target": sigma,
                                               **{k: v for k, v in result.items() if k != "selected"}}), flush=True)
             # The context references shared geometry in the development bundle;
             # not a formal frozen/standalone TaskContext.
@@ -680,107 +648,21 @@ def validate(root, settings, demos=None):
         host.close()
 
 
-def rejection_keys(reason):
-    """``(category, [category:detail, ...])`` of a ledger rejection string; details are the partners or
-    reasons after the first colon (separated by commas or semicolons)."""
-    category, _, rest = reason.partition(":")
-    details = [d.strip() for d in rest.replace(";", ",").split(",") if d.strip()]
-    return category, ([category + ":" + d for d in details] if category in DETAILED else [])
+_GEOMETRY = {}
 
 
-DETAILED = ("scene_clearance", "scene_audit", "g0", "physical_nominal_hit_or_visibility", "visibility")
+def geometry_of(root):
+    """Shared robot surface samples of the task as lists (the TaskContext's own representation), cached."""
+    key = str(root)
+    if key not in _GEOMETRY:
+        _GEOMETRY[key] = {k: v.tolist() for k, v in np.load(Path(root) / "robot_geometry.npz").items()}
+    return _GEOMETRY[key]
 
 
-def ledger_statistics(ledgers):
-    """Counts over the candidate ledgers of one family (one list of items per layout): rejection reasons by
-    category and by detail, candidates not evaluated, the release kind of every physical nominal-hit episode,
-    the audit outcomes and the same for the selected candidates (with the G1 diagnostic)."""
-    def count(items):
-        out = {}
-        for value in items:
-            out[value] = out.get(value, 0) + 1
-        return dict(sorted(out.items(), key=lambda kv: (-kv[1], str(kv[0]))))
-    category, detail, not_evaluated = [], [], []
-    nominal_kinds, audits, selected = [], [], []
-    for ledger in ledgers:
-        for item in ledger:
-            if "rejection" in item:
-                c, d = rejection_keys(item["rejection"])
-                category.append(c)
-                detail.extend(d)
-            if "not_evaluated" in item:
-                not_evaluated.append(item["not_evaluated"])
-            if "nominal_hit" in item:
-                nominal_kinds.append(str(item["nominal_hit"].get("release_kind")))
-            if "scene_audit" in item:
-                audits.append(item["scene_audit"])
-            if item.get("selected"):
-                selected.append(item)
-    def audit_counts(records):
-        return {"n": len(records), "exited": sum(a["exited"] for a in records),
-                "released": sum(a["released"] for a in records),
-                "release_kinds": count([str(a["release_kind"]) for a in records]),
-                "hold_incomplete": sum(not a["hold_complete"] for a in records),
-                "task_success": sum(bool(a["success"]) for a in records),
-                "admitted": sum(a["admitted"] for a in records)}
-    return {"rejections_by_category": count(category), "rejections_by_detail": count(detail),
-            "not_evaluated": count(not_evaluated),
-            "nominal_release_kinds_all_attempts": count(nominal_kinds),
-            "nominal_release_kinds_selected": count([str(i["nominal_hit"].get("release_kind")) for i in selected]),
-            "audit_all_attempts": audit_counts(audits),
-            "audit_selected": audit_counts([i["scene_audit"] for i in selected]),
-            "g1_diagnostic_selected": {"n": len(selected),
-                                       "passed": sum(bool(i["g1"]["passed"]) for i in selected)}}
-
-
-def top_counts(counts, n):
-    return dict(list(counts.items())[:n])
-
-
-def cell_statistics(entries, quantiles, top=5):
-    """One (family, Sigma target) over the layouts. ``entries``: ``(result, ledger)`` per layout, ``result`` the
-    ``<family>.sigma<t>_result.json`` content and ``ledger`` its candidate ledger (``[]`` if none was written).
-    Counts layouts by outcome (admitted / unreachable by reason / no admitted candidate), the top rejection
-    reasons, the G1 diagnostic of the admitted instances and the distributions of tau, achieved Sigma and
-    visible lead over the admitted instances."""
-    results = [r for r, _ in entries]
-    selected = [r["selected"] for r in results if r["selected"]]
-    unreachable = {}
-    for r in results:
-        if r["unreachable"] is not None:
-            unreachable[r["unreachable"]] = unreachable.get(r["unreachable"], 0) + 1
-    stats = ledger_statistics([ledger for _, ledger in entries])
-    passed = sum(bool(s["g1"]["passed"]) for s in selected)
-    return {"n_layouts": len(results), "admitted": len(selected),
-            "wait_solvable": sum(r["status"] == "wait_solvable" for r in results),
-            "uncertified": sum(r["status"] == "uncertified" for r in results),
-            "unreachable": sum(unreachable.values()), "unreachable_by_reason": dict(sorted(unreachable.items())),
-            "no_admitted_candidate": sum(r["status"] == "no_admitted_candidate" for r in results),
-            "n_candidates": sum(r["n_candidates"] for r in results),
-            "n_scene_clear": sum(r["n_scene_clear"] for r in results),
-            "n_visible": sum(r["n_visible"] for r in results),
-            "dynamic_attempts": sum(r["dynamic_attempts"] for r in results),
-            "top_rejection_categories": top_counts(stats["rejections_by_category"], top),
-            "top_rejection_details": top_counts(stats["rejections_by_detail"], top),
-            "g1_diagnostic": {"n": len(selected), "passed": passed,
-                              "pass_rate": None if not selected else passed / len(selected)},
-            "tau_s": distribution([s["sigma"]["tau_s"] for s in selected], quantiles),
-            "sigma_achieved": distribution([s["sigma"]["sigma_achieved"] for s in selected], quantiles),
-            "visible_lead_s": distribution([s["sigma"]["visible_lead_s"] for s in selected], quantiles),
-            "ledger": stats}
-
-
-def t_stop_statistics(records):
-    """Per-layout T_stop records (``validation.json: t_stop``): status counts, min / median / max of the
-    medians over the layouts whose protocol stopped every repetition (a censored value is excluded)."""
-    status = {}
-    for r in records:
-        status[r["status"]] = status.get(r["status"], 0) + 1
-    values = [r["median_s"] for r in records if r["status"] == "ok"]
-    return {"n_layouts": len(records), "status": dict(sorted(status.items())),
-            "n_censored_layouts": sum(r["status"] == "censored" for r in records),
-            "median_s": None if not values else {"min": float(min(values)), "median": float(np.median(values)),
-                                                 "max": float(max(values))}}
+def cell_ids(settings):
+    """``[(cell id, family)]`` of every (family, entry-direction class) of the settings, in report order."""
+    generate = GenerateSettings.from_mapping(settings)
+    return [(cell_id(f, e), f) for f in generate.families for e in generate.elevations(f)]
 
 
 def report(root, settings):
@@ -790,8 +672,9 @@ def report(root, settings):
     validations = [json.loads((root / "trajectories" / r["demo"] / "validation.json").read_text())
                    for r in rows if (root / "trajectories" / r["demo"] / "validation.json").exists()]
     keys = [target_key(t) for t in settings["sigma_targets"]]
+    cells = cell_ids(settings)
     processed = [v for v in validations if v["status"] == "processed"]
-    results = {f: {k: [] for k in keys} for f in settings["families"]}
+    results = {cid: {k: [] for k in keys} for cid, _ in cells}
     csvrows = []
     for row in rows:
         validation = next((v for v in validations if v["demo"] == row["demo"]), None)
@@ -800,18 +683,17 @@ def report(root, settings):
               "t_stop_s": None if not validation or validation["status"] != "processed" else
               validation["t_stop"].get("median_s"), "t_stop_status": None if not validation or
               validation["status"] != "processed" else validation["t_stop"]["status"]}
-        for family in settings["families"]:
+        for cid, _ in cells:
             for key in keys:
-                record = validation["families"].get(family, {}).get(key) if validation else None
-                cr["%s@%s" % (family, key)] = record["status"] if record else (
+                record = validation["families"].get(cid, {}).get(key) if validation else None
+                cr["%s.sigma%s" % (cid, key)] = record["status"] if record else (
                     "baseline_unusable" if not row["replay_success"] else "pending")
                 if record:
-                    path = root / "trajectories" / row["demo"] / ("%s.sigma%s_candidates.json" % (family, key))
-                    results[family][key].append((record, json.loads(path.read_text()) if path.exists() else []))
+                    path = root / "trajectories" / row["demo"] / ("%s.sigma%s_candidates.json" % (cid, key))
+                    results[cid][key].append((record, json.loads(path.read_text()) if path.exists() else []))
         csvrows.append(cr)
     quantiles = settings["quantiles"]
-    families = {f: {"targets": {k: cell_statistics(results[f][k], quantiles) for k in keys}}
-                for f in settings["families"]}
+    families = {cid: {"targets": {k: cell_statistics(results[cid][k], quantiles) for k in keys}} for cid, _ in cells}
     summary = {"n_processed": len(validations), "n_baseline_unusable": len(validations) - len(processed),
                "sigma_targets": settings["sigma_targets"],
                "t_stop": t_stop_statistics([v["t_stop"] for v in processed]), "families": families}
@@ -822,6 +704,10 @@ def report(root, settings):
         writer.writerows(csvrows)
     compact = {f: {k: {n: v[n] for n in ("admitted", "unreachable_by_reason", "no_admitted_candidate", "g1_diagnostic")}
                    for k, v in d["targets"].items()} for f, d in families.items()}
+    (root / "generation_report.md").write_text(
+        "# Generation report\n\nDemonstrations processed: %d (baseline unusable: %d). One row per cell "
+        "(family x entry-direction class x Sigma target); `admitted` counts demonstrations (layouts).\n\n%s" % (
+            len(processed), summary["n_baseline_unusable"], generation_table(families)))
     print("REPORT " + json.dumps({"processed": len(validations), "t_stop": summary["t_stop"], "families": compact}))
     from .trajectory_report import write_analysis_report
     write_analysis_report(root)

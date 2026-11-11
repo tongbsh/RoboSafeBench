@@ -76,6 +76,13 @@ class _Member(object):
         self.pos_before = None  # type: Optional[np.ndarray]
 
 
+def support_labels_in_use(primary, fallback, primary_has_surface):
+    """The support body names a scene uses: ``primary`` (``support_bodies``, the tables) if any of them provides a
+    support surface in the scene, else ``fallback`` (``support_fallback_bodies``: libero_object's floor). The one
+    rule of :meth:`LiberoHost.support_surfaces` and of every check that ignores the support."""
+    return set(primary if primary_has_surface else fallback)
+
+
 class LiberoHost(object):
     """The LIBERO adapter. ``config_dir`` defaults to hazardlib's; ``settle_steps`` (hold steps between the layout
     state and ``begin_episode``, dynisafety's ``num_steps_wait``) and ``camera_hw`` default to ``libero.yaml``."""
@@ -617,6 +624,13 @@ class LiberoHost(object):
         self._check_env(env)
         out = self._support_surfaces_of(self.config["support_bodies"], False)
         return out or self._support_surfaces_of(self.config["support_fallback_bodies"], True)
+
+    def support_labels(self) -> set:
+        """Names of the support bodies in use in this scene (:func:`support_labels_in_use`); hazards riding on or
+        landing on them are not scene disturbances."""
+        primary = self.config["support_bodies"]
+        return support_labels_in_use(primary, self.config["support_fallback_bodies"],
+                                     bool(self._support_surfaces_of(primary, False)))
 
     def _support_surfaces_of(self, body_names: List[str], planes: bool) -> List[Surface]:
         s, m = self._fresh(), self.m
