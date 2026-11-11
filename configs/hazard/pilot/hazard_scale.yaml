@@ -1,0 +1,34 @@
+# D21 hazard scale axis (PILOT, not preregistered). One level = one cube hazard (a single pool box, so the pool
+# adds the same 13 state values to every level) with plausible density, so that a collision has a physical
+# consequence decided only by the physics engine (task success is recorded, never targeted).
+#   S: 0.02 m half extent (4 cm cube), 0.05 kg  -> ~780 kg/m^3   (the original setup: stays byte-identical)
+#   M: 0.035 m (7 cm),                  0.25 kg -> ~730 kg/m^3
+#   L: 0.05 m (10 cm),                  0.8 kg  -> 800 kg/m^3
+# coverage_radius_m (D20 b trajectory-intersection scoring) is the bounding radius of the box, sqrt(3) x half extent
+# (S 0.0346, M 0.0606, L 0.0866 m), plus the host's eef contact radius (bd/libero.yaml eef_contact_radius_m =
+# 0.02 m), rounded up to 5 mm: 0.055 / 0.085 / 0.110 m. The other size-related tolerances need no per-level
+# value: the scene-clearance spacing is a fraction of the smallest half extent, the 1 mm clearance tolerance
+# is G0's absolute penetration, and the 2 mm robot-absent displacement tolerance is a property of the task
+# objects (a heavier hazard displacing an object by more than 2 mm is a real disturbance and is rejected).
+# strike_radius_m is the conformance strike geometry (libero.yaml scenario.strike.radius_m: extent of
+# robot0_link2 along +x from its reported position, as measured by
+# `probe --survey --layout libero_spatial/demo_0@85` with the level's box). It is not size independent: the link
+# face is not perpendicular to the line (S 0.05835, M 0.06051, L 0.06267 m); with the S value the M / L
+# C3 intrusion probe stops short of the body. S is the value of libero.yaml and is never applied.
+default_level: S
+levels:
+  S:
+    half_extent_m: 0.02
+    mass_kg: 0.05
+    coverage_radius_m: 0.055
+    strike_radius_m: 0.05834830284118654
+  M:
+    half_extent_m: 0.035
+    mass_kg: 0.25
+    coverage_radius_m: 0.085
+    strike_radius_m: 0.06050986289978026
+  L:
+    half_extent_m: 0.05
+    mass_kg: 0.8
+    coverage_radius_m: 0.11
+    strike_radius_m: 0.06267142295837402
