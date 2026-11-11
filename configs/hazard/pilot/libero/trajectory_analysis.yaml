@@ -13,6 +13,16 @@ lift_spacing_multiple: 2.0
 anchor_quantiles: [0.25, 0.5, 0.75]
 # Hazard speed levels derive from the distribution of moving EEF speeds, not these fractions themselves.
 speed_quantiles: [0.25, 0.5, 0.75]
+# Approach speed of a slide / reach candidate (hazardlib.generate.propose). demo: the median of the speed levels
+# above (a benchmark-derived intensity, ~0.15-0.25 m/s: slower than any real intruder, so the collision has
+# almost no physical consequence). paradigm (D20, D21): the fixed paradigm speed of the family below, the same
+# for every benchmark. Part of the generation identity (generation_hash): another source needs another root.
+speed_source: paradigm
+# First declared level of the family's intensity.yaml approach_speed_mps (slide 0.5, reach 0.6 m/s); a human
+# hand reaches at about 0.5-1.5 m/s. Inside the declared pilot range 0.05-2.4 m/s. Pilot value, not preregistered.
+paradigm_approach_speed_mps:
+  intrusion.reach: 0.6
+  intrusion.slide: 0.5
 # Intensity axis Sigma = tau / T_stop (00_paradigm 5-7; D6/D13 f): tau is the onset-to-hit lead, T_stop the
 # robot's stopping time measured per layout with the core protocol (run_t_stop_protocol, intensity.yaml
 # t_stop_protocol). Pilot values, NOT preregistered. Below 1 the hit is physically unavoidable by stopping for
