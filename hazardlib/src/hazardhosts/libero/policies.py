@@ -31,6 +31,12 @@ class DemoReplay:
         return action
 
 
+# Adapters that load the model in-process (which the simulator interpreter cannot do) and the hazardlib client that
+# talks to the same model served in its own environment (``serve_oft``): ``module:Class`` -> ``module:Class``.
+REMOTE_ADAPTERS = {"dynisafety.policies.adapters.openvla_oft:OpenVLAOFTAdapter":
+                   "hazardhosts.libero.oft_client:OftRemoteAdapter"}
+
+
 class DyniPolicyBridge:
     """ReferencePolicy interface over an existing Policy adapter; one queued action per control step.
 
@@ -50,7 +56,7 @@ class DyniPolicyBridge:
         self.config = model_config_from_resolved(raw, backend="libero")
         if self.config.action_space != "delta_ee_7d":
             raise ValueError("this bridge requires delta_ee_7d; got %s" % self.config.action_space)
-        module, cls = self.config.adapter.split(":")
+        module, cls = REMOTE_ADAPTERS.get(self.config.adapter, self.config.adapter).split(":")
         self.policy = getattr(importlib.import_module(module), cls).from_config(self.config)
         self.seeded_transport = None
         if raw.get("extra", {}).get("ws_codec") == "openpi":
