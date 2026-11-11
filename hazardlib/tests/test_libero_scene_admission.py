@@ -1,5 +1,6 @@
 """D19 scene admission of the LIBERO analysis, without a simulator: clearance sweep, audit verdict,
 selection and the ledger statistics."""
+import pytest
 import numpy as np
 
 from hazardhosts.libero.scene_audit import audit_verdict, rejection_reason as audit_reason
@@ -172,3 +173,94 @@ def test_ledger_statistics():
     assert stats["nominal_release_kinds_selected"] == {"nominal": 1}
     assert stats["audit_all_attempts"]["n"] == 2 and stats["audit_all_attempts"]["exited"] == 1
     assert stats["audit_selected"]["admitted"] == 1 and stats["g1_diagnostic_selected"] == {"n": 1, "passed": 0}
+
+
+# ---- L2: per-(family, Sigma target) results, report aggregation, T_stop record ------------------------------
+
+def _cell_result(status, sigma, tau=None, lead=None, g1=None, unreachable=None, n_candidates=3):
+    selected = None
+    if status in ("wait_solvable", "uncertified"):
+        selected = {"g1": {"passed": g1}, "sigma": {"tau_s": tau, "sigma_achieved": tau / .3,
+                                                      "visible_lead_s": lead}}
+    return {"sigma_target": sigma, "status": status, "unreachable": unreachable, "selected": selected,
+            "n_candidates": 0 if unreachable else n_candidates, "n_scene_clear": 1, "n_visible": 1,
+            "dynamic_attempts": 1}
+
+
+def test_cell_statistics_aggregate_layouts_per_family_and_target():
+    from hazardhosts.libero.trajectory_candidates import cell_statistics
+    q = [.5]
+    ledger = [{"rejection": "visibility:insufficient_visible_lead"}, {"rejection": "scene_clearance:cookies_1"},
+              {"rejection": "visibility:insufficient_visible_lead"}]
+    entries = [(_cell_result("wait_solvable", .75, .2, .1, True), ledger),
+               (_cell_result("uncertified", .75, .2, .15, False), []),
+               (_cell_result("unreachable", .75, unreachable="phase_time"), []),
+               (_cell_result("unreachable", .75, unreachable="phase_time"), []),
+               (_cell_result("unreachable", .75, unreachable="free_fall_height"), []),
+               (_cell_result("no_admitted_candidate", .75), [])]
+    stats = cell_statistics(entries, q)
+    assert (stats["n_layouts"], stats["admitted"], stats["wait_solvable"], stats["uncertified"]) == (6, 2, 1, 1)
+    assert stats["unreachable"] == 3 and stats["unreachable_by_reason"] == {"free_fall_height": 1, "phase_time": 2}
+    assert stats["no_admitted_candidate"] == 1
+    assert stats["g1_diagnostic"] == {"n": 2, "passed": 1, "pass_rate": .5}
+    assert stats["top_rejection_categories"] == {"visibility": 2, "scene_clearance": 1}
+    assert stats["top_rejection_details"]["visibility:insufficient_visible_lead"] == 2
+    assert stats["tau_s"]["quantiles"]["0.5"] == pytest.approx(.2)
+    assert stats["sigma_achieved"]["quantiles"]["0.5"] == pytest.approx(.2 / .3)
+    assert stats["visible_lead_s"]["quantiles"]["0.5"] == pytest.approx(.125)
+    empty = cell_statistics([(_cell_result("unreachable", 3., unreachable="t_stop_censored"), [])], q)
+    assert empty["admitted"] == 0 and empty["g1_diagnostic"]["pass_rate"] is None and empty["tau_s"]["n"] == 0
+
+
+def test_t_stop_statistics_exclude_censored_layouts():
+    from hazardhosts.libero.trajectory_candidates import t_stop_statistics
+    records = [{"status": "ok", "median_s": .3}, {"status": "ok", "median_s": .35}, {"status": "ok", "median_s": .25},
+               {"status": "censored", "median_s": .1}, {"status": "protocol_failed", "error": "x"}]
+    stats = t_stop_statistics(records)
+    assert stats["median_s"] == {"min": .25, "median": .3, "max": .35}
+    assert stats["n_censored_layouts"] == 1 and stats["status"] == {"censored": 1, "ok": 3, "protocol_failed": 1}
+
+
+def test_each_target_has_its_own_selection_and_attempt_budget():
+    # select_admitted is called once per (family, layout, target): a target that exhausts its attempts does not
+    # take the budget of another, and each target can admit its own instance.
+    def cell(admit_at):
+        items = [{} for _ in range(5)]
+        shortlist = [(1., "i%d" % k, item) for k, item in enumerate(items)]
+        return select_admitted(shortlist, lambda inst, item: (True, inst == admit_at), 2)[0]
+    chosen = [cell("i1"), cell("i4"), cell("i0")]      # target 2 never reaches i4 (2 attempts)
+    assert [c[1] if c else None for c in chosen] == ["i1", None, "i0"]
+
+
+def test_t_stop_calibration_is_cached_and_a_censored_value_is_never_targeted(tmp_path, monkeypatch):
+    import hazardhosts.libero.trajectory_candidates as module
+    from hazardlib.calibrate.protocol import CalibrationResult, TStopProtocolSettings
+    from hazardlib.calibrate.stop import aggregate_t_stop
+    calls = []
+
+    class Context:
+        def hash(self):
+            return "h"
+
+    def fake(session, policy, tc, settings, seed, env):
+        calls.append(seed)
+        samples = [.3, None, .3] if len(calls) == 1 else [.3, .3, .3]
+        return CalibrationResult("t", "l", "h", "b", "libero", {"kind": "x"}, .2, .16,
+                                 TStopProtocolSettings(.0172, 1, 3, .8, 1.5), samples, [.1] * 3,
+                                 aggregate_t_stop(samples))
+    monkeypatch.setattr(module, "run_t_stop_protocol", fake)
+    monkeypatch.setattr(module.TStopProtocolSettings, "load", classmethod(lambda cls, d: None))
+    record, summary = module.t_stop_calibration(tmp_path, None, None, Context(), None, 0)
+    assert record["status"] == "censored" and summary is None and record["n_censored"] == 1
+    # Resumed: the stored protocol output is read back, the protocol does not run again.
+    record, summary = module.t_stop_calibration(tmp_path, None, None, Context(), None, 0)
+    assert record["status"] == "censored" and summary is None and len(calls) == 1
+    (tmp_path / "calibration.yaml").unlink()
+    record, summary = module.t_stop_calibration(tmp_path, None, None, Context(), None, 0)
+    assert record["status"] == "ok" and summary.median_s == pytest.approx(.3) and len(calls) == 2
+    # A protocol that cannot run (the EEF never reaches the trigger speed) is recorded, not retried.
+    (tmp_path / "calibration.yaml").unlink()
+    monkeypatch.setattr(module, "run_t_stop_protocol", lambda *a: (_ for _ in ()).throw(RuntimeError("never fast")))
+    record, summary = module.t_stop_calibration(tmp_path, None, None, Context(), None, 0)
+    assert record["status"] == "protocol_failed" and summary is None
+    assert module.t_stop_calibration(tmp_path, None, None, Context(), None, 0)[0]["error"] == "never fast"

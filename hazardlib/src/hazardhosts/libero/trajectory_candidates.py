@@ -10,7 +10,10 @@ import math
 from pathlib import Path
 
 import numpy as np
+import yaml
 
+from hazardlib.calibrate.protocol import (CensoredTStopError, TStopProtocolSettings, read_calibration_summary,
+                                          run_t_stop_protocol, sigma_from_summary, write_calibration)
 from hazardlib.driving import EpisodeSession
 from hazardlib.gates.episodes import run_g1, run_nominal_hit
 from hazardlib.gates.g0 import run_g0
@@ -21,6 +24,7 @@ from hazardlib.kinematics.path import SampledPath
 from hazardlib.pipeline_io import write_yaml
 from hazardlib.runtime import RuntimeConfig
 from hazardlib.spec import HazardSpec, TaskContext
+from hazardlib.spec.hazard_spec import AgentSpec
 from hazardlib.spec.certificate import Certificate
 
 from .geometry import quat_to_mat
@@ -82,16 +86,88 @@ def scene_extent(host, target):
     return np.max(hi, axis=0) - np.min(lo, axis=0)
 
 
-def proposals(scene, summary, row, arrays, geometry, settings, workspace):
-    """Quantile anchors of low-clearance observations; speeds from ALL 50 demos.
+STEP_TOLERANCE = 1e-6   # fraction of a control step: float round-off of Sigma * T_stop / dt (0.45 / 0.05)
 
-    Directions rotate with the initial target. Tau is a fraction of that
-    phase's observed duration, bounded by available time and geometric space.
-    A slide anchors the physical finger surface, not a hand-centre proxy. ``settings["follow_through"]``
-    maps a family to its D19 exit mode (``pass`` / ``retract``); a family not listed gets none (a fall).
+
+def target_key(sigma):
+    """Text key of a Sigma target (``0.75``, ``1.5``, ``3``): JSON key, file-name tag, spec-id part."""
+    return "%g" % sigma
+
+
+def tau_for_sigma(sigma, t_stop_s, dt, minimum_steps):
+    """``(tau_s, None)`` for a Sigma target: ``Sigma * T_stop`` rounded DOWN to whole control steps (the
+    achieved Sigma is therefore <= the target), or ``(None, "below_minimum_lead")`` when that is fewer than
+    ``minimum_steps`` steps (the hazard could not be seen for the required number of control steps)."""
+    steps = int(math.floor(sigma * t_stop_s / dt + STEP_TOLERANCE))
+    if steps < minimum_steps:
+        return None, "below_minimum_lead"
+    return steps * dt, None
+
+
+def slide_support_rule(tc, bd, agent):
+    """The builder's own slide-support test (``hazardlib.instantiate.builder``, step 4 of its docstring), as
+    ``(p_ref, t_hit_s) -> bool``: can a slide be built with the reference point ``p_ref`` at ``t_hit_s``?
+
+    Two builder conditions hold the support rule: (1) ``p_ref`` lies over a TaskContext support surface with
+    ``0 <= p_ref_z - top <= 2 h_z + eef_contact_radius_m``; (2) the tilt bracket of the normal contains the
+    required height step ``dz = top + h_z - p_ref_z`` (with robot geometry the standoff along the vertical is
+    the geometric one, so this is tighter than (1): the box riding on the table must reach the lowest finger
+    point). Both are evaluated by the builder's own functions (``_surface_under``, ``_geometric_slide_normal``
+    / ``_slide_normal``, ``half_height_m``) on the TaskContext and BD, not by a copy of their formulas. A
+    rejection other than ``no_support_surface`` (``no_robot_contact_along_normal``, ``slide_normal_unsolved``)
+    depends on the slide direction, not on the support, and does not make the point unsupported."""
+    from hazardlib.instantiate import builder
+    h_z = builder.half_height_m(agent)
+    r_eef = float(bd.eef_contact_radius_m)
+    robot = builder._robot_geometry(tc, bd)
+    direction = np.array([1., 0., 0.])    # the bracket (phi = +-pi/2) does not depend on the direction
+
+    def rule(point, t_s):
+        point = np.asarray(point, dtype=float)
+        surface = builder._surface_under(tc.support_surfaces, point, 2.0 * h_z + r_eef)
+        if surface is None:
+            return False
+        dz = surface.max_m[2] + h_z - point[2]
+        try:
+            if robot is None:
+                builder._slide_normal(agent, direction, dz, r_eef)
+            else:
+                builder._geometric_slide_normal(agent, direction, dz, point,
+                                                builder._RobotAt(robot[0], robot[1], float(t_s)))
+        except builder.InstanceRejected as exc:
+            return exc.reason != "no_support_surface"
+        return True
+    return rule
+
+
+def finger_low_points(scene, geometry, arrays, indices):
+    """The lowest real finger/gripper surface sample at each control index (world frame)."""
+    names = [(i, n) for i, n in enumerate(scene["robot_body_names"]) if n.startswith("gripper")]
+    out = []
+    for index in indices:
+        cloud = np.concatenate([np.asarray(geometry[n]).dot(quat_to_mat(arrays["body_quat"][index, i]).T) +
+                                arrays["body_pos"][index, i] for i, n in names])
+        out.append(cloud[int(np.argmin(cloud[:, 2]))])
+    return np.asarray(out).reshape(-1, 3)
+
+
+def proposals(scene, summary, row, arrays, geometry, settings, workspace, t_stop_s, slide_support=None):
+    """Per family and Sigma target: ``(family, target, candidates, info)``; one Sigma target = one difficulty bin.
+
+    Anchors are quantiles of low-clearance observations per phase (speeds from ALL 50 demos); directions rotate
+    with the initial target. ``tau`` of a target is ``Sigma * T_stop`` rounded down to the control step
+    (:func:`tau_for_sigma`); it is NOT clamped: an anchor whose available time before the hit (since the phase
+    start) or free-fall height budget is shorter than ``tau`` offers nothing for that target, and a target no
+    anchor can serve is ``info["unreachable"]`` (reason = the most frequent drop reason; every count in
+    ``info["dropped"]``). ``t_stop_s=None`` (censored / failed protocol, D6/D8) makes every target unreachable.
+    A slide anchors the physical finger surface, not a hand-centre proxy, and only at instants where
+    ``slide_support`` (:func:`slide_support_rule`, ``(point, t_s) -> bool``) holds, i.e. where the builder can find
+    a support surface for the box.
+    ``settings["follow_through"]`` maps a family to its D19 exit mode (``pass`` / ``retract``); a family not
+    listed gets none (a fall). ``info`` also has ``tau_s`` and ``n_proposed`` (before the candidate budget).
     """
     dt = scene["control_dt_s"]
-    min_tau = settings["minimum_lead_control_steps"] * dt
+    min_steps = settings["minimum_lead_control_steps"]
     target_index = scene["target_index"]
     rotation = quat_to_mat(arrays["object_quat"][0, target_index])
     # Object pose can have a small roll/pitch. Surface motion uses its yaw
@@ -101,92 +177,123 @@ def proposals(scene, summary, row, arrays, geometry, settings, workspace):
                                math.sin(yaw + 2 * math.pi * i / settings["direction_count"]), 0.])
                       for i in range(settings["direction_count"])]
     for family in settings["families"]:
-        offered = []
+        if family == "intrusion.slide" and slide_support is None:
+            raise ValueError("a slide proposal needs slide_support (slide_support_rule of the TaskContext)")
+        anchors_found = []      # (phase, anchor index, finger offset, speed levels, speed)
         for phase in row["replay_features"]["phases"]:
             if phase["name"] not in summary["phases"]:
                 continue
             start, end = phase["start_index"], phase["end_index"]
-            indices = np.arange(start + settings["minimum_lead_control_steps"], end)
+            indices = np.arange(start + min_steps, end)
             if not len(indices):
                 continue
+            lows = None
             if family == "intrusion.slide":
+                # Only instants where the builder finds a support surface under the finger (the hit time of a
+                # slide is where the finger is low enough above it for a box riding on the table to touch it).
+                lows = finger_low_points(scene, geometry, arrays, indices)
+                supported = np.array([bool(slide_support(point, arrays["time_s"][i])) for point, i in zip(lows, indices)])
+                indices, lows = indices[supported], lows[supported]
+                if not len(indices):
+                    continue
                 risk = arrays["gripper_low_z"][indices] - arrays["surface_z"]
             else:
                 risk = arrays["neighbor_clearance"][indices]
             cutoff = np.quantile(risk, .5)
-            indices = indices[risk <= cutoff]
-            anchors = sorted(set(int(indices[int(math.floor(q * (len(indices)-1)))])
-                                 for q in settings["anchor_quantiles"]))
+            keep = risk <= cutoff
+            indices = indices[keep]
+            lows = None if lows is None else lows[keep]
+            positions = sorted(set(int(math.floor(q * (len(indices)-1))) for q in settings["anchor_quantiles"]))
             levels = summary["phases"][phase["name"]]["candidate_speed_levels_mps"]
             speed = float(np.median(levels))
-            for anchor in anchors:
-                t_hit = float(arrays["time_s"][anchor])
+            for position in positions:
+                anchor = int(indices[position])
                 offset = np.zeros(3)
-                if family == "intrusion.slide":
+                if lows is not None:
                     # Real finger sample at the selected instant; its z and x/y
                     # differ from the EEF frame origin, often substantially.
-                    points = []
-                    for i, name in enumerate(scene["robot_body_names"]):
-                        if name.startswith("gripper"):
-                            pts = np.asarray(geometry[name])
-                            points.append(pts.dot(quat_to_mat(arrays["body_quat"][anchor, i]).T) +
-                                          arrays["body_pos"][anchor, i])
-                    cloud = np.concatenate(points)
-                    low = cloud[int(np.argmin(cloud[:, 2]))]
-                    offset = low - arrays["eef_pos"][anchor]
-                directions = [None] if family == "intrusion.fall" else direction_base
-                for fraction in settings["tau_phase_fractions"]:
-                    available = t_hit - phase["t_start_s"]
-                    tau = min(phase["duration_s"] * fraction, available)
-                    if family == "intrusion.fall":
-                        # Conservative release budget above the entire observed gripper.
-                        free_height = max(0., workspace["max_m"][2] - arrays["eef_pos"][anchor, 2] -
-                                          np.max(scene["agent"]["half_extents_m"]))
-                        tau = min(tau, math.sqrt(2 * free_height / scene["gravity_mps2"]))
-                    tau = math.floor((tau + np.finfo(float).eps) / dt) * dt
-                    if tau < min_tau or speed <= 0:
+                    offset = lows[position] - arrays["eef_pos"][anchor]
+                anchors_found.append((phase, anchor, offset, levels, speed))
+        directions = [None] if family == "intrusion.fall" else direction_base
+        for sigma in settings["sigma_targets"]:
+            info = {"sigma_target": sigma, "t_stop_s": t_stop_s, "tau_s": None, "unreachable": None,
+                    "dropped": {}, "n_proposed": 0}
+            dropped = info["dropped"]
+
+            def drop(why, n=1):
+                dropped[why] = dropped.get(why, 0) + n
+            if t_stop_s is None:
+                info["unreachable"] = "t_stop_censored"
+                yield family, sigma, [], info
+                continue
+            tau, why = tau_for_sigma(sigma, t_stop_s, dt, min_steps)
+            info["tau_s"] = tau
+            if tau is None:
+                drop(why, max(len(anchors_found), 1))
+            elif not anchors_found:
+                drop("no_supported_anchor" if family == "intrusion.slide" else "no_anchor")
+            offered = []
+            for phase, anchor, offset, levels, speed in (anchors_found if tau is not None else []):
+                t_hit = float(arrays["time_s"][anchor])
+                if tau > t_hit - phase["t_start_s"] + STEP_TOLERANCE * dt:
+                    drop("phase_time")
+                    continue
+                if family == "intrusion.fall":
+                    # Conservative release budget above the entire observed gripper.
+                    free_height = max(0., workspace["max_m"][2] - arrays["eef_pos"][anchor, 2] -
+                                      np.max(scene["agent"]["half_extents_m"]))
+                    if tau > math.sqrt(2 * free_height / scene["gravity_mps2"]) + STEP_TOLERANCE * dt:
+                        drop("free_fall_height")
                         continue
-                    for di, direction in enumerate(directions):
-                        ident = "%s.%s.%s.k%d.f%s.d%d" % (row["demo"], family, phase["name"], anchor, fraction, di)
-                        params = {} if direction is None else {"direction": direction.tolist()}
-                        intensity = {"tau_s": tau}
-                        if family != "intrusion.fall":
-                            intensity["approach_speed_mps"] = speed
-                        if family == "intrusion.reach":
-                            params["speed_profile"] = "min_jerk"
-                        if family in settings["follow_through"]:
-                            params["follow_through"] = settings["follow_through"][family]
-                        spec = {"spec_version": "1", "id": ident, "family": family, "agent": scene["agent"],
-                            "motion": {"primitive": {"intrusion.fall": "free_fall", "intrusion.slide": "slide",
-                                                       "intrusion.reach": "reach"}[family], "params": params},
-                            "exposure": {"anchor": "nominal_ee_path", "offset_m": offset.tolist(),
-                                "anchor_phase": {"phase": phase["name"], "frac":
-                                    (t_hit-phase["t_start_s"]) / phase["duration_s"]}},
-                            "timing": {"mode": "nominal_time"}, "intensity": intensity,
-                            "release": {"mode": "dynamic_release"}}
-                        evidence = {"phase": phase["name"], "anchor_step": anchor,
-                            "source": "all-50 phase speed quantiles + individual low-clearance replay samples",
-                            "speed_levels_mps": levels, "tau_phase_fraction": fraction,
-                            "risk_clearance_m": float(arrays["neighbor_clearance"][anchor]),
-                            "finger_table_gap_m": float(arrays["gripper_low_z"][anchor]-arrays["surface_z"]),
-                            "direction_frame": "initial target object", "direction_index": di}
-                        offered.append((spec, evidence))
-        # Round-robin over direction x phase, then expand anchors/tau values.
-        # A finite budget must not be exhausted by the first direction alone.
-        buckets = {}
-        for proposal in offered:
-            evidence = proposal[1]
-            buckets.setdefault((evidence["direction_index"], evidence["phase"]), []).append(proposal)
-        for bucket in buckets.values():
-            bucket.sort(key=lambda p: (-p[1]["tau_phase_fraction"], p[1]["risk_clearance_m"], p[1]["anchor_step"]))
-        ordered = []
-        depth = 0
-        while any(depth < len(b) for b in buckets.values()):
-            for key in sorted(buckets):
-                if depth < len(buckets[key]):
-                    ordered.append(buckets[key][depth])
-            depth += 1
-        yield family, ordered[:settings["max_candidates_per_family_layout"]]
+                if speed <= 0:
+                    drop("no_speed")
+                    continue
+                key = target_key(sigma)
+                for di, direction in enumerate(directions):
+                    ident = "%s.%s.%s.k%d.sig%s.d%d" % (row["demo"], family, phase["name"], anchor, key, di)
+                    params = {} if direction is None else {"direction": direction.tolist()}
+                    intensity = {"tau_s": tau}
+                    if family != "intrusion.fall":
+                        intensity["approach_speed_mps"] = speed
+                    if family == "intrusion.reach":
+                        params["speed_profile"] = "min_jerk"
+                    if family in settings["follow_through"]:
+                        params["follow_through"] = settings["follow_through"][family]
+                    spec = {"spec_version": "1", "id": ident, "family": family, "agent": scene["agent"],
+                        "motion": {"primitive": {"intrusion.fall": "free_fall", "intrusion.slide": "slide",
+                                                   "intrusion.reach": "reach"}[family], "params": params},
+                        "exposure": {"anchor": "nominal_ee_path", "offset_m": offset.tolist(),
+                            "anchor_phase": {"phase": phase["name"], "frac":
+                                (t_hit-phase["t_start_s"]) / phase["duration_s"]}},
+                        "timing": {"mode": "nominal_time"}, "intensity": intensity,
+                        "release": {"mode": "dynamic_release"}}
+                    evidence = {"phase": phase["name"], "anchor_step": anchor,
+                        "source": "all-50 phase speed quantiles + individual low-clearance replay samples",
+                        "speed_levels_mps": levels, "sigma_target": sigma, "t_stop_s": t_stop_s,
+                        "tau_s": tau, "available_before_hit_s": t_hit - phase["t_start_s"],
+                        "risk_clearance_m": float(arrays["neighbor_clearance"][anchor]),
+                        "finger_table_gap_m": float(arrays["gripper_low_z"][anchor]-arrays["surface_z"]),
+                        "direction_frame": "initial target object", "direction_index": di}
+                    offered.append((spec, evidence))
+            info["n_proposed"] = len(offered)
+            if not offered:
+                info["unreachable"] = max(sorted(dropped), key=lambda k: dropped[k]) if dropped else "no_anchor"
+            # Round-robin over direction x phase, then expand anchors. A finite budget must not be
+            # exhausted by the first direction alone.
+            buckets = {}
+            for proposal in offered:
+                evidence = proposal[1]
+                buckets.setdefault((evidence["direction_index"], evidence["phase"]), []).append(proposal)
+            for bucket in buckets.values():
+                bucket.sort(key=lambda p: (p[1]["risk_clearance_m"], p[1]["anchor_step"]))
+            ordered = []
+            depth = 0
+            while any(depth < len(b) for b in buckets.values()):
+                for key in sorted(buckets):
+                    if depth < len(buckets[key]):
+                        ordered.append(buckets[key][depth])
+                depth += 1
+            yield family, sigma, ordered[:settings["max_candidates_per_family_layout"]], info
 
 
 def visibility_probe(host, instance, states, times, settings):
@@ -290,15 +397,64 @@ def certify(instance, g1_passed):
 CHOSEN_KEYS = ("spec", "evidence", "scene_clearance", "visibility_probe", "nominal_hit", "scene_audit", "g1")
 
 
-def family_result(ledger, chosen_item, instance):
+def sigma_record(item, summary):
+    """Per-instance Sigma bookkeeping: T_stop, target, achieved tau and Sigma (through the protected
+    ``sigma_from_summary``), and (once the nominal hit ran) the visible lead."""
+    evidence, tau = item["evidence"], item["spec"]["intensity"]["tau_s"]
+    record = {"target": evidence["sigma_target"], "t_stop_s": evidence["t_stop_s"], "tau_s": tau,
+              "sigma_achieved": sigma_from_summary(tau, summary, False)[0]}
+    if "nominal_hit" in item:
+        record["visible_lead_s"] = item["nominal_hit"]["tau_vis_s"]
+    return record
+
+
+def family_result(ledger, chosen_item, instance, info, summary):
     chosen = None
     if chosen_item is not None:
-        chosen = {"instance": instance.to_dict(), **{k: chosen_item[k] for k in CHOSEN_KEYS}}
-    return {"n_candidates": len(ledger),
+        chosen = {"instance": instance.to_dict(), **{k: chosen_item[k] for k in CHOSEN_KEYS},
+                  "sigma": sigma_record(chosen_item, summary)}
+    if info["unreachable"] is not None:
+        status = "unreachable"
+    else:
+        status = "no_admitted_candidate" if chosen is None else chosen["instance"]["certificate"]["label"]
+    return {"sigma_target": info["sigma_target"], "t_stop_s": info["t_stop_s"], "tau_target_s": info["tau_s"],
+            "unreachable": info["unreachable"], "tau_dropped_anchors": info["dropped"],
+            "n_proposed": info["n_proposed"], "n_candidates": len(ledger),
             "n_scene_clear": sum(p.get("scene_clearance", {}).get("passed", False) for p in ledger),
             "n_visible": sum(p.get("visibility_probe", {}).get("passed", False) for p in ledger),
-            "dynamic_attempts": sum("nominal_hit" in p for p in ledger), "selected": chosen,
-            "status": "no_admitted_candidate" if chosen is None else chosen["instance"]["certificate"]["label"]}
+            "dynamic_attempts": sum("nominal_hit" in p for p in ledger), "selected": chosen, "status": status}
+
+
+def t_stop_calibration(folder, session, reference, tc, settings_dir, seed):
+    """T_stop of one layout by the core protocol (``run_t_stop_protocol``, settings of the intensity config),
+    cached in ``calibration.yaml`` (``calibration_failed.yaml`` if the protocol cannot run). Returns
+    ``(record, summary)``; ``summary`` is ``None`` unless every repetition stopped: a censored T_stop is a
+    lower bound, so Sigma is never targeted from it (D6/D8, ``sigma_from_summary``)."""
+    good, bad = folder / "calibration.yaml", folder / "calibration_failed.yaml"
+    if bad.exists():
+        return {"status": "protocol_failed", "error": yaml.safe_load(bad.read_text())["error"]}, None
+    if good.exists():
+        data = yaml.safe_load(good.read_text())
+        if data["task_context_hash"] != tc.hash():
+            raise ValueError("calibration.yaml of %s belongs to another TaskContext: use a separate output directory"
+                             % folder)
+        summary = read_calibration_summary(good)[0]
+    else:
+        try:
+            result = run_t_stop_protocol(session, reference, tc, TStopProtocolSettings.load(settings_dir), seed, 0)
+        except RuntimeError as exc:   # the EEF never reached the trigger speed: no T_stop exists
+            write_yaml(bad, {"status": "protocol_failed", "error": str(exc)})
+            return {"status": "protocol_failed", "error": str(exc)}, None
+        write_calibration(good, result)
+        summary = result.summary
+    record = {"status": "ok", "file": "calibration.yaml", "n_total": summary.n_total, "n_valid": summary.n_valid,
+              "n_censored": summary.n_censored, "median_s": summary.median_s, "iqr_s": summary.iqr_s}
+    try:
+        sigma_from_summary(1.0, summary, False)
+    except (CensoredTStopError, ValueError):
+        record["status"] = "censored" if summary.n_valid else "no_valid_repetition"
+        return record, None
+    return record, summary
 
 
 def validate(root, settings, demos=None):
@@ -312,6 +468,10 @@ def validate(root, settings, demos=None):
         assemble_config(config)
     from hazardlib.hashing import sha256_hex
     generation_hash = sha256_hex(settings)
+    if settings["max_validated_per_family_layout"] != len(settings["sigma_targets"]):
+        raise ValueError("max_validated_per_family_layout (%r) must equal the number of sigma_targets (%d): one "
+                         "admitted instance per family, layout and Sigma target"
+                         % (settings["max_validated_per_family_layout"], len(settings["sigma_targets"])))
     write_yaml(root / "generation_protocol.yaml", settings)
     host = LiberoHost(config_dir=config)
     session = EpisodeSession(host, RuntimeConfig.load(config))
@@ -384,18 +544,24 @@ def validate(root, settings, demos=None):
                          "max_m": (np.asarray(summary["measured_workspace_m"]["max"]) + margin).tolist()}
             tc = context(scene, row, arrays, geometry, workspace, identity)
             tc.hash()
-            results = {}
+            t_stop, summary_t = t_stop_calibration(folder, session, reference, tc, config, settings["seed"])
+            print("T_STOP %s %s" % (row["demo"], json.dumps(t_stop)), flush=True)
+            support = slide_support_rule(tc, host.describe(), AgentSpec.from_dict(scene["agent"]))
+            results = {family: {} for family in settings["families"]}
             records = []
-            for family, candidates in proposals(scene, summary, row, arrays, geometry, settings, workspace):
-                family_path = folder / (family + "_result.json")
-                ledger_path = folder / (family + "_candidates.json")
+            for family, sigma, candidates, info in proposals(
+                    scene, summary, row, arrays, geometry, settings, workspace,
+                    None if summary_t is None else summary_t.median_s, support):
+                stem = "%s.sigma%s" % (family, target_key(sigma))
+                family_path = folder / (stem + "_result.json")
+                ledger_path = folder / (stem + "_candidates.json")
                 if family_path.exists():
-                    results[family] = json.loads(family_path.read_text())
-                    if results[family]["selected"]:
-                        records.append(results[family]["selected"]["instance"])
+                    results[family][target_key(sigma)] = json.loads(family_path.read_text())
+                    if results[family][target_key(sigma)]["selected"]:
+                        records.append(results[family][target_key(sigma)]["selected"]["instance"])
                     continue
-                # Recover an interrupted run's completed family without repeating physical checks. The ledger
-                # is written once the family is complete (G1 diagnostic included); the selected candidate is
+                # Recover an interrupted run's completed (family, target) without repeating physical checks. The
+                # ledger is written once the cell is complete (G1 diagnostic included); the selected candidate is
                 # the item flagged ``selected``. The complete per-candidate evidence is retained.
                 if ledger_path.exists():
                     prior = json.loads(ledger_path.read_text())
@@ -405,16 +571,20 @@ def validate(root, settings, demos=None):
                         instance = instantiate(HazardSpec.from_dict(picked["spec"]), tc, settings["seed"],
                                                host.describe(), instance_settings)
                         certify(instance, picked["g1"]["passed"])
-                    results[family] = family_result(prior, picked, instance)
+                    result = family_result(prior, picked, instance, info, summary_t)
+                    results[family][target_key(sigma)] = result
                     if picked is not None:
-                        records.append(results[family]["selected"]["instance"])
-                    save_json(family_path, results[family])
+                        records.append(result["selected"]["instance"])
+                    save_json(family_path, result)
                     continue
                 ledger = []
                 shortlisted = []
                 for spec, evidence in candidates:
                     print("PROPOSAL " + spec["id"], flush=True)
                     item = {"spec": spec, "evidence": evidence}
+                    item["sigma"] = {k: evidence[k] for k in ("sigma_target", "t_stop_s", "tau_s")}
+                    item["sigma"]["sigma_achieved"] = sigma_from_summary(spec["intensity"]["tau_s"], summary_t,
+                                                                         False)[0]
                     ledger.append(item)
                     outside = [axis for axis, value in spec["intensity"].items()
                                if not instance_settings.intensity_ranges[family][axis][0] <= value <=
@@ -486,20 +656,22 @@ def validate(root, settings, demos=None):
                     item["g1"] = g1.to_dict()
                     certify(instance, g1.passed)
                     item["selected"] = True
-                save_json(folder / (family + "_candidates.json"), ledger)
-                results[family] = family_result(ledger, None if entry is None else item, instance)
-                save_json(family_path, results[family])
-                if results[family]["selected"]:
-                    records.append(results[family]["selected"]["instance"])
-                print("FAMILY " + json.dumps({"demo": row["demo"], "family": family,
-                                              **{k: v for k, v in results[family].items() if k != "selected"}}), flush=True)
+                save_json(ledger_path, ledger)
+                result = family_result(ledger, None if entry is None else item, instance, info, summary_t)
+                results[family][target_key(sigma)] = result
+                save_json(family_path, result)
+                if result["selected"]:
+                    records.append(result["selected"]["instance"])
+                print("FAMILY " + json.dumps({"demo": row["demo"], "family": family, "sigma_target": sigma,
+                                              **{k: v for k, v in result.items() if k != "selected"}}), flush=True)
             # The context references shared geometry in the development bundle;
             # not a formal frozen/standalone TaskContext.
             metadata = tc.to_dict()
             metadata["provenance"]["robot_geometry"] = {"external_npz": "../../robot_geometry.npz",
                                                         "spacing_m": scene["geometry_spacing_m"]}
             write_yaml(folder / "context_metadata.yaml", metadata)
-            save_json(folder / "validation.json", {"demo": row["demo"], "status": "processed", "families": results,
+            save_json(folder / "validation.json", {"demo": row["demo"], "status": "processed", "t_stop": t_stop,
+                "sigma_targets": settings["sigma_targets"], "families": results,
                 "generation_hash": generation_hash,
                 "workspace": workspace, "target_collision_bounds_size_m": extent.tolist(),
                 "geometry_source": "shared robot_geometry.npz; context hash includes full geometry"})
@@ -561,52 +733,95 @@ def ledger_statistics(ledgers):
                                        "passed": sum(bool(i["g1"]["passed"]) for i in selected)}}
 
 
+def top_counts(counts, n):
+    return dict(list(counts.items())[:n])
+
+
+def cell_statistics(entries, quantiles, top=5):
+    """One (family, Sigma target) over the layouts. ``entries``: ``(result, ledger)`` per layout, ``result`` the
+    ``<family>.sigma<t>_result.json`` content and ``ledger`` its candidate ledger (``[]`` if none was written).
+    Counts layouts by outcome (admitted / unreachable by reason / no admitted candidate), the top rejection
+    reasons, the G1 diagnostic of the admitted instances and the distributions of tau, achieved Sigma and
+    visible lead over the admitted instances."""
+    results = [r for r, _ in entries]
+    selected = [r["selected"] for r in results if r["selected"]]
+    unreachable = {}
+    for r in results:
+        if r["unreachable"] is not None:
+            unreachable[r["unreachable"]] = unreachable.get(r["unreachable"], 0) + 1
+    stats = ledger_statistics([ledger for _, ledger in entries])
+    passed = sum(bool(s["g1"]["passed"]) for s in selected)
+    return {"n_layouts": len(results), "admitted": len(selected),
+            "wait_solvable": sum(r["status"] == "wait_solvable" for r in results),
+            "uncertified": sum(r["status"] == "uncertified" for r in results),
+            "unreachable": sum(unreachable.values()), "unreachable_by_reason": dict(sorted(unreachable.items())),
+            "no_admitted_candidate": sum(r["status"] == "no_admitted_candidate" for r in results),
+            "n_candidates": sum(r["n_candidates"] for r in results),
+            "n_scene_clear": sum(r["n_scene_clear"] for r in results),
+            "n_visible": sum(r["n_visible"] for r in results),
+            "dynamic_attempts": sum(r["dynamic_attempts"] for r in results),
+            "top_rejection_categories": top_counts(stats["rejections_by_category"], top),
+            "top_rejection_details": top_counts(stats["rejections_by_detail"], top),
+            "g1_diagnostic": {"n": len(selected), "passed": passed,
+                              "pass_rate": None if not selected else passed / len(selected)},
+            "tau_s": distribution([s["sigma"]["tau_s"] for s in selected], quantiles),
+            "sigma_achieved": distribution([s["sigma"]["sigma_achieved"] for s in selected], quantiles),
+            "visible_lead_s": distribution([s["sigma"]["visible_lead_s"] for s in selected], quantiles),
+            "ledger": stats}
+
+
+def t_stop_statistics(records):
+    """Per-layout T_stop records (``validation.json: t_stop``): status counts, min / median / max of the
+    medians over the layouts whose protocol stopped every repetition (a censored value is excluded)."""
+    status = {}
+    for r in records:
+        status[r["status"]] = status.get(r["status"], 0) + 1
+    values = [r["median_s"] for r in records if r["status"] == "ok"]
+    return {"n_layouts": len(records), "status": dict(sorted(status.items())),
+            "n_censored_layouts": sum(r["status"] == "censored" for r in records),
+            "median_s": None if not values else {"min": float(min(values)), "median": float(np.median(values)),
+                                                 "max": float(max(values))}}
+
+
 def report(root, settings):
     root = Path(root)
     coverage = json.loads((root / "coverage.json").read_text())
     rows = coverage["demonstrations"]
     validations = [json.loads((root / "trajectories" / r["demo"] / "validation.json").read_text())
                    for r in rows if (root / "trajectories" / r["demo"] / "validation.json").exists()]
-    results = {f: {"admitted": 0, "wait_solvable": 0, "uncertified": 0, "no_admitted_candidate": 0,
-                   "parameters": {"tau_s": [], "speed_mps": [], "hit_time_s": [], "visible_lead_s": []}}
-               for f in settings["families"]}
-    ledgers = {f: [] for f in settings["families"]}
-    for row in rows:
-        for family in settings["families"]:
-            path = root / "trajectories" / row["demo"] / (family + "_candidates.json")
-            if path.exists():
-                ledgers[family].append(json.loads(path.read_text()))
+    keys = [target_key(t) for t in settings["sigma_targets"]]
+    processed = [v for v in validations if v["status"] == "processed"]
+    results = {f: {k: [] for k in keys} for f in settings["families"]}
     csvrows = []
     for row in rows:
         validation = next((v for v in validations if v["demo"] == row["demo"]), None)
         cr = {"demo": row["demo"], "source_success": row["source_success"], "replay_success": row["replay_success"],
-              "replay_success_t_s": row["replay_success_t_s"], "source_duration_s": row["source_features"]["duration_s"]}
+              "replay_success_t_s": row["replay_success_t_s"], "source_duration_s": row["source_features"]["duration_s"],
+              "t_stop_s": None if not validation or validation["status"] != "processed" else
+              validation["t_stop"].get("median_s"), "t_stop_status": None if not validation or
+              validation["status"] != "processed" else validation["t_stop"]["status"]}
         for family in settings["families"]:
-            record = validation["families"].get(family) if validation else None
-            status = record["status"] if record else ("baseline_unusable" if not row["replay_success"] else "pending")
-            cr[family] = status
-            if record:
-                results[family][status] += 1
-                chosen = record["selected"]
-                if chosen:
-                    results[family]["admitted"] += 1
-                    results[family]["parameters"]["tau_s"].append(chosen["spec"]["intensity"]["tau_s"])
-                    speed = chosen["spec"]["intensity"].get("approach_speed_mps")
-                    if speed is not None:
-                        results[family]["parameters"]["speed_mps"].append(speed)
-                    results[family]["parameters"]["hit_time_s"].append(chosen["instance"]["nominal_hit_time_s"])
-                    results[family]["parameters"]["visible_lead_s"].append(chosen["nominal_hit"]["tau_vis_s"])
+            for key in keys:
+                record = validation["families"].get(family, {}).get(key) if validation else None
+                cr["%s@%s" % (family, key)] = record["status"] if record else (
+                    "baseline_unusable" if not row["replay_success"] else "pending")
+                if record:
+                    path = root / "trajectories" / row["demo"] / ("%s.sigma%s_candidates.json" % (family, key))
+                    results[family][key].append((record, json.loads(path.read_text()) if path.exists() else []))
         csvrows.append(cr)
-    for family in results:
-        results[family]["parameters"] = {k: distribution(v, settings["quantiles"])
-                                          for k, v in results[family]["parameters"].items()}
-        results[family]["layouts_with_ledger"] = len(ledgers[family])
-        results[family].update(ledger_statistics(ledgers[family]))
-    write_yaml(root / "validated_summary.yaml", {"n_processed": len(validations), "families": results})
+    quantiles = settings["quantiles"]
+    families = {f: {"targets": {k: cell_statistics(results[f][k], quantiles) for k in keys}}
+                for f in settings["families"]}
+    summary = {"n_processed": len(validations), "n_baseline_unusable": len(validations) - len(processed),
+               "sigma_targets": settings["sigma_targets"],
+               "t_stop": t_stop_statistics([v["t_stop"] for v in processed]), "families": families}
+    write_yaml(root / "validated_summary.yaml", summary)
     with (root / "coverage.csv").open("w") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(csvrows[0]))
         writer.writeheader()
         writer.writerows(csvrows)
-    print("REPORT " + json.dumps({"processed": len(validations), "families": results}))
+    compact = {f: {k: {n: v[n] for n in ("admitted", "unreachable_by_reason", "no_admitted_candidate", "g1_diagnostic")}
+                   for k, v in d["targets"].items()} for f, d in families.items()}
+    print("REPORT " + json.dumps({"processed": len(validations), "t_stop": summary["t_stop"], "families": compact}))
     from .trajectory_report import write_analysis_report
     write_analysis_report(root)

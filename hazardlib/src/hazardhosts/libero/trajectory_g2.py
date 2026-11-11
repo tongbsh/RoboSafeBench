@@ -1,8 +1,8 @@
 """G2 over the admitted instances of the all-demonstration analysis (development, pilot only).
 
-For every layout already validated by ``trajectory_candidates.validate`` and every family whose selected
-instance failed G1, run the privileged avoider (``avoider.NominalPathAvoider``) through the shared
-``run_g2`` and store the outcome next to the G1 evidence (``<family>_g2.json``). The first episode of a
+For every layout already validated by ``trajectory_candidates.validate`` and every (family, Sigma target)
+whose selected instance failed G1, run the privileged avoider (``avoider.NominalPathAvoider``) through the shared
+``run_g2`` and store the outcome next to the G1 evidence (``<family>.sigma<target>_g2.json``). The first episode of a
 layout is a hazard-free run of the avoider's goal tracking, compared with the reference replay.
 
 Labels follow ``gates.decision``: G2 passed -> ``evade_solvable``; G2 failed -> ``unsolvable_by_probes``
@@ -48,10 +48,11 @@ def evaluate(root, settings, avoider_settings, demos=None, families=None, suffix
             if (demos is not None and row["demo"] not in demos) or not (folder / "validation.json").exists():
                 continue
             validation = json.loads((folder / "validation.json").read_text())
-            pending = [f for f, r in sorted(validation["families"].items())
+            pending = [(f, k) for f, cells in sorted(validation["families"].items())
+                       for k, r in sorted(cells.items(), key=lambda kv: float(kv[0]))
                        if r["selected"] and not r["selected"]["g1"]["passed"]
                        and (families is None or f in families)
-                       and not (folder / ("%s_%s.json" % (f, suffix))).exists()]
+                       and not (folder / ("%s.sigma%s_%s.json" % (f, k, suffix))).exists()]
             if not pending:
                 continue
             arrays = dict(np.load(folder / "replay.npz"))
@@ -69,17 +70,17 @@ def evaluate(root, settings, avoider_settings, demos=None, families=None, suffix
                         "max_eef_deviation_m": float(np.max(np.linalg.norm(
                             free.eef_pos[:n] - arrays["eef_pos"][:n], axis=1)))}
             print("TRACKING " + json.dumps(dict(tracking, demo=row["demo"])), flush=True)
-            for family in pending:
-                instance = HazardInstance.from_dict(validation["families"][family]["selected"]["instance"])
+            for family, key in pending:
+                instance = HazardInstance.from_dict(validation["families"][family][key]["selected"]["instance"])
                 avoider.arm(instance)
                 run = run_g2(session, instance, reference, avoider, tc, gate_settings, settings["seed"], 0)
                 label = "evade_solvable" if run.passed else "unsolvable_by_probes"
-                save_json(folder / ("%s_%s.json" % (family, suffix)), {
-                    "demo": row["demo"], "family": family, "instance_id": instance.instance_id,
+                save_json(folder / ("%s.sigma%s_%s.json" % (family, key, suffix)), {
+                    "demo": row["demo"], "family": family, "sigma_target": float(key), "instance_id": instance.instance_id,
                     "g2": run.to_dict(), "label": label, "tracking": tracking,
                     "avoider_settings_hash": avoider_hash, "avoider_settings": avoider_settings})
                 episode = run.episodes[0]
-                print("G2 " + json.dumps({"demo": row["demo"], "family": family, "passed": run.passed,
+                print("G2 " + json.dumps({"demo": row["demo"], "family": family, "sigma_target": key, "passed": run.passed,
                                           "contacts": episode["official_contacts"], "success": episode["success"],
                                           "first_contact_t_s": episode["first_official_contact_t_s"],
                                           "t_hit_s": instance.nominal_hit_time_s,
@@ -90,18 +91,24 @@ def evaluate(root, settings, avoider_settings, demos=None, families=None, suffix
 
 def summarize(root, settings, suffix="g2"):
     root = Path(root)
-    counts = {f: {"wait_solvable": 0, "evade_solvable": 0, "unsolvable_by_probes": 0, "g2_pending": 0,
-                  "no_admitted_candidate": 0} for f in settings["families"]}
+    keys = ["%g" % t for t in settings["sigma_targets"]]
+    names = ("wait_solvable", "evade_solvable", "unsolvable_by_probes", "g2_pending", "no_admitted_candidate",
+             "unreachable")
+    counts = {f: {k: {n: 0 for n in names} for k in keys} for f in settings["families"]}
     for path in sorted(root.glob("trajectories/demo_*/validation.json")):
         validation = json.loads(path.read_text())
-        for family, record in validation["families"].items():
-            if not record["selected"]:
-                counts[family]["no_admitted_candidate"] += 1
-            elif record["selected"]["g1"]["passed"]:
-                counts[family]["wait_solvable"] += 1
-            else:
-                g2 = path.parent / ("%s_%s.json" % (family, suffix))
-                counts[family][json.loads(g2.read_text())["label"] if g2.exists() else "g2_pending"] += 1
+        for family, cells in validation["families"].items():
+            for key, record in cells.items():
+                cell = counts[family][key]
+                if record["status"] == "unreachable":
+                    cell["unreachable"] += 1
+                elif not record["selected"]:
+                    cell["no_admitted_candidate"] += 1
+                elif record["selected"]["g1"]["passed"]:
+                    cell["wait_solvable"] += 1
+                else:
+                    g2 = path.parent / ("%s.sigma%s_%s.json" % (family, key, suffix))
+                    cell[json.loads(g2.read_text())["label"] if g2.exists() else "g2_pending"] += 1
     save_json(root / ("%s_summary.json" % suffix), counts)
     print("SUMMARY " + json.dumps(counts))
     return counts
