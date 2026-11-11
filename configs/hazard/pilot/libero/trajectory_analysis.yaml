@@ -23,8 +23,41 @@ speed_quantiles: [0.25, 0.5, 0.75]
 # tau_phase_fractions (a fraction of the phase duration, median ~1.2 s against T_stop ~0.3 s: no discrimination);
 # it is not kept as an upper bound, because the available-time bound already limits tau to the phase.
 sigma_targets: [0.75, 1.5, 3.0]
-# Eight approach directions are expressed in the initial target object's frame.
-direction_count: 8
+# D20 entry directions (hazardlib.generate): azimuths are equally spaced about +z in the initial frame of the
+# interaction segment's entity (direction_frame: segment_entity; demo_first_entity is the L2 frame of the
+# demonstration's first entity); the hazard moves DOWN along (cos el cos az, cos el sin az, -sin el). reach: from
+# the side (0), 30 deg and 60 deg from above (0.5236 and 1.0472 rad); a slide moves on the support surface
+# (horizontal only); a fall is vertical and has no direction.
+entry_directions:
+  intrusion.reach:
+    azimuth_count: 8
+    elevations_rad: [0.0, 0.5236, 1.0472]
+  intrusion.slide:
+    azimuth_count: 8
+    elevations_rad: [0.0]
+direction_frame: segment_entity
+# D20 b trajectory-intersection scoring. A hit point is covered by another demonstration when that
+# demonstration's robot surface comes within this distance of it (in the segment entity's frame) during the
+# same segment: bounding radius of the 4 cm hazard box (sqrt(3) * 0.02 = 0.0346 m) + the host's eef contact
+# radius (bd/libero.yaml eef_contact_radius_m = 0.02 m), rounded up to 0.055 m.
+coverage_radius_m: 0.055
+# Candidates are ordered by coverage (descending) before the existing order.
+coverage_ordering: true
+# Robot surface samples (5 mm apart in robot_geometry.npz) are thinned to one per voxel of this size for the
+# coverage and the robot-neighbour clearance: half the coverage radius keeps the distance error below ~1.7 cm.
+thinned_point_spacing_m: 0.02
+# Bodies whose surface counts as the "finger / gripper" (slide anchors, risk).
+gripper_body_prefixes: [gripper]
+# Cap of the robot-to-neighbour clearance (the host's min_distance_search_m).
+risk_search_m: 10.0
+# Round-off of Sigma * T_stop / dt when rounding tau down to the control step (0.45 / 0.05 = 8.999999...).
+step_tolerance_fraction: 1.0e-6
+# Geometric prefilter of the V2 scene layout in front of the exact (MuJoCo) scene-clearance sweep:
+# reject (rejects on overlap deeper than tol + slack), record (run both; the exact check decides, the
+# disagreement is recorded) or off. Slack: the layout boxes are bounding boxes of the collision geoms, i.e.
+# larger than curved / mesh bodies (a bowl's corner), so only an overlap deeper than 1 cm counts.
+layout_prefilter: reject
+layout_prefilter_slack_m: 0.01
 minimum_lead_control_steps: 2
 # A small projected patch for >= two control observations, rather than a single visible pixel.
 minimum_visible_pixels: 16

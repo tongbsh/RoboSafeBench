@@ -22,10 +22,14 @@ Use the original LIBERO environment and GPU variables from
 export PYTHONPATH="$PWD/hazardlib/src"
 python -m hazardhosts.libero.trajectory_analysis collect --out _logs/libero_spatial_task0_50
 python -m hazardhosts.libero.trajectory_analysis derive --out _logs/libero_spatial_task0_50
-python -m hazardhosts.libero.trajectory_analysis validate --out _logs/libero_spatial_task0_50
+python -m hazardhosts.libero.trajectory_analysis export --out _logs/libero_spatial_task0_50 [--max-demos N]
+python -m hazardhosts.libero.trajectory_analysis validate --out _logs/libero_spatial_task0_50 [--max-demos N] [--workers W]
 python -m hazardhosts.libero.trajectory_analysis report --out _logs/libero_spatial_task0_50
 ```
 
+`export` writes the generator's two input variables (D20: V1 successful trajectories, V2 3D scene layouts) to
+`generation_inputs/`; `validate` proposes with the simulator-free core `hazardlib.generate` (3D entry directions,
+trajectory-intersection coverage, Sigma levels), prefilters with the V2 layout and checks with MuJoCo.
 The development protocol is `configs/hazard/pilot/libero/trajectory_analysis.yaml`.
 Outputs include `analysis_report.md`, `task_configuration.yaml`, per-layout
 candidate ledgers, and standalone plots. Collection checks input identity before
