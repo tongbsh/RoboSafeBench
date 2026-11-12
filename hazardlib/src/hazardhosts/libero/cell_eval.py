@@ -225,6 +225,36 @@ def drive(args: argparse.Namespace, work_items: List[Work], progress: Progress, 
         t.join()
     for w in workers:
         w.kill()
+    abandon_left(pending, progress, out)
+
+
+def abandon_left(pending: "queue.Queue", progress: "Progress", out: Path) -> int:
+    """Episodes still queued after every worker gave up are failures of this invocation (``failed.jsonl``), never
+    silently dropped; they are queued again by the next invocation."""
+    left = []
+    while True:
+        try:
+            left.append(pending.get_nowait())
+        except queue.Empty:
+            break
+    if left:
+        progress.say("ABANDONED %d episodes: no worker left (see workers/*.log)" % len(left))
+        with open(str(out / "failed.jsonl"), "a") as handle:
+            for work in left:
+                handle.write(json.dumps(dict(work.to_dict(), reason="no worker left")) + "\n")
+        progress.failed += len(left)
+    return len(left)
+
+
+def generation_level(gen_root) -> Optional[str]:
+    """The D21 hazard scale level the generation root was produced at (``<task>/config`` markers, which
+    ``trajectory_batch --hazard-scale`` writes); ``None`` for a root without task configs. The evaluation must
+    assemble the same level, otherwise the host offers another hazard cube than the instances' ``agent``."""
+    from .hazard_scale import config_level
+    levels = {config_level(c) for c in sorted(Path(gen_root).glob("*/config")) if c.is_dir()}
+    if len(levels) > 1:
+        raise SystemExit("%s mixes hazard scale levels %s" % (gen_root, sorted(levels)))
+    return levels.pop() if levels else None
 
 
 def archive_failures(out: Path) -> Optional[Path]:
@@ -292,8 +322,13 @@ def main(argv=None) -> int:
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     from .pilot import assemble_config
+    from .hazard_scale import config_level
+    level = generation_level(args.gen_root)
     if not (out / "config").exists():
-        assemble_config(out / "config")
+        assemble_config(out / "config", level)
+    elif level is not None and config_level(out / "config") != level:
+        raise SystemExit("%s/config is a hazard scale %s config but %s was generated at %s: use another --out"
+                         % (out, config_level(out / "config"), args.gen_root, level))
     from hazardlib.run.settings import RunSettings
     horizon_extra_s = RunSettings.load(out / "config").episode.horizon_extra_s
     from hazardlib.config import default_config_dir
