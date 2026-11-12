@@ -308,3 +308,31 @@ def test_aggregation_of_an_unfinished_run_shows_progress(tmp_path):
     assert (progress["hazard_done"], progress["hazard_expected"]) == (2, 5)
     assert (progress["control_done"], progress["control_expected"]) == (2, 4)
     json.dumps(report)                                              # the JSON report must be serialisable
+
+
+def test_generation_level_follows_the_task_configs_and_refuses_a_mix(tmp_path):
+    from hazardhosts.libero.pilot import assemble_config
+    assert cell_eval.generation_level(tmp_path) is None
+    assemble_config(tmp_path / "libero_toy_task0" / "config", "M")
+    assemble_config(tmp_path / "libero_toy_task1" / "config", "M")
+    assert cell_eval.generation_level(tmp_path) == "M"
+    assemble_config(tmp_path / "libero_toy_task2" / "config")
+    with pytest.raises(SystemExit, match="mixes hazard scale levels"):
+        cell_eval.generation_level(tmp_path)
+
+
+def test_episodes_left_when_every_worker_gave_up_are_failures(tmp_path):
+    import queue
+    (tmp_path / "gen").mkdir()
+    root = _generation(tmp_path / "gen")
+    selected = {"libero_toy_task0": select_task(root, "libero_toy", 0, 3, 1.0, 0)}
+    pending = queue.Queue()
+    for work in build_queue(selected, {})[:2]:
+        pending.put(work)
+    progress = cell_eval.Progress(2, tmp_path / "eval.log")
+    assert cell_eval.abandon_left(pending, progress, tmp_path) == 2
+    assert progress.failed == 2
+    lines = [json.loads(x) for x in (tmp_path / "failed.jsonl").read_text().splitlines()]
+    assert [x["reason"] for x in lines] == ["no worker left"] * 2
+    assert "ABANDONED 2 episodes" in (tmp_path / "eval.log").read_text()
+    assert cell_eval.abandon_left(pending, progress, tmp_path) == 0
